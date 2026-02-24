@@ -1,0 +1,16 @@
+RFUGW_FAST_FLAGS ?= -march=native -ffast-math -fno-math-errno -fno-trapping-math
+RFUGW_OPENMP_FLAGS ?= $(SHLIB_OPENMP_CXXFLAGS)
+RFUGW_OPENMP_LIBS ?= $(SHLIB_OPENMP_CXXFLAGS)
+
+ifeq ($(strip $(RFUGW_OPENMP_FLAGS)),)
+  ifneq ($(wildcard /opt/homebrew/opt/libomp/include/omp.h),)
+    RFUGW_OPENMP_FLAGS := -Xpreprocessor -fopenmp -I/opt/homebrew/opt/libomp/include
+    RFUGW_OPENMP_LIBS := -L/opt/homebrew/opt/libomp/lib -lomp
+  else ifneq ($(wildcard /usr/local/opt/libomp/include/omp.h),)
+    RFUGW_OPENMP_FLAGS := -Xpreprocessor -fopenmp -I/usr/local/opt/libomp/include
+    RFUGW_OPENMP_LIBS := -L/usr/local/opt/libomp/lib -lomp
+  endif
+endif
+
+PKG_CXXFLAGS = -O3 -DNDEBUG -DARMA_NO_DEBUG -DARMA_DONT_PRINT_ERRORS $(RFUGW_FAST_FLAGS) $(RFUGW_OPENMP_FLAGS)
+PKG_LIBS = $(LAPACK_LIBS) $(BLAS_LIBS) $(FLIBS) $(RFUGW_OPENMP_LIBS)

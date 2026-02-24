@@ -1,0 +1,170 @@
+---
+title: "Getting started with rfugw"
+output: rmarkdown::html_vignette
+vignette: >
+  %\VignetteIndexEntry{Getting started with rfugw}
+  %\VignetteEngine{knitr::rmarkdown}
+  %\VignetteEncoding{UTF-8}
+---
+
+```{r setup, include = FALSE}
+knitr::opts_chunk$set(
+  collapse = TRUE,
+  comment = "#>",
+  message = FALSE,
+  warning = FALSE,
+  fig.width = 5,
+  fig.height = 4
+)
+```
+
+You have two collections of points---maybe brain regions, molecular structures,
+or sensor networks---and you want to find the best correspondence between them.
+The catch: the two collections live in completely different coordinate systems,
+so you can't just overlay them. All you have is the *internal geometry* of each
+collection (which points are close to which) and, optionally, some features
+attached to each point.
+**Gromov-Wasserstein (GW)** and **Fused Gromov-Wasserstein (FGW)** solve exactly
+this problem. `rfugw` gives you fast C++ implementations of both, callable from R.
+
+## Quick example
+
+```{r quick-example}
+library(rfugw)
+
+set.seed(42)
+# Two small point clouds with different sizes
+src <- matrix(rnorm(20 * 2), 20, 2)
+tgt <- matrix(rnorm(25 * 2), 25, 2)
+
+# Internal geometry: pairwise distance matrices
+C1 <- as.matrix(dist(src))
+C2 <- as.matrix(dist(tgt))
+
+# Normalize to [0, 1] for numerical stability
+C1 <- C1 / max(C1)
+C2 <- C2 / max(C2)
+
+# Find the optimal structural coupling
+out <- entropic_gromov_wasserstein(C1, C2, epsilon = 0.05)
+str(out[c("gw_dist", "iterations")])
+```
+
+The `plan` matrix tells you how mass flows from each source point to each target
+point---it's the soft correspondence.
+
+## What are these matrices?
+
+`rfugw` works with three inputs:
+
+- **C1** (`ns x ns`): structure matrix for the source. Usually pairwise
+  distances, but any symmetric cost matrix works.
+- **C2** (`nt x nt`): structure matrix for the target. Same idea, different size.
+- **M** (`ns x nt`): cross-domain feature cost. Only needed for *Fused* GW.
+  Measures how dissimilar source point *i*'s features are from target point *j*'s.
+
+The solver finds a coupling (transport plan) that simultaneously respects the
+internal structure of both domains and (when `M` is provided) the feature
+similarity.
+
+## Gromov-Wasserstein: structure only
+
+When you only have geometry---no shared features---use `gromov_wasserstein()`
+(exact, via conditional gradient) or `entropic_gromov_wasserstein()` (faster,
+regularized).
+
+```{r gw-solve}
+# Exact GW via conditional gradient
+out_exact <- gromov_wasserstein(C1, C2)
+out_exact$gw_dist
+```
+
+```{r gw-entropic}
+# Entropic GW (faster for larger problems)
+out_ent <- entropic_gromov_wasserstein(C1, C2, epsilon = 0.05)
+out_ent$gw_dist
+```
+
+The entropic version adds a small entropy penalty (`epsilon`) that smooths the
+optimization landscape. Smaller `epsilon` gives sharper couplings but converges
+more slowly.
+
+## Fused Gromov-Wasserstein: structure + features
+
+When each point also carries features (e.g., signal amplitude, color, gene
+expression), FGW blends structure matching with feature matching. The `alpha`
+parameter controls the trade-off: `alpha = 1` ignores features (pure GW),
+`alpha = 0` ignores structure (pure Wasserstein on features).
+
+```{r fgw-setup}
+# Attach 3-dimensional features to each point
+F_src <- matrix(rnorm(20 * 3), 20, 3)
+F_tgt <- matrix(rnorm(25 * 3), 25, 3)
+
+# Cross-domain feature cost (Euclidean distances between features)
+M <- as.matrix(dist(rbind(F_src, F_tgt)))[1:20, 21:45]
+M <- M / max(M)
+```
+
+```{r fgw-solve}
+out_fgw <- fgw_entropic(
+  M, C1, C2,
+  alpha = 0.5,
+  epsilon = 0.05
+)
+out_fgw$fgw_dist
+```
+
+```{r fgw-plan-inspect}
+# The coupling is a 20 x 25 matrix; look at its structure
+dim(out_fgw$plan)
+range(out_fgw$plan)
+```
+
+## Inspecting the coupling
+
+The transport plan has row sums equal to the source weights and column sums
+equal to the target weights (uniform by default).
+
+```{r plan-marginals}
+# Row marginals (source)
+summary(rowSums(out_fgw$plan))
+
+# Column marginals (target)
+summary(colSums(out_fgw$plan))
+```
+
+To find the best-matching target point for each source point, take the column
+index of the maximum in each row:
+
+```{r hard-assignment}
+best_match <- apply(out_fgw$plan, 1, which.max)
+head(best_match)
+```
+
+## Key parameters
+
+| Parameter | What it does | Typical range |
+|-----------|-------------|---------------|
+| `epsilon` | Entropic regularization. Larger = smoother, faster; smaller = sharper. | 0.001--0.1 |
+| `alpha` | Feature vs. structure weight (FGW only). 1 = pure GW. | 0--1 |
+| `max_iter` | Outer iteration limit. | 100--1000 |
+| `precision` | `"mixed"` (faster) or `"double"` (more accurate). | --- |
+| `solver` | `"PGD"` (projected gradient) or `"PPA"` (proximal point). | --- |
+
+## The `2` suffix convention
+
+Every solver has a companion function with a `2` suffix (e.g.,
+`fgw_entropic2()`, `gromov_wasserstein2()`) that returns only the scalar
+objective value instead of the full result list. Use these when you only need
+the distance:
+```{r two-suffix}
+fgw_entropic2(M, C1, C2, alpha = 0.5, epsilon = 0.05)
+```
+
+## Next steps
+
+- `vignette("solver-guide")`: choosing the right solver variant
+  (partial, semirelaxed, unbalanced)
+- `vignette("barycenters")`: computing average shapes with GW barycenters
+- `vignette("multiset-alignment")`: aligning many subjects to a shared template

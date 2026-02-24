@@ -1,0 +1,120 @@
+name: Sparse Sampled Perf Gate (Nightly)
+
+on:
+  schedule:
+    - cron: "30 7 * * *"
+  workflow_dispatch:
+    inputs:
+      iterations:
+        description: "Benchmark iterations"
+        required: false
+        default: "3"
+      n_values:
+        description: "Comma-separated sizes"
+        required: false
+        default: "400,800"
+      sinkhorn_max_iter:
+        description: "rfugw sampled sinkhorn_max_iter"
+        required: false
+        default: "60"
+      sinkhorn_tol:
+        description: "rfugw sampled sinkhorn_tol"
+        required: false
+        default: "1e-6"
+      min_ratio_solver:
+        description: "Minimum pot_over_rfugw ratio (solver-only)"
+        required: false
+        default: "1.0"
+      min_ratio_e2e:
+        description: "Minimum pot_over_rfugw ratio (end-to-end)"
+        required: false
+        default: "1.0"
+      max_obj_gap:
+        description: "Maximum allowed objective_gap_dense"
+        required: false
+        default: "0.005"
+
+jobs:
+  perf-gate-nightly:
+    runs-on: ubuntu-latest
+    timeout-minutes: 180
+    env:
+      OMP_NUM_THREADS: "1"
+      OPENBLAS_NUM_THREADS: "1"
+      MKL_NUM_THREADS: "1"
+      VECLIB_MAXIMUM_THREADS: "1"
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup R
+        uses: r-lib/actions/setup-r@v2
+
+      - name: Setup R dependencies
+        uses: r-lib/actions/setup-r-dependencies@v2
+        with:
+          extra-packages: |
+            local::.
+            any::bench
+            any::jsonlite
+            any::Matrix
+            any::testthat
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install POT dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install numpy scipy POT
+
+      - name: Accuracy gate
+        run: Rscript inst/bench/accuracy_gate.R
+
+      - name: Run sparse sampled benchmark + gate (nightly profile)
+        env:
+          RFUGW_PYTHON: python
+        run: |
+          set -euo pipefail
+
+          ITERS="${{ github.event.inputs.iterations }}"
+          N_VALUES="${{ github.event.inputs.n_values }}"
+          SINKHORN_MAX_ITER="${{ github.event.inputs.sinkhorn_max_iter }}"
+          SINKHORN_TOL="${{ github.event.inputs.sinkhorn_tol }}"
+          MIN_RATIO_SOLVER="${{ github.event.inputs.min_ratio_solver }}"
+          MIN_RATIO_E2E="${{ github.event.inputs.min_ratio_e2e }}"
+          MAX_OBJ_GAP="${{ github.event.inputs.max_obj_gap }}"
+
+          : "${ITERS:=3}"
+          : "${N_VALUES:=400,800}"
+          : "${SINKHORN_MAX_ITER:=60}"
+          : "${SINKHORN_TOL:=1e-6}"
+          : "${MIN_RATIO_SOLVER:=1.0}"
+          : "${MIN_RATIO_E2E:=1.0}"
+          : "${MAX_OBJ_GAP:=0.005}"
+
+          inst/bench/run_sparse_sampled_perf_gate.sh \
+            inst/bench/results/benchmark_sparse_sampled_nightly_latest.csv \
+            123 \
+            "${ITERS}" \
+            "${N_VALUES}" \
+            "${SINKHORN_MAX_ITER}" \
+            "${SINKHORN_TOL}" \
+            400 \
+            "${MIN_RATIO_SOLVER}" \
+            "${MIN_RATIO_E2E}" \
+            "${MAX_OBJ_GAP}"
+
+      - name: Upload benchmark artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: sparse-sampled-perf-gate-nightly
+          if-no-files-found: warn
+          path: |
+            inst/bench/results/benchmark_sparse_sampled_nightly_latest.csv
+            inst/bench/results/benchmark_sparse_sampled_nightly_latest_report.md
+            inst/bench/results/benchmark_sparse_sampled_report_latest.md
+            inst/bench/results/benchmark_sparse_sampled_latest.csv

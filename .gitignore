@@ -1,0 +1,23 @@
+src/*.o
+src/*.so
+src/*.dll
+src/*.dylib
+src/*.a
+src/*.gcno
+src/*.gcda
+*.Rcheck/
+*.tar.gz
+
+# local tooling/state
+.omc/
+.venv/
+.venv_pot/
+
+# generated benchmark artifacts
+inst/bench/results/
+
+# python cache
+**/__pycache__/
+
+# accidental nested package artifacts
+rfugw/

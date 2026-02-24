@@ -1,0 +1,252 @@
+---
+title: "Choosing the right GW solver"
+output: rmarkdown::html_vignette
+vignette: >
+  %\VignetteIndexEntry{Choosing the right GW solver}
+  %\VignetteEngine{knitr::rmarkdown}
+  %\VignetteEncoding{UTF-8}
+---
+
+```{r setup, include = FALSE}
+knitr::opts_chunk$set(
+  collapse = TRUE,
+  comment = "#>",
+  message = FALSE,
+  warning = FALSE,
+  fig.width = 5,
+  fig.height = 4
+)
+```
+
+`rfugw` ships many Gromov-Wasserstein variants. This guide helps you pick the
+right one for your problem.
+
+## Setup: two small metric spaces
+
+We'll use the same toy data throughout so you can compare outputs directly.
+
+```{r data-setup}
+library(rfugw)
+
+set.seed(1)
+ns <- 15
+nt <- 18
+
+# Source and target point clouds
+X_src <- matrix(rnorm(ns * 2), ns, 2)
+X_tgt <- matrix(rnorm(nt * 2), nt, 2)
+
+# Structure matrices (normalized pairwise distances)
+C1 <- as.matrix(dist(X_src)); C1 <- C1 / max(C1)
+C2 <- as.matrix(dist(X_tgt)); C2 <- C2 / max(C2)
+
+# Feature cost matrix for FGW variants
+F_src <- matrix(rnorm(ns * 3), ns, 3)
+F_tgt <- matrix(rnorm(nt * 3), nt, 3)
+M <- as.matrix(dist(rbind(F_src, F_tgt)))[1:ns, (ns + 1):(ns + nt)]
+M <- M / max(M)
+```
+
+## Decision tree
+
+```
+Do you have cross-domain features (M)?
+├─ No  → GW (structure only)
+│   ├─ Need exact solution?       → gromov_wasserstein()
+│   └─ Speed matters?             → entropic_gromov_wasserstein()
+└─ Yes → FGW (structure + features)
+    ├─ Need exact solution?       → fgw_exact_cg()
+    └─ Speed matters?             → fgw_entropic()
+
+Are your distributions the same total mass?
+├─ Yes, and both marginals fixed  → standard GW / FGW (above)
+├─ Yes, but target mass is free   → semirelaxed variants
+├─ No, different total mass       → partial or unbalanced variants
+└─ No, and you want KL relaxation → fugw_kl()
+```
+
+## Standard GW and FGW
+
+Both marginals are fixed (source and target weights sum to 1 each). The coupling
+must satisfy `rowSums(plan) == p` and `colSums(plan) == q`.
+
+```{r standard-gw}
+# Exact GW (conditional gradient + LP direction)
+out_gw <- gromov_wasserstein(C1, C2)
+out_gw$gw_dist
+```
+
+```{r standard-fgw}
+# Entropic FGW (the workhorse)
+out_fgw <- fgw_entropic(M, C1, C2, alpha = 0.5, epsilon = 0.05)
+out_fgw$fgw_dist
+```
+
+```{r exact-fgw}
+# Exact FGW (conditional gradient, no regularization)
+out_exact <- fgw_exact_cg(M, C1, C2, alpha = 0.5)
+out_exact$fgw_dist
+```
+
+**When to use exact vs. entropic:** Exact solvers give sparser, more
+interpretable couplings but scale poorly (LP subproblem at each iteration).
+Entropic solvers are much faster for problems beyond ~50 points.
+
+## Partial GW and FGW
+
+Sometimes only a fraction of the mass should be transported---useful when the
+two domains have different sizes or when you expect only partial overlap.
+
+The `m` parameter controls how much mass to transport.
+
+```{r partial-gw}
+out_pgw <- partial_gromov_wasserstein(C1, C2, m = 0.5, log = TRUE)
+out_pgw$partial_gw_dist
+
+# Total transported mass
+sum(out_pgw$plan)
+```
+
+```{r partial-fgw}
+out_pfgw <- partial_fused_gromov_wasserstein(M, C1, C2, alpha = 0.5, m = 0.7, log = TRUE)
+out_pfgw$partial_fgw_dist
+```
+
+Entropic partial variants are also available:
+
+```{r entropic-partial}
+out_epgw <- entropic_partial_gromov_wasserstein(C1, C2, m = 0.6, reg = 0.05, log = TRUE)
+out_epgw$partial_gw_dist
+```
+
+## Semirelaxed GW and FGW
+
+In semirelaxed mode, the source marginal is fixed but the target marginal is
+*free*---the solver learns it. This is useful when you don't know the right
+target distribution a priori (e.g., aligning a subject to a template of unknown
+density).
+
+```{r semirelaxed-gw}
+out_sr <- semirelaxed_gromov_wasserstein(C1, C2)
+out_sr$srgw_dist
+
+# Source marginal is fixed
+summary(rowSums(out_sr$plan))
+
+# Target marginal was learned
+round(out_sr$q, 4)
+```
+
+Entropic semirelaxed variants use mirror descent in KL geometry and are
+significantly faster:
+
+```{r entropic-semirelaxed}
+out_esr <- entropic_semirelaxed_gromov_wasserstein(
+  C1, C2,
+  epsilon = 0.05
+)
+out_esr$srgw_dist
+```
+
+```{r entropic-semirelaxed-fgw}
+out_esrf <- entropic_semirelaxed_fused_gromov_wasserstein(
+  M, C1, C2,
+  alpha = 0.5,
+  epsilon = 0.05
+)
+out_esrf$srfgw_dist
+```
+
+## Fused Unbalanced GW (FUGW)
+
+When both marginals can deviate from the prescribed distributions, use the
+unbalanced solver. It relaxes the marginal constraints with KL divergence
+penalties controlled by `reg_marginals`.
+
+```{r fugw}
+out_fugw <- fugw_kl(
+  Cx = C1,
+  Cy = C2,
+  M = M,
+  alpha = 0.5,
+  epsilon = 0.01,
+  reg_marginals = c(10, 10)
+)
+out_fugw$fugw_cost
+```
+
+Larger `reg_marginals` enforces the marginals more strictly (closer to standard
+FGW). Smaller values allow more deviation.
+
+```{r fugw-marginals}
+# Compare marginals to uniform
+cat("Source mass:", sum(out_fugw$pi_samp), "\n")
+cat("Row marginal range:", range(rowSums(out_fugw$pi_samp)), "\n")
+```
+
+## Performance tips
+
+### Mixed precision
+
+For large problems, `precision = "mixed"` uses single-precision arithmetic for
+inner Sinkhorn iterations and double for the final objective. This is the
+default in `multialign_fit()` and typically 1.5--2x faster with negligible
+accuracy loss.
+
+```{r precision-compare}
+t_double <- system.time(
+  fgw_entropic(M, C1, C2, alpha = 0.5, epsilon = 0.05, precision = "double")
+)
+t_mixed <- system.time(
+  fgw_entropic(M, C1, C2, alpha = 0.5, epsilon = 0.05, precision = "mixed")
+)
+cat("double:", t_double["elapsed"], "s, mixed:", t_mixed["elapsed"], "s\n")
+```
+
+### Check frequency
+
+Increase `check_every` to reduce the frequency of convergence checks. Each
+check involves computing a Frobenius norm, so larger values skip more work:
+
+```{r check-every}
+# Check convergence every 10 outer iterations instead of every 1
+out <- fgw_entropic(
+  M, C1, C2,
+  alpha = 0.5,
+  epsilon = 0.05,
+  check_every = 10L
+)
+```
+
+### Low-rank structure approximation
+
+For very large structure matrices, the `structure_rank` parameter enables a
+low-rank approximation of the GW tensor product, reducing cost from
+O(n^2 * m) to O(n * m * r):
+
+```{r low-rank}
+out_lr <- fgw_entropic(
+  M, C1, C2,
+  alpha = 0.5,
+  epsilon = 0.05,
+  structure_rank = 5L
+)
+out_lr$fgw_dist
+```
+
+## Summary table
+
+| Variant | Function | Marginals | Best for |
+|---------|----------|-----------|----------|
+| Standard GW | `gromov_wasserstein()` | Both fixed | Small exact problems |
+| Entropic GW | `entropic_gromov_wasserstein()` | Both fixed | Fast structure matching |
+| Standard FGW | `fgw_exact_cg()` | Both fixed | Exact structure + features |
+| Entropic FGW | `fgw_entropic()` | Both fixed | Fast structure + features |
+| Partial GW/FGW | `partial_*()` | Partial mass | Incomplete overlap |
+| Semirelaxed GW/FGW | `semirelaxed_*()` | Source fixed, target free | Unknown target density |
+| Unbalanced FUGW | `fugw_kl()` | Both relaxed (KL) | Noisy, unbalanced data |
+
+## Next steps
+
+- `vignette("barycenters")`: computing average shapes
+- `vignette("multiset-alignment")`: aligning many subjects to a shared template
