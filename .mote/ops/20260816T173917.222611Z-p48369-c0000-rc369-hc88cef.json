@@ -1,0 +1,1 @@
+{"actor":"cursor-fugw-impl","entity":"bd-01M05QY5MJQ06ZR508S13TM61C","kind":"reserve_open","mode":"exclusive","op":"20260816T173917.222611Z-p48369-c0000-rc369-hc88cef","paths":[".github/workflows/sanitizer.yml","tools/check-generated.R","src/Makevars","src/Makevars.win"],"reservation_id":"rv-01M05TG2K6ADM2G5ZAP5GVTSY3","ts":"2026-08-16T17:39:17.222611Z","ttl_s":3600,"v":1}

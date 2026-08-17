@@ -1,0 +1,1 @@
+{"actor":"cursor-fugw-impl","entity":"bd-01M05QY815DMGYFZZFHXYQKYCY","kind":"note","note_kind":"decision","op":"20260816T184527.749296Z-p73511-c0000-r6820-hd49ecf","text":"Asymmetric exact C++ now uses C2^2 q (not (C2^2)^T q) so it matches the R CG core and the square-loss tensor. Empty M is allowed only when alpha=1.","ts":"2026-08-16T18:45:27.749296Z","v":1}

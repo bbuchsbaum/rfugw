@@ -1,0 +1,1 @@
+{"actor":"cursor-fugw-impl","entity":"bd-01M05QY6YJRABRKKYK6GYD4DA3","kind":"note","note_kind":"note","op":"20260816T172314.879540Z-p43072-c0000-rde9b-haed563","text":"Public ot_sinkhorn_unbalanced() with separate rho penalties and mass reporting. Uses the same C++ KL Sinkhorn as FUGW. POT differentials deferred to certification.","ts":"2026-08-16T17:23:14.879540Z","v":1}
