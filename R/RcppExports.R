@@ -21,8 +21,8 @@ cpp_feature_cost_batch <- function(F1_list, F2, use_euclidean, rescale01, n_thre
     .Call(`_rfugw_cpp_feature_cost_batch`, F1_list, F2, use_euclidean, rescale01, n_threads)
 }
 
-cpp_fgw_exact_cg_square <- function(M, C1, C2, p, q, alpha, symmetric, max_iter, tol_rel, tol_abs, lp_max_iter, lp_tol) {
-    .Call(`_rfugw_cpp_fgw_exact_cg_square`, M, C1, C2, p, q, alpha, symmetric, max_iter, tol_rel, tol_abs, lp_max_iter, lp_tol)
+cpp_fgw_exact_cg_square <- function(M, C1, C2, p, q, alpha, symmetric, max_iter, tol_rel, tol_abs, lp_max_iter, lp_tol, init_plan) {
+    .Call(`_rfugw_cpp_fgw_exact_cg_square`, M, C1, C2, p, q, alpha, symmetric, max_iter, tol_rel, tol_abs, lp_max_iter, lp_tol, init_plan)
 }
 
 cpp_fugw_kl_square <- function(Cx, Cy, wx, wy, reg_marginals, epsilon, alpha, M, init_pi, max_iter, tol, max_iter_ot, tol_ot, rescale_plan, check_every, use_mixed_precision) {
@@ -59,5 +59,29 @@ cpp_semirelaxed_fgw_exact_square <- function(M, C1, C2, p, alpha, symmetric, ini
 
 cpp_semirelaxed_fgw_cg_square_fast <- function(M, C1, C2, p, alpha, init_plan, max_iter, tol_rel, tol_abs, verbose, use_mixed_precision) {
     .Call(`_rfugw_cpp_semirelaxed_fgw_cg_square_fast`, M, C1, C2, p, alpha, init_plan, max_iter, tol_rel, tol_abs, verbose, use_mixed_precision)
+}
+
+cpp_ot_sinkhorn <- function(M, p, q, epsilon, max_iter, tol, use_log) {
+    .Call(`_rfugw_cpp_ot_sinkhorn`, M, p, q, epsilon, max_iter, tol, use_log)
+}
+
+cpp_ot_emd <- function(M, p, q, max_iter, tol) {
+    .Call(`_rfugw_cpp_ot_emd`, M, p, q, max_iter, tol)
+}
+
+cpp_ot_sinkhorn_unbalanced <- function(M, a, b, epsilon, rho1, rho2, max_iter, tol, init_plan) {
+    .Call(`_rfugw_cpp_ot_sinkhorn_unbalanced`, M, a, b, epsilon, rho1, rho2, max_iter, tol, init_plan)
+}
+
+cpp_partial_fgw_exact_square <- function(M, C1, C2, p, q, m, alpha, symmetric, init_plan, max_iter, tol, nb_dummies, lp_max_iter, lp_tol) {
+    .Call(`_rfugw_cpp_partial_fgw_exact_square`, M, C1, C2, p, q, m, alpha, symmetric, init_plan, max_iter, tol, nb_dummies, lp_max_iter, lp_tol)
+}
+
+cpp_partial_fgw_entropic_square <- function(M, C1, C2, p, q, m, reg, alpha, symmetric, init_plan, max_iter, tol, inner_max_iter, inner_tol, check_every) {
+    .Call(`_rfugw_cpp_partial_fgw_entropic_square`, M, C1, C2, p, q, m, reg, alpha, symmetric, init_plan, max_iter, tol, inner_max_iter, inner_tol, check_every)
+}
+
+cpp_ucoot_kl <- function(X, Y, wx_samp, wx_feat, wy_samp, wy_feat, reg_marginals, epsilon, M_samp, M_feat, init_pi_samp, init_pi_feat, joint, rescale_plan, max_iter, tol, max_iter_ot, tol_ot, use_warm_start) {
+    .Call(`_rfugw_cpp_ucoot_kl`, X, Y, wx_samp, wx_feat, wy_samp, wy_feat, reg_marginals, epsilon, M_samp, M_feat, init_pi_samp, init_pi_feat, joint, rescale_plan, max_iter, tol, max_iter_ot, tol_ot, use_warm_start)
 }
 

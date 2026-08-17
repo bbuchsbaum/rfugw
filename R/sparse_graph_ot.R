@@ -14,7 +14,7 @@
   }
 
   if (.is_sparse_graph_matrix(W)) {
-    xvals <- slot(W, "x")
+    xvals <- methods::slot(W, "x")
     if (length(xvals) > 0L && (any(!is.finite(xvals)) || any(xvals < 0))) {
       stop(sprintf("`%s` must be finite and nonnegative.", name), call. = FALSE)
     }
@@ -249,7 +249,8 @@ graph_diffusion_coordinates <- function(
 #'   `"sqeuclidean"`).
 #' @param loss_fun Currently only `"square_loss"` is supported.
 #' @param nb_samples_grad Number of sampled gradient points, or length-2 vector
-#'   `(n_source_samples, n_target_samples)`.
+#'   `(n_source_samples, n_target_samples)`. Values below 1 error. Source or
+#'   target counts above `ns` / `nt` warn and clamp.
 #' @param epsilon Entropic regularization for projection step.
 #' @param max_iter Maximum stochastic iterations.
 #' @param log If `TRUE`, return diagnostics.
@@ -268,6 +269,14 @@ graph_diffusion_coordinates <- function(
 #'   probability selections for reproducible parity checks.
 #' @return If `log = FALSE`, returns coupling matrix `T`. If `log = TRUE`,
 #'   returns a list with `plan`, `gw_dist_estimated`, and `iterations`.
+#'
+#' @section Experimental:
+#' Coordinate-native sampled GW is experimental. The certified 0.1
+#' envelope matches [sampled_gromov_wasserstein()]: a full budget
+#' `(ns, nt)` is closer to dense entropic GW than a tiny budget.
+#' Intermediate budgets are not certified as monotone. Inputs scale as
+#' `O(n d)` rather than `O(n^2)` structure costs. See
+#' `inst/bench/sampled-budget-curves.md`.
 #' @export
 sampled_gromov_wasserstein_coords <- function(
     X1,
@@ -310,26 +319,9 @@ sampled_gromov_wasserstein_coords <- function(
   p <- .assert_prob(p, ns, "p")
   q <- .assert_prob(q, nt, "q")
 
-  if (length(nb_samples_grad) == 1L) {
-    nb_samples_grad <- as.integer(nb_samples_grad)
-    if (!is.finite(nb_samples_grad) || nb_samples_grad < 1L) {
-      stop("`nb_samples_grad` must be >= 1.", call. = FALSE)
-    }
-    if (nb_samples_grad > ns) {
-      nb_p <- ns
-      nb_q <- max(1L, as.integer(nb_samples_grad %/% ns))
-    } else {
-      nb_p <- nb_samples_grad
-      nb_q <- 1L
-    }
-  } else {
-    nb_samples_grad <- as.integer(nb_samples_grad)
-    if (length(nb_samples_grad) != 2L || any(!is.finite(nb_samples_grad)) || any(nb_samples_grad < 1L)) {
-      stop("`nb_samples_grad` must be an integer >=1 or a length-2 integer vector.", call. = FALSE)
-    }
-    nb_p <- nb_samples_grad[[1]]
-    nb_q <- nb_samples_grad[[2]]
-  }
+  budget <- .parse_sampled_budget(nb_samples_grad, ns, nt)
+  nb_p <- budget$nb_p
+  nb_q <- budget$nb_q
 
   max_iter <- as.integer(max_iter)[1]
   if (!is.finite(max_iter) || max_iter < 1L) {
@@ -501,7 +493,9 @@ sampled_gromov_wasserstein_coords <- function(
 #' @param q Target weights (default uniform).
 #' @param metric Ground metric for coordinate GW.
 #' @param loss_fun Currently only `"square_loss"` is supported.
-#' @param nb_samples_grad Number of sampled gradient points.
+#' @param nb_samples_grad Number of sampled gradient points, or length-2 vector
+#'   `(n_source_samples, n_target_samples)`. Values below 1 error. Source or
+#'   target counts above `ns` / `nt` warn and clamp.
 #' @param epsilon Entropic regularization.
 #' @param max_iter Maximum stochastic iterations.
 #' @param log If `TRUE`, return diagnostics.
@@ -519,6 +513,13 @@ sampled_gromov_wasserstein_coords <- function(
 #'   [sampled_gromov_wasserstein_coords()].
 #' @return Coupling matrix or diagnostics list, mirroring
 #'   `sampled_gromov_wasserstein_coords`.
+#'
+#' @section Experimental:
+#' Graph-then-sampled GW is experimental. The certified 0.1 envelope is
+#' the same quality-versus-budget claim as
+#' [sampled_gromov_wasserstein_coords()], plus that a sparse similarity
+#' graph plus `k` diffusion coordinates stores less than two dense
+#' `n x n` structure costs. See `inst/bench/sampled-budget-curves.md`.
 #' @export
 sampled_gw_from_graphs <- function(
     W1,

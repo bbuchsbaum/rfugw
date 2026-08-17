@@ -57,7 +57,9 @@ sampled_gw_from_graphs(
 
 \item{loss_fun}{Currently only \code{"square_loss"} is supported.}
 
-\item{nb_samples_grad}{Number of sampled gradient points.}
+\item{nb_samples_grad}{Number of sampled gradient points, or length-2 vector
+\verb{(n_source_samples, n_target_samples)}. Values below 1 error. Source or
+target counts above \code{ns} / \code{nt} warn and clamp.}
 
 \item{epsilon}{Entropic regularization.}
 
@@ -95,3 +97,12 @@ Coupling matrix or diagnostics list, mirroring
 Convenience wrapper that converts similarity graphs into diffusion
 coordinates and solves sampled GW in coordinate space.
 }
+\section{Experimental}{
+
+Graph-then-sampled GW is experimental. The certified 0.1 envelope is
+the same quality-versus-budget claim as
+\code{\link[=sampled_gromov_wasserstein_coords]{sampled_gromov_wasserstein_coords()}}, plus that a sparse similarity
+graph plus \code{k} diffusion coordinates stores less than two dense
+\verb{n x n} structure costs. See \code{inst/bench/sampled-budget-curves.md}.
+}
+

@@ -2,7 +2,7 @@
 % Please edit documentation in R/pot_api.R
 \name{gromov_wasserstein}
 \alias{gromov_wasserstein}
-\title{Exact Gromov-Wasserstein via Conditional Gradient (square loss)}
+\title{Unregularized Gromov-Wasserstein via Conditional Gradient (square loss)}
 \usage{
 gromov_wasserstein(
   C1,
@@ -10,7 +10,7 @@ gromov_wasserstein(
   p = NULL,
   q = NULL,
   loss_fun = "square_loss",
-  symmetric = TRUE,
+  symmetric = NULL,
   G0 = NULL,
   max_iter = 500L,
   tol_rel = 1e-09,
@@ -51,6 +51,7 @@ gromov_wasserstein(
 A list with \code{plan}, \code{gw_dist}, \code{iterations}, \code{error}, \code{loss_trace}.
 }
 \description{
-POT-compatible exact GW wrapper using the optimized exact FGW core with
-zero feature cost and \code{alpha = 1}.
+POT-compatible unregularized GW wrapper using the FGW conditional-gradient
+core with zero feature cost and \code{alpha = 1}. This is not a global optimizer
+of the non-convex GW objective.
 }

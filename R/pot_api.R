@@ -7,6 +7,9 @@
 }
 
 .is_symmetric_cost <- function(C, tol = 1e-10) {
+  if (!is.matrix(C) || length(C) == 0L) {
+    return(FALSE)
+  }
   max(abs(C - t(C))) <= tol
 }
 
@@ -200,7 +203,7 @@ entropic_gromov_wasserstein <- function(
     q = NULL,
     loss_fun = "square_loss",
     epsilon = 0.1,
-    symmetric = TRUE,
+    symmetric = NULL,
     G0 = NULL,
     max_iter = 1000L,
     tol = 1e-9,
@@ -245,16 +248,18 @@ entropic_gromov_wasserstein <- function(
 #'
 #' @inheritParams entropic_gromov_wasserstein
 #' @return Numeric scalar GW value.
+#' @param ... Additional arguments. Unused extras are rejected when the solver uses `.reject_unused_dots()`; otherwise they are forwarded to the primary solver.
 #' @export
 entropic_gromov_wasserstein2 <- function(...) {
   out <- entropic_gromov_wasserstein(...)
   out$gw_dist
 }
 
-#' Exact Gromov-Wasserstein via Conditional Gradient (square loss)
+#' Unregularized Gromov-Wasserstein via Conditional Gradient (square loss)
 #'
-#' POT-compatible exact GW wrapper using the optimized exact FGW core with
-#' zero feature cost and `alpha = 1`.
+#' POT-compatible unregularized GW wrapper using the FGW conditional-gradient
+#' core with zero feature cost and `alpha = 1`. This is not a global optimizer
+#' of the non-convex GW objective.
 #'
 #' @inheritParams entropic_gromov_wasserstein
 #' @param tol_rel Relative stopping tolerance for exact CG.
@@ -270,7 +275,7 @@ gromov_wasserstein <- function(
     p = NULL,
     q = NULL,
     loss_fun = "square_loss",
-    symmetric = TRUE,
+    symmetric = NULL,
     G0 = NULL,
     max_iter = 500L,
     tol_rel = 1e-9,
@@ -304,10 +309,11 @@ gromov_wasserstein <- function(
   out
 }
 
-#' Exact Gromov-Wasserstein Objective Value
+#' Unregularized Gromov-Wasserstein Objective Value
 #'
 #' @inheritParams gromov_wasserstein
 #' @return Numeric scalar GW value.
+#' @param ... Additional arguments. Unused extras are rejected when the solver uses `.reject_unused_dots()`; otherwise they are forwarded to the primary solver.
 #' @export
 gromov_wasserstein2 <- function(...) {
   out <- gromov_wasserstein(...)
@@ -318,6 +324,7 @@ gromov_wasserstein2 <- function(...) {
 #'
 #' @inheritParams fgw_entropic
 #' @return A list with `plan`, `fgw_dist`, `iterations`, `error`.
+#' @param ... Additional arguments. Unused extras are rejected when the solver uses `.reject_unused_dots()`; otherwise they are forwarded to the primary solver.
 #' @export
 entropic_fused_gromov_wasserstein <- function(...) {
   fgw_entropic(...)
@@ -327,24 +334,27 @@ entropic_fused_gromov_wasserstein <- function(...) {
 #'
 #' @inheritParams fgw_entropic
 #' @return Numeric scalar FGW value.
+#' @param ... Additional arguments. Unused extras are rejected when the solver uses `.reject_unused_dots()`; otherwise they are forwarded to the primary solver.
 #' @export
 entropic_fused_gromov_wasserstein2 <- function(...) {
   fgw_entropic2(...)
 }
 
-#' POT Alias for Exact FGW
+#' POT Alias for Unregularized FGW
 #'
 #' @inheritParams fgw_exact_cg
 #' @return A list with `plan`, `fgw_dist`, `iterations`, `error`, `loss_trace`.
+#' @param ... Additional arguments. Unused extras are rejected when the solver uses `.reject_unused_dots()`; otherwise they are forwarded to the primary solver.
 #' @export
 fused_gromov_wasserstein <- function(...) {
   fgw_exact_cg(...)
 }
 
-#' POT Alias for Exact FGW Value
+#' POT Alias for Unregularized FGW Value
 #'
 #' @inheritParams fgw_exact_cg
 #' @return Numeric scalar FGW value.
+#' @param ... Additional arguments. Unused extras are rejected when the solver uses `.reject_unused_dots()`; otherwise they are forwarded to the primary solver.
 #' @export
 fused_gromov_wasserstein2 <- function(...) {
   out <- fused_gromov_wasserstein(...)
@@ -356,6 +366,7 @@ fused_gromov_wasserstein2 <- function(...) {
 #' @inheritParams fugw_kl
 #' @return A list with `pi_samp`, `pi_feat`, `fugw_cost`, `linear_cost`,
 #'   `iterations`, and `error`.
+#' @param ... Additional arguments. Unused extras are rejected when the solver uses `.reject_unused_dots()`; otherwise they are forwarded to the primary solver.
 #' @export
 fused_unbalanced_gromov_wasserstein <- function(...) {
   fugw_kl(...)
@@ -365,6 +376,7 @@ fused_unbalanced_gromov_wasserstein <- function(...) {
 #'
 #' @inheritParams fugw_kl
 #' @return Numeric scalar FUGW value.
+#' @param ... Additional arguments. Unused extras are rejected when the solver uses `.reject_unused_dots()`; otherwise they are forwarded to the primary solver.
 #' @export
 fused_unbalanced_gromov_wasserstein2 <- function(...) {
   fugw_kl2(...)
@@ -387,6 +399,8 @@ fused_unbalanced_gromov_wasserstein2 <- function(...) {
 #' @param tol Stopping tolerance on Frobenius norm of plan updates.
 #' @param check_every Evaluate stopping criterion every `check_every` iterations.
 #' @param verbose If `TRUE`, print iterative error diagnostics.
+#' @param precision Numeric precision mode: `"mixed"` or `"double"`.
+#' @param backend `"cpp"` or `"r"`.
 #' @return A list with `plan`, `q`, `srgw_dist`, `iterations`, and `error`.
 #' @export
 entropic_semirelaxed_gromov_wasserstein <- function(
@@ -415,17 +429,16 @@ entropic_semirelaxed_gromov_wasserstein <- function(
   }
   ns <- nrow(C1)
   nt <- nrow(C2)
-  M0 <- matrix(0, nrow = ns, ncol = nt)
   out <- if (backend == "cpp") {
     if (is.null(p)) p <- rep(1 / ns, ns)
     p <- .assert_prob(p, ns, "p")
     if (is.null(G0)) {
-      G0 <- matrix(numeric(0), nrow = 0, ncol = 0)
+      G0 <- .empty_feature_cost()
     } else {
       .assert_matrix(G0, "G0")
     }
     cpp_entropic_semirelaxed_fgw_square(
-      M = M0,
+      M = .empty_feature_cost(),
       C1 = C1,
       C2 = C2,
       p = p,
@@ -440,7 +453,7 @@ entropic_semirelaxed_gromov_wasserstein <- function(
     )
   } else {
     .entropic_semirelaxed_fgw_core(
-      M = M0,
+      M = matrix(0, nrow = ns, ncol = nt),
       C1 = C1,
       C2 = C2,
       p = p,
@@ -468,6 +481,7 @@ entropic_semirelaxed_gromov_wasserstein <- function(
 #'
 #' @inheritParams entropic_semirelaxed_gromov_wasserstein
 #' @return Numeric scalar semirelaxed GW value.
+#' @param ... Additional arguments. Unused extras are rejected when the solver uses `.reject_unused_dots()`; otherwise they are forwarded to the primary solver.
 #' @export
 entropic_semirelaxed_gromov_wasserstein2 <- function(...) {
   out <- entropic_semirelaxed_gromov_wasserstein(...)
@@ -492,6 +506,8 @@ entropic_semirelaxed_gromov_wasserstein2 <- function(...) {
 #' @param tol Stopping tolerance on Frobenius norm of plan updates.
 #' @param check_every Evaluate stopping criterion every `check_every` iterations.
 #' @param verbose If `TRUE`, print iterative error diagnostics.
+#' @param precision Numeric precision mode: `"mixed"` or `"double"`.
+#' @param backend `"cpp"` or `"r"`.
 #' @return A list with `plan`, `q`, `srfgw_dist`, `lin_loss`, `quad_loss`,
 #'   `iterations`, and `error`.
 #' @export
@@ -568,6 +584,7 @@ entropic_semirelaxed_fused_gromov_wasserstein <- function(
 #'
 #' @inheritParams entropic_semirelaxed_fused_gromov_wasserstein
 #' @return Numeric scalar semirelaxed FGW value.
+#' @param ... Additional arguments. Unused extras are rejected when the solver uses `.reject_unused_dots()`; otherwise they are forwarded to the primary solver.
 #' @export
 entropic_semirelaxed_fused_gromov_wasserstein2 <- function(...) {
   out <- entropic_semirelaxed_fused_gromov_wasserstein(...)

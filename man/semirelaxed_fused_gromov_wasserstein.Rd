@@ -39,13 +39,19 @@ semirelaxed_fused_gromov_wasserstein(
 
 \item{G0}{Optional initial semirelaxed plan (\verb{ns x nt}) with row marginals \code{p}.}
 
+\item{log}{If \code{TRUE}, include \code{loss_trace}.}
+
 \item{max_iter}{Max mirror-descent iterations.}
 
 \item{tol_rel}{Relative stopping tolerance.}
 
 \item{tol_abs}{Absolute stopping tolerance.}
 
+\item{random_state}{Ignored; retained for POT signature compatibility.}
+
 \item{verbose}{If \code{TRUE}, print iterative error diagnostics.}
+
+\item{...}{Additional arguments. Unused extras are rejected when the solver uses \code{.reject_unused_dots()}; otherwise they are forwarded to the primary solver.}
 }
 \value{
 A list with \code{plan}, \code{q}, \code{srfgw_dist}, \code{lin_loss}, \code{quad_loss},

@@ -6,6 +6,9 @@
 \usage{
 fused_unbalanced_gromov_wasserstein(...)
 }
+\arguments{
+\item{...}{Additional arguments. Unused extras are rejected when the solver uses \code{.reject_unused_dots()}; otherwise they are forwarded to the primary solver.}
+}
 \value{
 A list with \code{pi_samp}, \code{pi_feat}, \code{fugw_cost}, \code{linear_cost},
 \code{iterations}, and \code{error}.

@@ -18,8 +18,9 @@ knitr::opts_chunk$set(
 )
 ```
 
-`rfugw` ships many Gromov-Wasserstein variants. This guide helps you pick the
-right one for your problem.
+`rfugw` ships linear optimal transport plus Gromov-Wasserstein variants. This
+guide compares formulation, marginals, regularization, maturity, and typical
+performance. See `inst/solver-contract.md` for the supported API.
 
 ## Setup: two small metric spaces
 
@@ -47,16 +48,32 @@ M <- as.matrix(dist(rbind(F_src, F_tgt)))[1:ns, (ns + 1):(ns + nt)]
 M <- M / max(M)
 ```
 
+## Linear optimal transport
+
+Use these when you already have a cost matrix between the same feature space.
+
+```{r linear-ot}
+M_lin <- matrix(c(0, 1, 1, 0), 2, 2)
+sink <- ot_sinkhorn(M_lin, epsilon = 0.1)
+sink$status
+sink$residual
+emd <- ot_emd(M_lin)
+emd$ot_dist
+```
+
+`print(sink)` shows status and residuals without dumping the plan. Inspect
+`rfugw_value(sink)` and `ot_validate_plan(sink, c(0.5, 0.5), c(0.5, 0.5))`.
+
 ## Decision tree
 
 ```
 Do you have cross-domain features (M)?
 ├─ No  → GW (structure only)
-│   ├─ Need exact solution?       → gromov_wasserstein()
-│   └─ Speed matters?             → entropic_gromov_wasserstein()
+│   ├─ Unregularized CG + LP?     → gromov_wasserstein()
+│   └─ Entropic / speed?          → entropic_gromov_wasserstein()
 └─ Yes → FGW (structure + features)
-    ├─ Need exact solution?       → fgw_exact_cg()
-    └─ Speed matters?             → fgw_entropic()
+    ├─ Unregularized CG + LP?     → fgw_exact_cg()
+    └─ Entropic / speed?          → fgw_entropic()
 
 Are your distributions the same total mass?
 ├─ Yes, and both marginals fixed  → standard GW / FGW (above)
@@ -71,7 +88,7 @@ Both marginals are fixed (source and target weights sum to 1 each). The coupling
 must satisfy `rowSums(plan) == p` and `colSums(plan) == q`.
 
 ```{r standard-gw}
-# Exact GW (conditional gradient + LP direction)
+# Unregularized GW (conditional gradient + exact linear-OT direction)
 out_gw <- gromov_wasserstein(C1, C2)
 out_gw$gw_dist
 ```
@@ -83,23 +100,27 @@ out_fgw$fgw_dist
 ```
 
 ```{r exact-fgw}
-# Exact FGW (conditional gradient, no regularization)
+# Unregularized FGW (conditional gradient, no entropic term)
 out_exact <- fgw_exact_cg(M, C1, C2, alpha = 0.5)
 out_exact$fgw_dist
 ```
 
-**When to use exact vs. entropic:** Exact solvers give sparser, more
-interpretable couplings but scale poorly (LP subproblem at each iteration).
-Entropic solvers are much faster for problems beyond ~50 points.
+**When to use unregularized CG vs. entropic:** Unregularized solvers give
+sparser, more interpretable couplings but scale poorly (an LP subproblem at
+each iteration). They are local procedures on a non-convex objective, not
+certified global minimizers. Entropic solvers are much faster for problems
+beyond ~50 points.
 
 ## Partial GW and FGW
 
 Sometimes only a fraction of the mass should be transported---useful when the
 two domains have different sizes or when you expect only partial overlap.
 
-The `m` parameter controls how much mass to transport.
+The `m` parameter controls how much mass to transport. Unregularized partial
+solvers need the Suggests package `lpSolve`
+(`install.packages("lpSolve")`). Entropic partial solvers do not.
 
-```{r partial-gw}
+```{r partial-gw, eval = requireNamespace("lpSolve", quietly = TRUE)}
 out_pgw <- partial_gromov_wasserstein(C1, C2, m = 0.5, log = TRUE)
 out_pgw$partial_gw_dist
 
@@ -107,12 +128,12 @@ out_pgw$partial_gw_dist
 sum(out_pgw$plan)
 ```
 
-```{r partial-fgw}
+```{r partial-fgw, eval = requireNamespace("lpSolve", quietly = TRUE)}
 out_pfgw <- partial_fused_gromov_wasserstein(M, C1, C2, alpha = 0.5, m = 0.7, log = TRUE)
 out_pfgw$partial_fgw_dist
 ```
 
-Entropic partial variants are also available:
+Entropic partial variants are also available and do not need `lpSolve`:
 
 ```{r entropic-partial}
 out_epgw <- entropic_partial_gromov_wasserstein(C1, C2, m = 0.6, reg = 0.05, log = TRUE)
@@ -236,17 +257,52 @@ out_lr$fgw_dist
 
 ## Summary table
 
-| Variant | Function | Marginals | Best for |
-|---------|----------|-----------|----------|
-| Standard GW | `gromov_wasserstein()` | Both fixed | Small exact problems |
-| Entropic GW | `entropic_gromov_wasserstein()` | Both fixed | Fast structure matching |
-| Standard FGW | `fgw_exact_cg()` | Both fixed | Exact structure + features |
-| Entropic FGW | `fgw_entropic()` | Both fixed | Fast structure + features |
-| Partial GW/FGW | `partial_*()` | Partial mass | Incomplete overlap |
-| Semirelaxed GW/FGW | `semirelaxed_*()` | Source fixed, target free | Unknown target density |
-| Unbalanced FUGW | `fugw_kl()` | Both relaxed (KL) | Noisy, unbalanced data |
+| Function | Formulation | Marginals | Regularization | Maturity | Performance |
+|----------|-------------|-----------|----------------|----------|-------------|
+| `ot_emd()` | Linear OT, simplex | Both fixed | None | Flagship | Small/medium exact plans |
+| `ot_sinkhorn()` | Linear OT, Sinkhorn | Both fixed | Entropic `epsilon` | Flagship | Fast; log path for tiny `epsilon` |
+| `ot_sinkhorn_unbalanced()` | Linear UOT, KL | Relaxed | Entropic + KL `rho` | Flagship | Same inner kernel as FUGW |
+| `gromov_wasserstein()` / `fgw_exact_cg()` | Unregularized CG + LP | Both fixed | None | Flagship | Local CG, not a global minimizer |
+| `entropic_gromov_wasserstein()` / `fgw_entropic()` | Entropic PGD/PPA | Both fixed | Entropic `epsilon` | Flagship | Default workhorse |
+| `partial_*()` | Partial CG | Partial mass `m` | None; needs `lpSolve` | Supported | Exact partial LP steps |
+| `entropic_partial_*()` | Entropic partial | Partial mass `m` | Entropic `reg` | Supported | No `lpSolve` |
+| `semirelaxed_*()` | Unregularized / entropic SR | Source fixed | Optional entropy | Supported | Fast C++ path if symmetric |
+| `fugw_kl()` | Fused unbalanced GW | Both relaxed | Entropic + KL | Flagship | BCD with nested UOT |
+| `sampled_*()` / `lowrank_*()` | Approximate | Both fixed | Entropic | **Experimental** | Certified envelope only; see below |
+
+## Experimental APIs
+
+`sampled_gromov_wasserstein()`, `sampled_gromov_wasserstein_coords()`,
+`sampled_gw_from_graphs()`, and `lowrank_gromov_wasserstein_samples()` are
+labeled experimental. They are not certified 0.1 flagship solvers. Names
+and signatures may change (`bd-01M05QY9GKDDTB3CXTKAJE0E8G`).
+
+The only certified 0.1 claims are:
+
+- Sampled GW quality versus a dense entropic GW reference improves from
+  a tiny budget such as `(2, 1)` to a full budget `(ns, nt)`. Intermediate
+  budgets are not certified as monotone.
+- Requested budgets below 1 error. Source or target sample counts above
+  `ns` / `nt` warn and clamp.
+- Coordinate-native and graph paths store less than two dense `n x n`
+  structure costs. The returned plan is still dense.
+- `lowrank_gromov_wasserstein_samples()` is a post-hoc SVD of a dense
+  plan. Reconstruction error decreases as rank grows up to `min(ns, nt)`.
+
+Evidence: `inst/bench/sampled-budget-curves.md`.
+
+## Threading and memory
+
+Single-subject solvers are serial. `multialign_fit(n_threads = ...)` is
+the parallel kernel: it farms subjects, not inner Sinkhorn iterations.
+`n_threads = 1` matches `n_threads > 1`. When using more than one
+subject thread, BLAS is pinned to one thread to avoid oversubscription.
+`structure_knn` does not shrink memory. The fused feature batch avoids
+an R-side `M_list`. Details: `inst/solver-contract.md` and
+`inst/bench/threading-memory.md`.
 
 ## Next steps
 
+- `vignette("linear-ot")`: balanced and unbalanced linear OT, barycentric projection
 - `vignette("barycenters")`: computing average shapes
 - `vignette("multiset-alignment")`: aligning many subjects to a shared template

@@ -2,13 +2,16 @@
 % Please edit documentation in R/pot_api.R
 \name{gromov_wasserstein2}
 \alias{gromov_wasserstein2}
-\title{Exact Gromov-Wasserstein Objective Value}
+\title{Unregularized Gromov-Wasserstein Objective Value}
 \usage{
 gromov_wasserstein2(...)
+}
+\arguments{
+\item{...}{Additional arguments. Unused extras are rejected when the solver uses \code{.reject_unused_dots()}; otherwise they are forwarded to the primary solver.}
 }
 \value{
 Numeric scalar GW value.
 }
 \description{
-Exact Gromov-Wasserstein Objective Value
+Unregularized Gromov-Wasserstein Objective Value
 }

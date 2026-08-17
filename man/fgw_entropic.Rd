@@ -20,7 +20,7 @@ fgw_entropic(
   structure_rank = 0L,
   sinkhorn_method = c("scaling", "log"),
   precision = c("mixed", "double"),
-  symmetric = TRUE,
+  symmetric = NULL,
   solver = c("PGD", "PPA"),
   check_every = 1L
 )
@@ -32,13 +32,13 @@ fgw_entropic(
 
 \item{C2}{Target structure cost matrix (\verb{nt x nt}).}
 
-\item{p}{Source weights (default uniform).}
+\item{p}{Source weights (default uniform). Renormalized to sum 1.}
 
-\item{q}{Target weights (default uniform).}
+\item{q}{Target weights (default uniform). Renormalized to sum 1.}
 
-\item{alpha}{Trade-off between feature and structure terms.}
+\item{alpha}{Trade-off between feature and structure terms, in \verb{[0, 1]}.}
 
-\item{epsilon}{Entropic regularization.}
+\item{epsilon}{Entropic regularization (must be positive).}
 
 \item{max_iter}{Max outer FGW iterations.}
 
@@ -53,20 +53,37 @@ fgw_entropic(
 \item{structure_rank}{Optional low-rank approximation rank for structure
 matrices in the FGW tensor product (\code{0} disables approximation).}
 
+\item{sinkhorn_method}{Sinkhorn variant: \code{"scaling"} or \code{"log"}.}
+
 \item{precision}{Numeric precision mode: \code{"mixed"} (default) or \code{"double"}
 (\code{"mixed"} uses float inner iterations with double final objective
 evaluation). For larger problems, \code{"double"} uses a mixed-precision
 accelerated inner Sinkhorn path while returning double outputs.}
 
-\item{symmetric}{Assume \code{C1} and \code{C2} are symmetric if \code{TRUE}.}
+\item{symmetric}{\code{NULL} auto-detects symmetry of \code{C1} and \code{C2}. \code{TRUE}
+requires both costs to be symmetric within \code{1e-10}. \code{FALSE} uses the
+two-sided tensor.}
 
 \item{solver}{Either \code{"PGD"} or \code{"PPA"}.}
 
 \item{check_every}{Evaluate outer stopping error every \code{check_every} iterations.}
 }
 \value{
-A list with \code{plan}, \code{fgw_dist}, \code{iterations}, \code{error}.
+A list with \code{plan}, \code{fgw_dist}, \code{iterations}, \code{error}, \code{residual},
+\code{status}, \code{converged}, and marginal residuals. See
+\code{inst/solver-contract.md}.
 }
 \description{
 POT-style projected gradient iterations with Sinkhorn projections.
+Reported \code{fgw_dist} is the unregularized FGW objective at the returned plan;
+it does not add the entropic term.
+}
+\examples{
+set.seed(1)
+C1 <- as.matrix(dist(matrix(rnorm(8), 4, 2)))
+C2 <- as.matrix(dist(matrix(rnorm(10), 5, 2)))
+M <- matrix(runif(20), 4, 5)
+out <- fgw_entropic(M, C1, C2, epsilon = 0.1, max_iter = 40L)
+out$status
+out$residual
 }

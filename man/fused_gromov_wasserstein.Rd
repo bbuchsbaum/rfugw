@@ -2,13 +2,16 @@
 % Please edit documentation in R/pot_api.R
 \name{fused_gromov_wasserstein}
 \alias{fused_gromov_wasserstein}
-\title{POT Alias for Exact FGW}
+\title{POT Alias for Unregularized FGW}
 \usage{
 fused_gromov_wasserstein(...)
+}
+\arguments{
+\item{...}{Additional arguments. Unused extras are rejected when the solver uses \code{.reject_unused_dots()}; otherwise they are forwarded to the primary solver.}
 }
 \value{
 A list with \code{plan}, \code{fgw_dist}, \code{iterations}, \code{error}, \code{loss_trace}.
 }
 \description{
-POT Alias for Exact FGW
+POT Alias for Unregularized FGW
 }

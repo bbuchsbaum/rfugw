@@ -6,6 +6,9 @@
 \usage{
 entropic_fused_gromov_wasserstein(...)
 }
+\arguments{
+\item{...}{Additional arguments. Unused extras are rejected when the solver uses \code{.reject_unused_dots()}; otherwise they are forwarded to the primary solver.}
+}
 \value{
 A list with \code{plan}, \code{fgw_dist}, \code{iterations}, \code{error}.
 }

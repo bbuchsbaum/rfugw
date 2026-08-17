@@ -37,7 +37,8 @@ lowrank_gromov_wasserstein_samples(
 
 \item{reg}{Entropic regularization used for the inner GW solve.}
 
-\item{rank}{Target low-rank factorization rank.}
+\item{rank}{Target low-rank factorization rank. Values below 1 error.
+Values above \code{min(ns, nt)} warn and clamp.}
 
 \item{alpha}{Lower bound parameter retained for POT compatibility.}
 
@@ -74,3 +75,11 @@ Approximate low-rank sampled GW interface for large problems. This function
 computes an entropic GW plan then derives a rank-\code{r} factorization via
 truncated SVD. It is provided as an experimental POT-compatibility tier.
 }
+\section{Experimental}{
+
+This is a post-hoc SVD of a dense GW plan, not a factorized solver.
+Reconstruction error \verb{||T - T_r||_F / ||T||_F} decreases as rank
+increases up to \code{min(ns, nt)}. It is experimental and may be renamed
+(\verb{bd-01M05QY9GKDDTB3CXTKAJE0E8G}). See \code{inst/bench/sampled-budget-curves.md}.
+}
+

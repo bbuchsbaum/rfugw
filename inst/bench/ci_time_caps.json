@@ -1,0 +1,21 @@
+{
+  "_policy": "Median solve_ms caps after warmup. A row fails only if its median exceeds the cap. Caps are slack for GitHub-hosted runner noise, not tight speed claims. Changing a cap requires a protocol artifact (meta.json + runs.csv) in the same PR and a reviewer note.",
+  "pr": [
+    {"suite": "fgw", "method": "fgw_entropic", "n": 12, "solve_ms_max": 8000},
+    {"suite": "fugw", "method": "fugw_kl", "n": 8, "solve_ms_max": 12000},
+    {"suite": "semirelaxed", "method": "semirelaxed_gromov_wasserstein", "n": 12, "solve_ms_max": 8000},
+    {"suite": "semirelaxed", "method": "semirelaxed_fused_gromov_wasserstein", "n": 12, "solve_ms_max": 8000},
+    {"suite": "semirelaxed", "method": "entropic_semirelaxed_gromov_wasserstein", "n": 12, "solve_ms_max": 8000}
+  ],
+  "nightly": [
+    {"suite": "fgw", "method": "fgw_entropic", "n": 16, "solve_ms_max": 12000},
+    {"suite": "fgw", "method": "fgw_entropic", "n": 24, "solve_ms_max": 20000},
+    {"suite": "fugw", "method": "fugw_kl", "n": 8, "solve_ms_max": 12000},
+    {"suite": "fugw", "method": "fugw_kl", "n": 12, "solve_ms_max": 20000},
+    {"suite": "semirelaxed", "method": "semirelaxed_gromov_wasserstein", "n": 16, "solve_ms_max": 12000},
+    {"suite": "partial", "method": "partial_gromov_wasserstein", "n": 10, "solve_ms_max": 20000},
+    {"suite": "partial", "method": "entropic_partial_gromov_wasserstein", "n": 10, "solve_ms_max": 12000},
+    {"suite": "ucoot", "method": "unbalanced_co_optimal_transport", "n": 12, "solve_ms_max": 12000},
+    {"suite": "sampled", "method": "sampled_gromov_wasserstein", "n": 12, "solve_ms_max": 8000}
+  ]
+}

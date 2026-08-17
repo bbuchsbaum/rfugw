@@ -6,6 +6,9 @@
 \usage{
 fugw_kl2(...)
 }
+\arguments{
+\item{...}{Additional arguments. Unused extras are rejected when the solver uses \code{.reject_unused_dots()}; otherwise they are forwarded to the primary solver.}
+}
 \value{
 Numeric scalar FUGW objective value.
 }

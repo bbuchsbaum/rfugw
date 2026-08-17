@@ -6,6 +6,9 @@
 \usage{
 gromov_barycenters(...)
 }
+\arguments{
+\item{...}{Additional arguments. Unused extras are rejected when the solver uses \code{.reject_unused_dots()}; otherwise they are forwarded to the primary solver.}
+}
 \description{
 Convenience alias to \code{entropic_gromov_barycenters}.
 }

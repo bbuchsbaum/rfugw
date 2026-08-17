@@ -70,11 +70,11 @@ similarity.
 ## Gromov-Wasserstein: structure only
 
 When you only have geometry---no shared features---use `gromov_wasserstein()`
-(exact, via conditional gradient) or `entropic_gromov_wasserstein()` (faster,
-regularized).
+(unregularized conditional gradient with an exact linear-OT step) or
+`entropic_gromov_wasserstein()` (faster, regularized).
 
 ```{r gw-solve}
-# Exact GW via conditional gradient
+# Unregularized GW via conditional gradient
 out_exact <- gromov_wasserstein(C1, C2)
 out_exact$gw_dist
 ```

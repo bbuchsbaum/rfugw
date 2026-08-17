@@ -28,15 +28,15 @@ fugw_kl(
 
 \item{Cy}{Target structure matrix.}
 
-\item{wx}{Source weights (default uniform).}
+\item{wx}{Source weights (default uniform). Renormalized to sum 1.}
 
-\item{wy}{Target weights (default uniform).}
+\item{wy}{Target weights (default uniform). Renormalized to sum 1.}
 
 \item{reg_marginals}{Length-1 or length-2 marginal relaxation parameters.}
 
 \item{epsilon}{Joint KL regularization parameter (entropic term).}
 
-\item{alpha}{Linear FGW term coefficient.}
+\item{alpha}{Linear FGW term coefficient, in \verb{[0, 1]}.}
 
 \item{M}{Linear sample cost matrix (default \code{NULL}).}
 
@@ -59,8 +59,15 @@ fugw_kl(
 }
 \value{
 A list with \code{pi_samp}, \code{pi_feat}, \code{fugw_cost}, \code{linear_cost},
-\code{iterations}, and \code{error}.
+\code{iterations}, \code{error}, \code{status}, and \code{converged}.
 }
 \description{
 POT-style BCD on two couplings with KL-unbalanced OT subproblems.
+}
+\examples{
+set.seed(1)
+Cx <- as.matrix(dist(matrix(rnorm(8), 4, 2)))
+Cy <- as.matrix(dist(matrix(rnorm(10), 5, 2)))
+out <- fugw_kl(Cx, Cy, epsilon = 0.05, max_iter = 20L)
+out$status
 }

@@ -56,6 +56,8 @@ entropic_gromov_barycenters(
 \item{init_C}{Optional initial barycenter structure.}
 
 \item{random_state}{Optional seed for initialization.}
+
+\item{...}{Additional arguments. Unused extras are rejected when the solver uses \code{.reject_unused_dots()}; otherwise they are forwarded to the primary solver.}
 }
 \value{
 If \code{log = FALSE}, returns barycenter structure matrix \code{C}. If

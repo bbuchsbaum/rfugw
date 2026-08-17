@@ -34,7 +34,8 @@ sampled_gromov_wasserstein(
 \item{loss_fun}{Currently only \code{"square_loss"} is supported.}
 
 \item{nb_samples_grad}{Number of sampled gradient points, or length-2 vector
-\verb{(n_source_samples, n_target_samples)}.}
+\verb{(n_source_samples, n_target_samples)}. Values below 1 error. Source or
+target counts above \code{ns} / \code{nt} warn and clamp.}
 
 \item{epsilon}{Entropic regularization for the OT projection step. If \verb{<= 0},
 exact LP projection is used.}
@@ -63,3 +64,12 @@ returns a list with \code{plan}, \code{gw_dist_estimated}, and \code{iterations}
 POT-style stochastic GW estimator using sampled gradients and balanced OT
 projection steps.
 }
+\section{Experimental}{
+
+Sampled GW is experimental. The certified 0.1 envelope is that a full
+budget \verb{(ns, nt)} is closer to dense \code{\link[=entropic_gromov_wasserstein]{entropic_gromov_wasserstein()}}
+than a tiny budget such as \verb{(2, 1)}, in square-loss GW and plan
+Frobenius distance. Intermediate budgets are not certified as
+monotone. See \code{inst/bench/sampled-budget-curves.md}.
+}
+
