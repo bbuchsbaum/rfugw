@@ -41,7 +41,8 @@ sampled_gromov_wasserstein_coords(
 \item{loss_fun}{Currently only \code{"square_loss"} is supported.}
 
 \item{nb_samples_grad}{Number of sampled gradient points, or length-2 vector
-\verb{(n_source_samples, n_target_samples)}.}
+\verb{(n_source_samples, n_target_samples)}. Values below 1 error. Source or
+target counts above \code{ns} / \code{nt} warn and clamp.}
 
 \item{epsilon}{Entropic regularization for projection step.}
 
@@ -81,3 +82,13 @@ required structure-distance rows on the fly. This avoids storing dense
 \verb{n x n} distance matrices and is suitable after sparse-graph diffusion
 embeddings.
 }
+\section{Experimental}{
+
+Coordinate-native sampled GW is experimental. The certified 0.1
+envelope matches \code{\link[=sampled_gromov_wasserstein]{sampled_gromov_wasserstein()}}: a full budget
+\verb{(ns, nt)} is closer to dense entropic GW than a tiny budget.
+Intermediate budgets are not certified as monotone. Inputs scale as
+\verb{O(n d)} rather than \code{O(n^2)} structure costs. See
+\code{inst/bench/sampled-budget-curves.md}.
+}
+

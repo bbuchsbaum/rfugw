@@ -7,6 +7,8 @@
 unbalanced_co_optimal_transport2(..., log = FALSE)
 }
 \arguments{
+\item{...}{Additional arguments. Unused extras are rejected when the solver uses \code{.reject_unused_dots()}; otherwise they are forwarded to the primary solver.}
+
 \item{log}{If \code{TRUE}, return diagnostics and objective decomposition.}
 }
 \value{

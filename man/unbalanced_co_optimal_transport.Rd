@@ -12,9 +12,9 @@ unbalanced_co_optimal_transport(
   wy_samp = NULL,
   wy_feat = NULL,
   reg_marginals = 10,
-  epsilon = 0,
-  divergence = c("kl", "l2"),
-  unbalanced_solver = c("sinkhorn", "sinkhorn_log", "mm", "lbfgsb"),
+  epsilon = 0.01,
+  divergence = c("kl"),
+  unbalanced_solver = c("sinkhorn", "sinkhorn_log"),
   alpha = 0,
   M_samp = NULL,
   M_feat = NULL,
@@ -45,11 +45,13 @@ unbalanced_co_optimal_transport(
 
 \item{reg_marginals}{Marginal relaxation(s), length 1 or 2.}
 
-\item{epsilon}{Entropic regularization(s), scalar or length 2.}
+\item{epsilon}{Entropic regularization(s), scalar or length 2. Must be
+positive; default \code{1e-2}.}
 
-\item{divergence}{Currently only \code{"kl"} is supported.}
+\item{divergence}{Only \code{"kl"} is supported. \code{"l2"} is rejected.}
 
-\item{unbalanced_solver}{Currently only \code{"sinkhorn"} is supported.}
+\item{unbalanced_solver}{\code{"sinkhorn"} or \code{"sinkhorn_log"} (currently the
+same scaling-domain implementation). \code{"mm"} and \code{"lbfgsb"} are rejected.}
 
 \item{alpha}{Linear-term coefficient(s), scalar or length 2.}
 
@@ -61,7 +63,7 @@ unbalanced_co_optimal_transport(
 
 \item{init_pi}{Optional list with \code{pi_samp} and \code{pi_feat} initial couplings.}
 
-\item{init_duals}{Retained for POT signature compatibility.}
+\item{init_duals}{Accepted for POT-shaped signatures and ignored.}
 
 \item{max_iter}{Max BCD iterations.}
 
@@ -74,6 +76,8 @@ unbalanced_co_optimal_transport(
 \item{log}{If \code{TRUE}, return diagnostics and objective decomposition.}
 
 \item{verbose}{If \code{TRUE}, print BCD diagnostics.}
+
+\item{...}{Additional arguments. Unused extras are rejected when the solver uses \code{.reject_unused_dots()}; otherwise they are forwarded to the primary solver.}
 }
 \value{
 A list with sample and feature couplings; with \code{log = TRUE}, includes

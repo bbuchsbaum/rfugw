@@ -12,9 +12,13 @@ src/*.gcda
 .omc/
 .venv/
 .venv_pot/
+.tmp-lib/
 
 # generated benchmark artifacts
 inst/bench/results/
+
+# local release-gate evidence
+.gate/
 
 # python cache
 **/__pycache__/

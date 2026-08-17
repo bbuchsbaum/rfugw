@@ -2,7 +2,7 @@
 % Please edit documentation in R/fgw.R
 \name{fgw_exact_cg}
 \alias{fgw_exact_cg}
-\title{Exact FGW via Conditional Gradient + LP Direction (square loss)}
+\title{Unregularized FGW via Conditional Gradient + LP Direction (square loss)}
 \usage{
 fgw_exact_cg(
   M,
@@ -11,7 +11,7 @@ fgw_exact_cg(
   p = NULL,
   q = NULL,
   alpha = 0.5,
-  symmetric = TRUE,
+  symmetric = NULL,
   G0 = NULL,
   max_iter = 500L,
   tol_rel = 1e-09,
@@ -29,17 +29,26 @@ fgw_exact_cg(
 
 \item{C2}{Target structure cost matrix (\verb{nt x nt}).}
 
-\item{p}{Source weights (default uniform).}
+\item{p}{Source weights (default uniform). Renormalized to sum 1.}
 
-\item{q}{Target weights (default uniform).}
+\item{q}{Target weights (default uniform). Renormalized to sum 1.}
 
-\item{alpha}{Trade-off between feature and structure terms.}
+\item{alpha}{Trade-off between feature and structure terms, in \verb{[0, 1]}.}
 
-\item{symmetric}{Assume \code{C1} and \code{C2} are symmetric if \code{TRUE}.}
+\item{symmetric}{\code{NULL} auto-detects symmetry of \code{C1} and \code{C2}. \code{TRUE}
+requires both costs to be symmetric within \code{1e-10}. \code{FALSE} uses the
+two-sided tensor.}
+
+\item{G0}{Optional feasible initial coupling (\verb{ns x nt}). Honored by every
+\code{lp_solver} backend.}
 
 \item{max_iter}{Max outer FGW iterations.}
 
-\item{lp_scale}{Integer mass scaling used for LP marginals.}
+\item{tol_rel}{Relative stopping tolerance on objective change.}
+
+\item{tol_abs}{Absolute stopping tolerance on objective change.}
+
+\item{lp_scale}{Integer mass scaling used for LP marginals (lpSolve backends).}
 
 \item{lp_solver}{LP backend for direction step: \code{"cpp_transport"} (default,
 C++ transport-simplex backend), \code{"lp_transport"} (lpSolve), or \code{"lp_matrix"}
@@ -50,8 +59,20 @@ C++ transport-simplex backend), \code{"lp_transport"} (lpSolve), or \code{"lp_ma
 \item{lp_tol}{Optimality tolerance for the C++ transport-simplex LP backend.}
 }
 \value{
-A list with \code{plan}, \code{fgw_dist}, \code{iterations}, \code{error}, \code{loss_trace}.
+A list with \code{plan}, \code{fgw_dist}, \code{iterations}, \code{error}, \code{rel_error},
+\code{loss_trace}, \code{status}, and \code{converged}.
 }
 \description{
-POT-style CG iterations with a linear-program transport direction step.
+Conditional-gradient iterations with an exact linear-OT direction step.
+The outer GW/FGW problem is non-convex; the returned plan is a stationary
+point of this procedure, not a certified global minimizer. Reported
+\code{fgw_dist} is the unregularized FGW objective.
+}
+\examples{
+set.seed(1)
+C1 <- as.matrix(dist(matrix(rnorm(8), 4, 2)))
+C2 <- as.matrix(dist(matrix(rnorm(8), 4, 2)))
+M <- matrix(runif(16), 4, 4)
+out <- fgw_exact_cg(M, C1, C2, max_iter = 20L)
+out$status
 }

@@ -1,1 +1,16 @@
+^.*\.Rproj$
+^\.Rproj\.user$
+^\.github$
+^\.mote$
+^\.omc$
+^\.venv
+^\.venv_pot$
 ^tools$
+^docs$
+^rfugw_.*\.tar\.gz$
+^rfugw$
+^inst/bench/results
+^\.gate$
+^inst/bench/__pycache__
+^\.gitignore$
+^\.cursor

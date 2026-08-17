@@ -43,6 +43,10 @@ entropic_semirelaxed_gromov_wasserstein(
 \item{check_every}{Evaluate stopping criterion every \code{check_every} iterations.}
 
 \item{verbose}{If \code{TRUE}, print iterative error diagnostics.}
+
+\item{precision}{Numeric precision mode: \code{"mixed"} or \code{"double"}.}
+
+\item{backend}{\code{"cpp"} or \code{"r"}.}
 }
 \value{
 A list with \code{plan}, \code{q}, \code{srgw_dist}, \code{iterations}, and \code{error}.

@@ -11,7 +11,7 @@ entropic_gromov_wasserstein(
   q = NULL,
   loss_fun = "square_loss",
   epsilon = 0.1,
-  symmetric = TRUE,
+  symmetric = NULL,
   G0 = NULL,
   max_iter = 1000L,
   tol = 1e-09,

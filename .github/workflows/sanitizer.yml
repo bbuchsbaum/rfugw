@@ -1,0 +1,104 @@
+name: sanitizer
+
+on:
+  push:
+    branches: [main, master]
+    paths:
+      - "R/**"
+      - "src/**"
+      - "tests/**"
+      - "tools/**"
+      - "DESCRIPTION"
+      - ".github/workflows/sanitizer.yml"
+  pull_request:
+    paths:
+      - "R/**"
+      - "src/**"
+      - "tests/**"
+      - "tools/**"
+      - "DESCRIPTION"
+      - ".github/workflows/sanitizer.yml"
+
+jobs:
+  generated:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: r-lib/actions/setup-r@v2
+        with:
+          use-public-rspm: true
+      - uses: r-lib/actions/setup-r-dependencies@v2
+        with:
+          extra-packages: any::Rcpp
+          needs: check
+      - name: Check generated Rcpp and Rd coverage
+        run: Rscript tools/check-generated.R
+
+  asan:
+    runs-on: ubuntu-latest
+    env:
+      GITHUB_PAT: ${{ secrets.GITHUB_TOKEN }}
+      RFUGW_OPENMP_FLAGS: ""
+      RFUGW_OPENMP_LIBS: ""
+      RFUGW_EXTRA_CXXFLAGS: "-O1 -g -fsanitize=address,undefined -fno-omit-frame-pointer -fno-sanitize-recover=undefined"
+      RFUGW_EXTRA_LIBS: "-fsanitize=address,undefined"
+      ASAN_OPTIONS: detect_leaks=0:abort_on_error=1
+      UBSAN_OPTIONS: print_stacktrace=1:halt_on_error=1
+    steps:
+      - uses: actions/checkout@v4
+      - uses: r-lib/actions/setup-r@v2
+        with:
+          use-public-rspm: true
+      - uses: r-lib/actions/setup-r-dependencies@v2
+        with:
+          extra-packages: any::testthat
+          needs: check
+      - name: Install with ASan/UBSan (serial)
+        run: R CMD INSTALL .
+      - name: Flagship sanitizer smoke
+        run: Rscript tools/smoke-flagship.R
+      - name: Upload sanitizer logs
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: asan-logs
+          path: |
+            *.log
+            /tmp/*.log
+          if-no-files-found: ignore
+
+  serial-smoke:
+    runs-on: ubuntu-latest
+    env:
+      GITHUB_PAT: ${{ secrets.GITHUB_TOKEN }}
+      RFUGW_OPENMP_FLAGS: ""
+      RFUGW_OPENMP_LIBS: ""
+    steps:
+      - uses: actions/checkout@v4
+      - uses: r-lib/actions/setup-r@v2
+        with:
+          use-public-rspm: true
+      - uses: r-lib/actions/setup-r-dependencies@v2
+        with:
+          extra-packages: any::testthat
+          needs: check
+      - name: Serial install and smoke
+        run: |
+          R CMD INSTALL .
+          Rscript tools/smoke-flagship.R
+
+  warnings:
+    runs-on: ubuntu-latest
+    env:
+      GITHUB_PAT: ${{ secrets.GITHUB_TOKEN }}
+      RFUGW_EXTRA_CXXFLAGS: "-Wall -Wextra -Werror -Wno-unknown-pragmas"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: r-lib/actions/setup-r@v2
+        with:
+          use-public-rspm: true
+      - uses: r-lib/actions/setup-r-dependencies@v2
+        with:
+          needs: check
+      - name: Compile with warnings as errors
+        run: R CMD INSTALL .

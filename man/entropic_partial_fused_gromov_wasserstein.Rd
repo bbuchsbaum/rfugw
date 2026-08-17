@@ -48,7 +48,13 @@ entropic_partial_fused_gromov_wasserstein(
 
 \item{numItermax}{Maximum CG iterations.}
 
+\item{tol}{Relative stopping tolerance on the partial objective.}
+
 \item{symmetric}{Assume \code{C1} and \code{C2} are symmetric if \code{TRUE}.}
+
+\item{log}{If \code{TRUE}, return a list with diagnostics; otherwise the plan.}
+
+\item{verbose}{If \code{TRUE}, print CG diagnostics.}
 
 \item{check_every}{Outer stopping check interval.}
 

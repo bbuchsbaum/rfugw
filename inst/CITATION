@@ -1,0 +1,17 @@
+citHeader("To cite rfugw in publications use:")
+
+year <- sub("-.*", "", meta$Date)
+if (!length(year)) {
+  year <- format(Sys.Date(), "%Y")
+}
+vers <- meta$Version
+
+bibentry(
+  bibtype = "Manual",
+  title = "rfugw: Fast Fused Unbalanced Gromov-Wasserstein Solvers",
+  author = person("Bradley", "Buchsbaum"),
+  year = year,
+  note = paste("R package version", vers),
+  url = "https://github.com/bbuchsbaum/rfugw",
+  key = "rfugw"
+)

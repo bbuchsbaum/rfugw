@@ -28,7 +28,9 @@ constexpr arma::uword kMatvecBlockedMinWorkF = 160000;  // ~400x400
 constexpr arma::uword kGemvMinWorkD = 120000;           // ~346x346
 constexpr arma::uword kGemvMinWorkF = 25000;            // ~160x160
 constexpr arma::uword kKernelOmpMinWork = 200000;
+#ifdef _OPENMP
 constexpr arma::uword kMatvecOmpMinWork = 200000;
+#endif
 
 inline bool can_use_inner_omp(arma::uword work, arma::uword min_work) {
 #ifdef _OPENMP
@@ -490,8 +492,8 @@ inline void matvec_colmajor_blocked(
   const T* xp = x.memptr();
   T* yp = y.memptr();
 
-  const bool use_omp = can_use_inner_omp(n * m, kMatvecOmpMinWork);
 #ifdef _OPENMP
+  const bool use_omp = can_use_inner_omp(n * m, kMatvecOmpMinWork);
   if (use_omp) {
 #pragma omp parallel for schedule(static)
     for (arma::sword ibs = 0; ibs < static_cast<arma::sword>(n); ibs += static_cast<arma::sword>(block_rows)) {
@@ -550,8 +552,8 @@ inline void tmatvec_colmajor_blocked(
   const T* xp = x.memptr();
   T* yp = y.memptr();
 
-  const bool use_omp = can_use_inner_omp(n * m, kMatvecOmpMinWork);
 #ifdef _OPENMP
+  const bool use_omp = can_use_inner_omp(n * m, kMatvecOmpMinWork);
   if (use_omp) {
 #pragma omp parallel for schedule(static)
     for (arma::sword js = 0; js < static_cast<arma::sword>(m); ++js) {
@@ -1700,6 +1702,22 @@ inline double div_between_product_kl(
   const double m_beta = arma::accu(beta);
   const double cst = (m_mu - m_alpha) * (m_nu - m_beta);
   return m_nu * kl_div(mu, alpha, true) + m_mu * kl_div(nu, beta, true) + cst;
+}
+
+inline double div_to_product_kl(
+    const arma::mat& pi,
+    const arma::vec& a,
+    const arma::vec& b,
+    const arma::vec& pi1,
+    const arma::vec& pi2,
+    bool mass) {
+  double res = arma::accu(pi % arma::log(pi + kTiny)) -
+    arma::accu(pi1 % arma::log(a + kTiny)) -
+    arma::accu(pi2 % arma::log(b + kTiny));
+  if (mass) {
+    res += -arma::accu(pi1) + arma::accu(a) * arma::accu(b);
+  }
+  return res;
 }
 
 inline double kl_scalar_shift_from_marginals_and_plan(
@@ -3457,7 +3475,7 @@ inline SrfgwEntropicCoreResult entropic_semirelaxed_fgw_square_core(
   dgemm_nn(hC1, G, scratch);
   dgemm_nt_accum(scratch, hC2, tens, -1.0, 1.0);
   const double quad_raw = arma::accu(tens % G);
-  const double lin_loss = (1.0 - alpha) * arma::accu(M % G);
+  const double lin_loss = (alpha >= 1.0 || M.n_elem == 0) ? 0.0 : (1.0 - alpha) * arma::accu(M % G);
   const double quad_loss = alpha * quad_raw;
 
   SrfgwEntropicCoreResult out;
@@ -3498,7 +3516,10 @@ inline SrfgwEntropicCoreResult entropic_semirelaxed_fgw_square_core_mixed(
   const bool alpha_zero = (alpha_f <= 0.0f);
   const float quad_scale_f = symmetric ? (2.0f * alpha_f) : alpha_f;
 
-  const arma::fmat Mf = arma::conv_to<arma::fmat>::from(M);
+  arma::fmat Mf;
+  if (!alpha_full) {
+    Mf = arma::conv_to<arma::fmat>::from(M);
+  }
   const arma::fmat C1f = arma::conv_to<arma::fmat>::from(C1);
   const arma::fmat C2f = arma::conv_to<arma::fmat>::from(C2);
   const arma::fvec pf = arma::conv_to<arma::fvec>::from(p);
@@ -3651,7 +3672,7 @@ inline SrfgwEntropicCoreResult entropic_semirelaxed_fgw_square_core_mixed(
   dgemm_nn(hC1_d, G, scratch_d);
   dgemm_nt_accum(scratch_d, hC2_d, tens, -1.0, 1.0);
   const double quad_raw = arma::accu(tens % G);
-  const double lin_loss = (1.0 - alpha) * arma::accu(M % G);
+  const double lin_loss = (alpha >= 1.0 || M.n_elem == 0) ? 0.0 : (1.0 - alpha) * arma::accu(M % G);
   const double quad_loss = alpha * quad_raw;
 
   SrfgwEntropicCoreResult out;
@@ -4352,7 +4373,8 @@ Rcpp::List cpp_entropic_semirelaxed_fgw_square(
   if (C2.n_rows != C2.n_cols) {
     Rcpp::stop("`C2` must be square.");
   }
-  if (M.n_rows != C1.n_rows || M.n_cols != C2.n_rows) {
+  const bool skip_M = (alpha >= 1.0) && (M.n_elem == 0);
+  if (!skip_M && (M.n_rows != C1.n_rows || M.n_cols != C2.n_rows)) {
     Rcpp::stop("`M` must have shape nrow(C1) x nrow(C2).");
   }
   if (p.n_elem != C1.n_rows) {
@@ -5196,7 +5218,8 @@ Rcpp::List cpp_fgw_exact_cg_square(
     double tol_rel,
     double tol_abs,
     int lp_max_iter,
-    double lp_tol) {
+    double lp_tol,
+    const arma::mat& init_plan) {
   arma::mat constC, hC1, hC2;
   init_matrices_square(C1, C2, p, q, constC, hC1, hC2);
   arma::mat constCt, hC1t, hC2t;
@@ -5205,7 +5228,15 @@ Rcpp::List cpp_fgw_exact_cg_square(
   }
 
   const arma::mat M_lin = (1.0 - alpha) * M;
-  arma::mat G = p * q.t();
+  arma::mat G;
+  if (init_plan.n_rows == 0 || init_plan.n_cols == 0) {
+    G = p * q.t();
+  } else {
+    if (init_plan.n_rows != p.n_elem || init_plan.n_cols != q.n_elem) {
+      Rcpp::stop("`init_plan` must have shape length(p) x length(q).");
+    }
+    G = init_plan;
+  }
   arma::mat scratch(C1.n_rows, C2.n_rows);
   arma::mat Acur(C1.n_rows, C2.n_rows);
   dgemm_nn(hC1, G, scratch);
@@ -5230,6 +5261,8 @@ Rcpp::List cpp_fgw_exact_cg_square(
   double abs_delta = std::numeric_limits<double>::quiet_NaN();
   double rel_delta = std::numeric_limits<double>::quiet_NaN();
   int it = 0;
+  bool lp_ok = true;
+  int inner_iterations = 0;
 
   arma::mat gG(C1.n_rows, C2.n_rows);
   arma::mat Mi(C1.n_rows, C2.n_rows);
@@ -5249,6 +5282,8 @@ Rcpp::List cpp_fgw_exact_cg_square(
     Mi = M_lin + alpha * gG;
 
     const TransportSimplexResult dir = transport_simplex_solve(Mi, p, q, lp_max_iter, lp_tol);
+    lp_ok = lp_ok && dir.converged;
+    inner_iterations += dir.iterations;
     arma::mat Gc = dir.plan;
     deltaG = Gc - G;
 
@@ -5293,7 +5328,9 @@ Rcpp::List cpp_fgw_exact_cg_square(
     Rcpp::Named("iterations") = it,
     Rcpp::Named("error") = abs_delta,
     Rcpp::Named("rel_error") = rel_delta,
-    Rcpp::Named("loss_trace") = loss_trace
+    Rcpp::Named("loss_trace") = loss_trace,
+    Rcpp::Named("lp_ok") = lp_ok,
+    Rcpp::Named("inner_iterations") = inner_iterations
   );
 }
 
@@ -6630,29 +6667,28 @@ Rcpp::List cpp_gw_square_terms_square(
   );
 }
 
-// [[Rcpp::export]]
-SEXP cpp_entropic_partial_wasserstein(
+struct EntropicPartialOtResult {
+  arma::mat plan;
+  int iterations;
+  double error;
+  std::vector<double> err_trace;
+  bool finite;
+};
+
+inline EntropicPartialOtResult entropic_partial_wasserstein_core(
     const arma::vec& a,
     const arma::vec& b,
     const arma::mat& M,
     double reg,
     double m,
-    int numItermax = 1000,
-    double stopThr = 1e-100,
-    bool verbose = false,
-    bool log = false) {
-  if (!std::isfinite(reg) || reg <= 0) {
-    Rcpp::stop("`reg` must be positive.");
-  }
-  if (M.n_rows != a.n_elem || M.n_cols != b.n_elem) {
-    Rcpp::stop("`a` and `b` must match the dimensions of `M`.");
-  }
-  if (!std::isfinite(m) || m < 0) {
-    Rcpp::stop("`m` must be finite and >= 0.");
-  }
-  if (numItermax < 1) {
-    Rcpp::stop("`numItermax` must be >= 1.");
-  }
+    int numItermax,
+    double stopThr,
+    bool verbose,
+    bool log) {
+  EntropicPartialOtResult out;
+  out.iterations = 0;
+  out.error = std::numeric_limits<double>::infinity();
+  out.finite = true;
 
   const arma::uword ns = M.n_rows;
   const arma::uword nt = M.n_cols;
@@ -6674,6 +6710,7 @@ SEXP cpp_entropic_partial_wasserstein(
   arma::mat Kprev(ns, nt, arma::fill::zeros);
   arma::mat K1(ns, nt, arma::fill::zeros);
   arma::mat K2(ns, nt, arma::fill::zeros);
+  arma::mat K_save(ns, nt, arma::fill::zeros);
   arma::mat denom(ns, nt, arma::fill::zeros);
   arma::vec row_sum(ns, arma::fill::zeros);
   arma::vec col_sum(nt, arma::fill::zeros);
@@ -6712,6 +6749,7 @@ SEXP cpp_entropic_partial_wasserstein(
     }
     q1 %= (Kprev / denom);
 
+    K_save = K1;
     K1 %= q2;
     col_sum = arma::sum(K1, 0).t();
     for (arma::uword j = 0; j < nt; ++j) {
@@ -6731,8 +6769,9 @@ SEXP cpp_entropic_partial_wasserstein(
         denom_ptr[idx] = floor_denom;
       }
     }
-    q2 %= (K1 / denom);
+    q2 %= (K_save / denom);
 
+    K_save = K2;
     K2 %= q3;
     Ksum = arma::accu(K2);
     if (!std::isfinite(Ksum) || Ksum <= floor_denom) {
@@ -6746,7 +6785,7 @@ SEXP cpp_entropic_partial_wasserstein(
         denom_ptr[idx] = floor_denom;
       }
     }
-    q3 %= (K2 / denom);
+    q3 %= (K_save / denom);
 
     bool finite_plan = true;
     const double* k_ptr = K.memptr();
@@ -6758,6 +6797,8 @@ SEXP cpp_entropic_partial_wasserstein(
       }
     }
     if (!finite_plan) {
+      out.finite = false;
+      K = Kprev;
       Rcpp::warning("Numerical instability in entropic partial OT at iteration %d.", cpt);
       break;
     }
@@ -6776,17 +6817,51 @@ SEXP cpp_entropic_partial_wasserstein(
     cpt += 1;
   }
 
+  out.plan = std::move(K);
+  out.iterations = cpt;
+  out.error = err;
+  out.err_trace = std::move(err_trace);
+  return out;
+}
+
+// [[Rcpp::export]]
+SEXP cpp_entropic_partial_wasserstein(
+    const arma::vec& a,
+    const arma::vec& b,
+    const arma::mat& M,
+    double reg,
+    double m,
+    int numItermax = 1000,
+    double stopThr = 1e-100,
+    bool verbose = false,
+    bool log = false) {
+  if (!std::isfinite(reg) || reg <= 0) {
+    Rcpp::stop("`reg` must be positive.");
+  }
+  if (M.n_rows != a.n_elem || M.n_cols != b.n_elem) {
+    Rcpp::stop("`a` and `b` must match the dimensions of `M`.");
+  }
+  if (!std::isfinite(m) || m < 0) {
+    Rcpp::stop("`m` must be finite and >= 0.");
+  }
+  if (numItermax < 1) {
+    Rcpp::stop("`numItermax` must be >= 1.");
+  }
+
+  const EntropicPartialOtResult core = entropic_partial_wasserstein_core(
+    a, b, M, reg, m, numItermax, stopThr, verbose, log
+  );
   if (log) {
     Rcpp::List log_obj = Rcpp::List::create(
-      Rcpp::Named("err") = err_trace,
-      Rcpp::Named("partial_w_dist") = arma::accu(M % K)
+      Rcpp::Named("err") = core.err_trace,
+      Rcpp::Named("partial_w_dist") = arma::accu(M % core.plan)
     );
     return Rcpp::wrap(Rcpp::List::create(
-      Rcpp::Named("plan") = K,
+      Rcpp::Named("plan") = core.plan,
       Rcpp::Named("log") = log_obj
     ));
   }
-  return Rcpp::wrap(K);
+  return Rcpp::wrap(core.plan);
 }
 
 struct SrfgwSquareTermsResult {
@@ -6849,7 +6924,7 @@ inline SrfgwSquareTermsResult srfgw_square_terms_exact(
 
   arma::mat constC(ns, nt, arma::fill::zeros);
   const arma::vec left = C1_sq * p;
-  const arma::vec right = fC2t * qG;
+  const arma::vec right = C2_sq * qG;
   for (arma::uword j = 0; j < nt; ++j) {
     constC.col(j) = left + right[j];
   }
@@ -6906,7 +6981,8 @@ Rcpp::List cpp_semirelaxed_fgw_exact_square(
   if (C1.n_rows != C1.n_cols || C2.n_rows != C2.n_cols) {
     Rcpp::stop("`C1` and `C2` must be square.");
   }
-  if (M.n_rows != C1.n_rows || M.n_cols != C2.n_rows) {
+  const bool skip_M = (alpha >= 1.0) && (M.n_elem == 0);
+  if (!skip_M && (M.n_rows != C1.n_rows || M.n_cols != C2.n_rows)) {
     Rcpp::stop("`M` must have shape nrow(C1) x nrow(C2).");
   }
   if (p.n_elem != C1.n_rows) {
@@ -6919,7 +6995,7 @@ Rcpp::List cpp_semirelaxed_fgw_exact_square(
   const arma::uword ns = C1.n_rows;
   const arma::uword nt = C2.n_rows;
   const double lin_w = 1.0 - alpha;
-  const arma::mat M_lin = lin_w * M;
+  const bool use_lin = !skip_M && lin_w != 0.0;
 
   arma::mat G;
   if (init_plan.n_elem == 0) {
@@ -6931,57 +7007,110 @@ Rcpp::List cpp_semirelaxed_fgw_exact_square(
     G = init_plan;
   }
 
-  SrfgwSquareTermsResult state = srfgw_square_terms_exact(C1, C2, G, p, symmetric);
-  double quad_raw = state.quad;
-  double cost = arma::accu(M_lin % G) + alpha * quad_raw;
+  const arma::mat hC2 = 2.0 * C2;
+  const arma::mat C1_sq = C1 % C1;
+  const arma::mat C2_sq = C2 % C2;
+  const arma::mat fC2t = C2_sq.t();
+  const arma::vec left = C1_sq * p;
+  arma::mat C1t;
+  arma::mat hC2t;
+  arma::vec left_t;
+  arma::mat Acurt;
+  if (!symmetric) {
+    C1t = C1.t();
+    hC2t = 2.0 * C2.t();
+    left_t = (C1t % C1t) * p;
+  }
+
+  arma::vec qG = arma::sum(G, 0).t();
+  arma::mat scratch;
+  arma::mat Acur;
+  dgemm_nn(C1, G, scratch);
+  dgemm_nt(scratch, hC2, Acur);
+  arma::mat tens(ns, nt);
+  {
+    const arma::vec right = C2_sq * qG;
+    for (arma::uword j = 0; j < nt; ++j) {
+      tens.col(j) = left + right[j] - Acur.col(j);
+    }
+  }
+  arma::mat grad = 2.0 * tens;
+  double quad_raw = arma::accu(tens % G);
+  if (!symmetric) {
+    dgemm_nn(C1t, G, scratch);
+    dgemm_nt(scratch, hC2t, Acurt);
+    arma::mat tenst(ns, nt);
+    const arma::vec right_t = fC2t * qG;
+    for (arma::uword j = 0; j < nt; ++j) {
+      tenst.col(j) = left_t + right_t[j] - Acurt.col(j);
+    }
+    quad_raw = 0.5 * (quad_raw + arma::accu(tenst % G));
+    grad = 0.5 * (grad + 2.0 * tenst);
+  }
+
+  double lin_loss = use_lin ? lin_w * arma::accu(M % G) : 0.0;
+  double cost = lin_loss + alpha * quad_raw;
 
   std::vector<double> loss_trace;
   loss_trace.reserve(static_cast<std::size_t>(max_iter) + 1u);
   loss_trace.push_back(cost);
-
-  const arma::vec ones_p = arma::ones<arma::vec>(ns);
-  const arma::mat hC1 = C1;
-  const arma::mat hC2 = 2.0 * C2;
-  const arma::mat fC2t = (C2 % C2).t();
 
   double rel_delta = std::numeric_limits<double>::infinity();
   double abs_delta = std::numeric_limits<double>::infinity();
   int it = 0;
 
   for (int k = 0; k < max_iter; ++k) {
-    const arma::mat Mi = M_lin + alpha * state.grad;
+    arma::mat Mi = alpha * grad;
+    if (use_lin) {
+      Mi += lin_w * M;
+    }
     const arma::mat Gc = srfgw_row_min_direction_core(Mi, p);
     const arma::mat delta = Gc - G;
-
-    const arma::vec qG = arma::sum(G, 0).t();
     const arma::vec qdelta = arma::sum(delta, 0).t();
 
-    arma::mat scratch;
     arma::mat dot;
-    dgemm_nn(hC1, delta, scratch);
+    dgemm_nn(C1, delta, scratch);
     dgemm_nt(scratch, hC2, dot);
 
-    const arma::vec right_qG = fC2t * qG;
-    const arma::vec right_qdelta = fC2t * qdelta;
-    arma::mat dot_qG = ones_p * right_qG.t();
-    arma::mat dot_qdelta = ones_p * right_qdelta.t();
-
-    arma::mat Acur;
-    dgemm_nn(hC1, G, scratch);
-    dgemm_nt(scratch, hC2, Acur);
-
-    const double a_ls = alpha * arma::accu((dot_qdelta - dot) % delta);
-    const double b_ls = arma::accu(M_lin % delta) + alpha * (
-      arma::accu((dot_qdelta - dot) % G) +
-        arma::accu((dot_qG - Acur) % delta)
+    const arma::vec right_qG = C2_sq * qG;
+    const arma::vec right_qdelta = C2_sq * qdelta;
+    const double a_ls = alpha * (arma::dot(right_qdelta, qdelta) - arma::accu(dot % delta));
+    double b_ls = alpha * (
+      arma::dot(right_qdelta, qG) - arma::accu(dot % G) +
+        arma::dot(right_qG, qdelta) - arma::accu(Acur % delta)
     );
+    if (use_lin) {
+      b_ls += lin_w * arma::accu(M % delta);
+    }
 
     double step = solve_1d_linesearch_quad(a_ls, b_ls);
     step = std::min(1.0, std::max(0.0, step));
     const double new_cost = cost + a_ls * step * step + b_ls * step;
 
     G += step * delta;
-    state = srfgw_square_terms_exact(C1, C2, G, p, symmetric);
+    qG += step * qdelta;
+    Acur += step * dot;
+    {
+      const arma::vec right = C2_sq * qG;
+      for (arma::uword j = 0; j < nt; ++j) {
+        tens.col(j) = left + right[j] - Acur.col(j);
+      }
+    }
+    grad = 2.0 * tens;
+    quad_raw = arma::accu(tens % G);
+    if (!symmetric) {
+      arma::mat dott;
+      dgemm_nn(C1t, delta, scratch);
+      dgemm_nt(scratch, hC2t, dott);
+      Acurt += step * dott;
+      arma::mat tenst(ns, nt);
+      const arma::vec right_t = fC2t * qG;
+      for (arma::uword j = 0; j < nt; ++j) {
+        tenst.col(j) = left_t + right_t[j] - Acurt.col(j);
+      }
+      quad_raw = 0.5 * (quad_raw + arma::accu(tenst % G));
+      grad = 0.5 * (grad + 2.0 * tenst);
+    }
 
     abs_delta = std::abs(new_cost - cost);
     rel_delta = abs_delta / (std::abs(new_cost) + 1e-15);
@@ -6994,9 +7123,8 @@ Rcpp::List cpp_semirelaxed_fgw_exact_square(
     }
   }
 
-  const arma::vec q = arma::sum(G, 0).t();
-  quad_raw = state.quad;
-  const double lin_loss = arma::accu(M_lin % G);
+  const arma::vec q = qG;
+  lin_loss = use_lin ? lin_w * arma::accu(M % G) : 0.0;
   const double quad_loss = alpha * quad_raw;
 
   return Rcpp::List::create(
@@ -7030,7 +7158,8 @@ Rcpp::List cpp_semirelaxed_fgw_cg_square_fast(
   if (C1.n_rows != C1.n_cols || C2.n_rows != C2.n_cols) {
     Rcpp::stop("`C1` and `C2` must be square.");
   }
-  if (M.n_rows != C1.n_rows || M.n_cols != C2.n_rows) {
+  const bool skip_M = (alpha >= 1.0) && (M.n_elem == 0);
+  if (!skip_M && (M.n_rows != C1.n_rows || M.n_cols != C2.n_rows)) {
     Rcpp::stop("`M` must have shape nrow(C1) x nrow(C2).");
   }
   if (p.n_elem != C1.n_rows) {
@@ -7042,14 +7171,16 @@ Rcpp::List cpp_semirelaxed_fgw_cg_square_fast(
 
   const arma::uword ns = C1.n_rows;
   const arma::uword nt = C2.n_rows;
+  const bool use_lin = !skip_M && (alpha < 1.0);
   if (use_mixed_precision) {
     const float alpha_f = static_cast<float>(alpha);
-    const arma::fmat M_f = arma::conv_to<arma::fmat>::from(M);
     const arma::fmat C1_f = arma::conv_to<arma::fmat>::from(C1);
     const arma::fmat C2_f = arma::conv_to<arma::fmat>::from(C2);
     const arma::fvec p_f = arma::conv_to<arma::fvec>::from(p);
-    const float lin_w_f = 1.0f - alpha_f;
-    const arma::fmat M_lin_f = lin_w_f * M_f;
+    arma::fmat M_lin_f;
+    if (use_lin) {
+      M_lin_f = (1.0f - alpha_f) * arma::conv_to<arma::fmat>::from(M);
+    }
 
     arma::fmat G_f;
     if (init_plan.n_elem == 0) {
@@ -7083,7 +7214,7 @@ Rcpp::List cpp_semirelaxed_fgw_cg_square_fast(
     arma::fmat grad_f = 2.0f * tens_f;
 
     double quad_raw = static_cast<double>(arma::accu(tens_f % G_f));
-    double lin_loss = static_cast<double>(arma::accu(M_lin_f % G_f));
+    double lin_loss = use_lin ? static_cast<double>(arma::accu(M_lin_f % G_f)) : 0.0;
     double cost = lin_loss + alpha * quad_raw;
 
     std::vector<double> loss_trace;
@@ -7103,8 +7234,12 @@ Rcpp::List cpp_semirelaxed_fgw_cg_square_fast(
     int it = 0;
 
     for (int k = 0; k < max_iter; ++k) {
-      Mi_f = M_lin_f;
-      Mi_f += alpha_f * grad_f;
+      if (use_lin) {
+        Mi_f = M_lin_f;
+        Mi_f += alpha_f * grad_f;
+      } else {
+        Mi_f = alpha_f * grad_f;
+      }
 
       delta_f = -G_f;
       qdelta_f = -q_f;
@@ -7149,10 +7284,13 @@ Rcpp::List cpp_semirelaxed_fgw_cg_square_fast(
       const double sum_Acur_delta = static_cast<double>(arma::accu(Acur_f % delta_f));
 
       const double a_ls = alpha * (static_cast<double>(arma::dot(right_delta_f, qdelta_f)) - sum_dot_delta);
-      const double b_ls = static_cast<double>(arma::accu(M_lin_f % delta_f)) + alpha * (
+      double b_ls = alpha * (
         static_cast<double>(arma::dot(right_delta_f, q_f)) - sum_dot_G +
           static_cast<double>(arma::dot(right_q_f, qdelta_f)) - sum_Acur_delta
       );
+      if (use_lin) {
+        b_ls += static_cast<double>(arma::accu(M_lin_f % delta_f));
+      }
 
       double step = solve_1d_linesearch_quad(a_ls, b_ls);
       step = std::min(1.0, std::max(0.0, step));
@@ -7186,10 +7324,9 @@ Rcpp::List cpp_semirelaxed_fgw_cg_square_fast(
 
     const arma::mat G = arma::conv_to<arma::mat>::from(G_f);
     const arma::vec q = arma::conv_to<arma::vec>::from(q_f);
-    const arma::mat M_lin_d = (1.0 - alpha) * M;
     const SrfgwSquareTermsResult state_d = srfgw_square_terms_exact(C1, C2, G, p, true);
     quad_raw = state_d.quad;
-    lin_loss = arma::accu(M_lin_d % G);
+    lin_loss = use_lin ? (1.0 - alpha) * arma::accu(M % G) : 0.0;
     const double quad_loss = alpha * quad_raw;
     const double srfgw_dist = lin_loss + quad_loss;
 
@@ -7209,7 +7346,10 @@ Rcpp::List cpp_semirelaxed_fgw_cg_square_fast(
   }
 
   const double lin_w = 1.0 - alpha;
-  const arma::mat M_lin = lin_w * M;
+  arma::mat M_lin;
+  if (use_lin) {
+    M_lin = lin_w * M;
+  }
 
   arma::mat G;
   if (init_plan.n_elem == 0) {
@@ -7243,7 +7383,7 @@ Rcpp::List cpp_semirelaxed_fgw_cg_square_fast(
   arma::mat grad = 2.0 * tens;
 
   double quad_raw = arma::accu(tens % G);
-  double lin_loss = arma::accu(M_lin % G);
+  double lin_loss = use_lin ? arma::accu(M_lin % G) : 0.0;
   double cost = lin_loss + alpha * quad_raw;
 
   std::vector<double> loss_trace;
@@ -7261,8 +7401,12 @@ Rcpp::List cpp_semirelaxed_fgw_cg_square_fast(
   int it = 0;
 
   for (int k = 0; k < max_iter; ++k) {
-    Mi = M_lin;
-    Mi += alpha * grad;
+    if (use_lin) {
+      Mi = M_lin;
+      Mi += alpha * grad;
+    } else {
+      Mi = alpha * grad;
+    }
 
     delta = -G;
     qdelta = -q;
@@ -7306,10 +7450,13 @@ Rcpp::List cpp_semirelaxed_fgw_cg_square_fast(
     const double sum_Acur_delta = arma::accu(Acur % delta);
 
     const double a_ls = alpha * (arma::dot(right_delta, qdelta) - sum_dot_delta);
-    const double b_ls = arma::accu(M_lin % delta) + alpha * (
+    double b_ls = alpha * (
       arma::dot(right_delta, q) - sum_dot_G +
         arma::dot(right_q, qdelta) - sum_Acur_delta
     );
+    if (use_lin) {
+      b_ls += arma::accu(M_lin % delta);
+    }
 
     double step = solve_1d_linesearch_quad(a_ls, b_ls);
     step = std::min(1.0, std::max(0.0, step));
@@ -7325,7 +7472,7 @@ Rcpp::List cpp_semirelaxed_fgw_cg_square_fast(
     }
     grad = 2.0 * tens;
     quad_raw = arma::accu(tens % G);
-    lin_loss = arma::accu(M_lin % G);
+    lin_loss = use_lin ? arma::accu(M_lin % G) : 0.0;
 
     abs_delta = std::abs(new_cost - cost);
     rel_delta = abs_delta / (std::abs(new_cost) + 1e-15);
@@ -7357,5 +7504,612 @@ Rcpp::List cpp_semirelaxed_fgw_cg_square_fast(
     Rcpp::Named("abs_error") = abs_delta,
     Rcpp::Named("loss_trace") = loss_trace,
     Rcpp::Named("symmetric") = true
+  );
+}
+
+// [[Rcpp::export]]
+Rcpp::List cpp_ot_sinkhorn(
+    const arma::mat& M,
+    const arma::vec& p,
+    const arma::vec& q,
+    double epsilon,
+    int max_iter,
+    double tol,
+    bool use_log) {
+  arma::vec u;
+  arma::vec v;
+  const SinkhornBalancedResult res = use_log
+    ? sinkhorn_balanced_log(p, q, M, epsilon, max_iter, tol, u, v)
+    : sinkhorn_balanced(p, q, M, epsilon, max_iter, tol, u, v);
+  const double ot_dist = arma::accu(M % res.plan);
+  return Rcpp::List::create(
+    Rcpp::Named("plan") = res.plan,
+    Rcpp::Named("ot_dist") = ot_dist,
+    Rcpp::Named("iterations") = res.iters,
+    Rcpp::Named("error") = res.err
+  );
+}
+
+// [[Rcpp::export]]
+Rcpp::List cpp_ot_emd(
+    const arma::mat& M,
+    const arma::vec& p,
+    const arma::vec& q,
+    int max_iter,
+    double tol) {
+  const TransportSimplexResult res = transport_simplex_solve(M, p, q, max_iter, tol);
+  const double ot_dist = arma::accu(M % res.plan);
+  return Rcpp::List::create(
+    Rcpp::Named("plan") = res.plan,
+    Rcpp::Named("ot_dist") = ot_dist,
+    Rcpp::Named("iterations") = res.iterations,
+    Rcpp::Named("error") = res.converged ? 0.0 : R_PosInf,
+    Rcpp::Named("lp_ok") = res.converged
+  );
+}
+
+// [[Rcpp::export]]
+Rcpp::List cpp_ot_sinkhorn_unbalanced(
+    const arma::mat& M,
+    const arma::vec& a,
+    const arma::vec& b,
+    double epsilon,
+    double rho1,
+    double rho2,
+    int max_iter,
+    double tol,
+    const arma::mat& init_plan) {
+  SinkhornUnbalancedWorkspace ws;
+  const arma::mat c = a * b.t();
+  const SinkhornUnbalancedResult res = sinkhorn_unbalanced_kl(
+    M, a, b, c, rho1, rho2, epsilon, max_iter, tol, init_plan, ws, true
+  );
+  const double ot_dist = arma::accu(M % res.plan);
+  return Rcpp::List::create(
+    Rcpp::Named("plan") = res.plan,
+    Rcpp::Named("ot_dist") = ot_dist,
+    Rcpp::Named("iterations") = res.iters,
+    Rcpp::Named("error") = res.err,
+    Rcpp::Named("mass") = arma::accu(res.plan)
+  );
+}
+
+inline double partial_penalty_cost(const arma::mat& cost) {
+  const double ma = cost.max();
+  const double aa = arma::abs(cost).max();
+  const double aa_use = (std::isfinite(aa) && aa > 0.0) ? aa : 1.0;
+  const double ma_use = std::isfinite(ma) ? ma : 0.0;
+  return ma_use + aa_use + 1.0;
+}
+
+inline arma::mat partial_transport_direction(
+    const arma::mat& cost,
+    const arma::vec& a,
+    const arma::vec& b,
+    double m,
+    int nb_dummies,
+    int lp_max_iter,
+    double lp_tol) {
+  if (nb_dummies < 1) {
+    Rcpp::stop("`nb_dummies` must be >= 1.");
+  }
+  const arma::uword ns = a.n_elem;
+  const arma::uword nt = b.n_elem;
+  if (cost.n_rows != ns || cost.n_cols != nt) {
+    Rcpp::stop("`cost` has incompatible shape for partial LP direction step.");
+  }
+  const double sum_a = arma::accu(a);
+  const double sum_b = arma::accu(b);
+  const double dummy_a = (sum_b - m) / static_cast<double>(nb_dummies);
+  const double dummy_b = (sum_a - m) / static_cast<double>(nb_dummies);
+  if (dummy_a <= 1e-15 && dummy_b <= 1e-15) {
+    return transport_simplex_solve(cost, a, b, lp_max_iter, lp_tol).plan;
+  }
+
+  const arma::uword ns_ext = ns + static_cast<arma::uword>(nb_dummies);
+  const arma::uword nt_ext = nt + static_cast<arma::uword>(nb_dummies);
+  arma::vec a_ext(ns_ext, arma::fill::zeros);
+  arma::vec b_ext(nt_ext, arma::fill::zeros);
+  a_ext.head(ns) = a;
+  b_ext.head(nt) = b;
+  a_ext.tail(static_cast<arma::uword>(nb_dummies)).fill(std::max(dummy_a, 0.0));
+  b_ext.tail(static_cast<arma::uword>(nb_dummies)).fill(std::max(dummy_b, 0.0));
+
+  arma::mat cost_ext(ns_ext, nt_ext, arma::fill::zeros);
+  cost_ext.submat(0, 0, ns - 1, nt - 1) = cost;
+  const double penalty = partial_penalty_cost(cost);
+  cost_ext.submat(ns, nt, ns_ext - 1, nt_ext - 1).fill(penalty);
+
+  const TransportSimplexResult res = transport_simplex_solve(
+    cost_ext, a_ext, b_ext, lp_max_iter, lp_tol
+  );
+  return res.plan.submat(0, 0, ns - 1, nt - 1);
+}
+
+// [[Rcpp::export]]
+Rcpp::List cpp_partial_fgw_exact_square(
+    const arma::mat& M,
+    const arma::mat& C1,
+    const arma::mat& C2,
+    const arma::vec& p,
+    const arma::vec& q,
+    double m,
+    double alpha,
+    bool symmetric,
+    const arma::mat& init_plan,
+    int max_iter,
+    double tol,
+    int nb_dummies,
+    int lp_max_iter,
+    double lp_tol) {
+  if (C1.n_rows != C1.n_cols || C2.n_rows != C2.n_cols) {
+    Rcpp::stop("`C1` and `C2` must be square.");
+  }
+  const bool skip_M = (alpha >= 1.0) && (M.n_elem == 0);
+  if (!skip_M && (M.n_rows != C1.n_rows || M.n_cols != C2.n_rows)) {
+    Rcpp::stop("`M` must have shape nrow(C1) x nrow(C2).");
+  }
+  if (p.n_elem != C1.n_rows || q.n_elem != C2.n_rows) {
+    Rcpp::stop("`p` and `q` must match `C1` and `C2`.");
+  }
+  if (max_iter < 1) {
+    Rcpp::stop("`max_iter` must be >= 1.");
+  }
+
+  const arma::uword ns = C1.n_rows;
+  const arma::uword nt = C2.n_rows;
+  const double lin_w = 1.0 - alpha;
+  const double quad_w = alpha;
+  const bool use_lin = !skip_M && lin_w != 0.0;
+
+  arma::mat G = init_plan;
+  if (G.n_elem == 0) {
+    const double denom = arma::accu(p) * arma::accu(q);
+    G = (p * q.t()) * (m / denom);
+  } else if (G.n_rows != ns || G.n_cols != nt) {
+    Rcpp::stop("`init_plan` has incompatible shape.");
+  }
+
+  GwSquareTermsResult gw = gw_square_terms_exact(C1, C2, G, symmetric);
+  double lin_loss = use_lin ? lin_w * arma::accu(M % G) : 0.0;
+  double cost = lin_loss + quad_w * gw.loss;
+
+  std::vector<double> loss_trace;
+  loss_trace.reserve(static_cast<std::size_t>(max_iter) + 1u);
+  loss_trace.push_back(cost);
+
+  double rel_delta = std::numeric_limits<double>::infinity();
+  double abs_delta = std::numeric_limits<double>::infinity();
+  int it = 0;
+
+  for (int k = 0; k < max_iter; ++k) {
+    arma::mat Mi = quad_w * gw.grad;
+    if (use_lin) {
+      Mi += lin_w * M;
+    }
+    const arma::mat Gc = partial_transport_direction(
+      Mi, p, q, m, nb_dummies, lp_max_iter, lp_tol
+    );
+    const arma::mat delta = Gc - G;
+    const GwSquareTermsResult gw_c = gw_square_terms_exact(C1, C2, Gc, symmetric);
+    const arma::mat grad_delta = gw_c.grad - gw.grad;
+
+    const double a_ls = quad_w * 0.5 * arma::accu(grad_delta % delta);
+    double b_ls = quad_w * arma::accu(gw.grad % delta);
+    if (use_lin) {
+      b_ls += lin_w * arma::accu(M % delta);
+    }
+    double step = solve_1d_linesearch_quad(a_ls, b_ls);
+    step = std::min(1.0, std::max(0.0, step));
+    const double new_cost = cost + a_ls * step * step + b_ls * step;
+
+    G += step * delta;
+    gw.grad += step * grad_delta;
+
+    abs_delta = std::abs(new_cost - cost);
+    rel_delta = abs_delta / (std::abs(new_cost) + 1e-15);
+    cost = new_cost;
+    loss_trace.push_back(cost);
+    it = k + 1;
+    if (rel_delta <= tol) {
+      break;
+    }
+  }
+
+  gw = gw_square_terms_exact(C1, C2, G, symmetric);
+  lin_loss = use_lin ? lin_w * arma::accu(M % G) : 0.0;
+  const double quad_loss = quad_w * gw.loss;
+
+  return Rcpp::List::create(
+    Rcpp::Named("plan") = G,
+    Rcpp::Named("objective") = lin_loss + quad_loss,
+    Rcpp::Named("lin_loss") = lin_loss,
+    Rcpp::Named("quad_loss") = quad_loss,
+    Rcpp::Named("gw_loss") = gw.loss,
+    Rcpp::Named("iterations") = it,
+    Rcpp::Named("error") = rel_delta,
+    Rcpp::Named("abs_error") = abs_delta,
+    Rcpp::Named("loss_trace") = loss_trace
+  );
+}
+
+// [[Rcpp::export]]
+Rcpp::List cpp_partial_fgw_entropic_square(
+    const arma::mat& M,
+    const arma::mat& C1,
+    const arma::mat& C2,
+    const arma::vec& p,
+    const arma::vec& q,
+    double m,
+    double reg,
+    double alpha,
+    bool symmetric,
+    const arma::mat& init_plan,
+    int max_iter,
+    double tol,
+    int inner_max_iter,
+    double inner_tol,
+    int check_every) {
+  if (C1.n_rows != C1.n_cols || C2.n_rows != C2.n_cols) {
+    Rcpp::stop("`C1` and `C2` must be square.");
+  }
+  const bool skip_M = (alpha >= 1.0) && (M.n_elem == 0);
+  if (!skip_M && (M.n_rows != C1.n_rows || M.n_cols != C2.n_rows)) {
+    Rcpp::stop("`M` must have shape nrow(C1) x nrow(C2).");
+  }
+  if (p.n_elem != C1.n_rows || q.n_elem != C2.n_rows) {
+    Rcpp::stop("`p` and `q` must match `C1` and `C2`.");
+  }
+  if (!std::isfinite(reg) || reg <= 0.0) {
+    Rcpp::stop("`reg` must be positive.");
+  }
+  if (max_iter < 1) {
+    Rcpp::stop("`max_iter` must be >= 1.");
+  }
+  if (check_every <= 0) {
+    check_every = 1;
+  }
+
+  const arma::uword ns = C1.n_rows;
+  const arma::uword nt = C2.n_rows;
+  const double lin_w = 1.0 - alpha;
+  const double quad_w = alpha;
+  const bool use_lin = !skip_M && lin_w != 0.0;
+
+  arma::mat G = init_plan;
+  if (G.n_elem == 0) {
+    const double denom = arma::accu(p) * arma::accu(q);
+    G = (p * q.t()) * (m / denom);
+  } else if (G.n_rows != ns || G.n_cols != nt) {
+    Rcpp::stop("`init_plan` has incompatible shape.");
+  }
+
+  double err = std::numeric_limits<double>::infinity();
+  int it = 0;
+  std::vector<double> err_trace;
+
+  for (int k = 0; k < max_iter; ++k) {
+    arma::mat Gprev;
+    const bool do_check = ((k + 1) % check_every == 0) || (k == 0);
+    if (do_check) {
+      Gprev = G;
+    }
+    const GwSquareTermsResult gw = gw_square_terms_exact(C1, C2, G, symmetric);
+    arma::mat M_entr = quad_w * gw.grad;
+    if (use_lin) {
+      M_entr += lin_w * M;
+    }
+    const EntropicPartialOtResult inner = entropic_partial_wasserstein_core(
+      p, q, M_entr, reg, m, inner_max_iter, inner_tol, false, false
+    );
+    G = inner.plan;
+    if (do_check) {
+      err = std::sqrt(arma::accu((G - Gprev) % (G - Gprev)));
+      err_trace.push_back(err);
+      if (err <= tol) {
+        it = k + 1;
+        break;
+      }
+    }
+    it = k + 1;
+  }
+
+  const GwSquareTermsResult gw_end = gw_square_terms_exact(C1, C2, G, symmetric);
+  const double lin_loss = use_lin ? lin_w * arma::accu(M % G) : 0.0;
+  const double quad_loss = quad_w * gw_end.loss;
+
+  return Rcpp::List::create(
+    Rcpp::Named("plan") = G,
+    Rcpp::Named("objective") = lin_loss + quad_loss,
+    Rcpp::Named("lin_loss") = lin_loss,
+    Rcpp::Named("quad_loss") = quad_loss,
+    Rcpp::Named("gw_loss") = gw_end.loss,
+    Rcpp::Named("iterations") = it,
+    Rcpp::Named("error") = err,
+    Rcpp::Named("err_trace") = err_trace
+  );
+}
+
+inline std::pair<double, double> ucoot_cost_kl(
+    const arma::mat& X,
+    const arma::mat& Y,
+    const arma::mat& X_sqr,
+    const arma::mat& Y_sqr,
+    const arma::mat& M_samp,
+    const arma::mat& M_feat,
+    const arma::vec& wx_samp,
+    const arma::vec& wy_samp,
+    const arma::vec& wx_feat,
+    const arma::vec& wy_feat,
+    const arma::mat& wxy_samp,
+    const arma::mat& wxy_feat,
+    const arma::mat& pi_samp,
+    const arma::mat& pi_feat,
+    double rho_x,
+    double rho_y,
+    double eps_samp,
+    double eps_feat,
+    bool joint) {
+  const arma::vec pi1_samp = arma::sum(pi_samp, 1);
+  const arma::vec pi2_samp = arma::sum(pi_samp, 0).t();
+  const arma::vec pi1_feat = arma::sum(pi_feat, 1);
+  const arma::vec pi2_feat = arma::sum(pi_feat, 0).t();
+
+  const double A_sqr = arma::dot(X_sqr * pi1_feat, pi1_samp);
+  const double B_sqr = arma::dot(Y_sqr * pi2_feat, pi2_samp);
+  const arma::mat AB = (X * pi_feat * Y.t()) % pi_samp;
+  const double linear_cost = A_sqr + B_sqr - 2.0 * arma::accu(AB);
+
+  double ucoot_cost = linear_cost;
+  if (M_samp.n_elem > 0) {
+    ucoot_cost += arma::accu(pi_samp % M_samp);
+  }
+  if (M_feat.n_elem > 0) {
+    ucoot_cost += arma::accu(pi_feat % M_feat);
+  }
+  if (std::isfinite(rho_x) && rho_x != 0.0) {
+    ucoot_cost += rho_x * div_between_product_kl(pi1_samp, pi1_feat, wx_samp, wx_feat);
+  }
+  if (std::isfinite(rho_y) && rho_y != 0.0) {
+    ucoot_cost += rho_y * div_between_product_kl(pi2_samp, pi2_feat, wy_samp, wy_feat);
+  }
+  if (joint) {
+    if (eps_samp != 0.0) {
+      ucoot_cost += eps_samp * div_between_product_kl(pi_samp, pi_feat, wxy_samp, wxy_feat);
+    }
+  } else {
+    if (eps_samp != 0.0) {
+      ucoot_cost += eps_samp * div_to_product_kl(pi_samp, wx_samp, wy_samp, pi1_samp, pi2_samp, true);
+    }
+    if (eps_feat != 0.0) {
+      ucoot_cost += eps_feat * div_to_product_kl(pi_feat, wx_feat, wy_feat, pi1_feat, pi2_feat, true);
+    }
+  }
+  return {linear_cost, ucoot_cost};
+}
+
+// [[Rcpp::export]]
+Rcpp::List cpp_ucoot_kl(
+    const arma::mat& X,
+    const arma::mat& Y,
+    const arma::vec& wx_samp,
+    const arma::vec& wx_feat,
+    const arma::vec& wy_samp,
+    const arma::vec& wy_feat,
+    const arma::vec& reg_marginals,
+    const arma::vec& epsilon,
+    const arma::mat& M_samp,
+    const arma::mat& M_feat,
+    const arma::mat& init_pi_samp,
+    const arma::mat& init_pi_feat,
+    bool joint,
+    bool rescale_plan,
+    int max_iter,
+    double tol,
+    int max_iter_ot,
+    double tol_ot,
+    bool use_warm_start) {
+  if (X.n_rows != wx_samp.n_elem || X.n_cols != wx_feat.n_elem) {
+    Rcpp::stop("`wx_samp` / `wx_feat` must match `X`.");
+  }
+  if (Y.n_rows != wy_samp.n_elem || Y.n_cols != wy_feat.n_elem) {
+    Rcpp::stop("`wy_samp` / `wy_feat` must match `Y`.");
+  }
+  if (reg_marginals.n_elem < 2 || epsilon.n_elem < 2) {
+    Rcpp::stop("`reg_marginals` and `epsilon` must have length 2.");
+  }
+  if (max_iter < 1) {
+    Rcpp::stop("`max_iter` must be >= 1.");
+  }
+  if (max_iter_ot < 1) {
+    Rcpp::stop("`max_iter_ot` must be >= 1.");
+  }
+
+  const arma::uword nx_samp = X.n_rows;
+  const arma::uword nx_feat = X.n_cols;
+  const arma::uword ny_samp = Y.n_rows;
+  const arma::uword ny_feat = Y.n_cols;
+  const double rho_x = reg_marginals(0);
+  const double rho_y = reg_marginals(1);
+  double eps_samp = epsilon(0);
+  double eps_feat = epsilon(1);
+  if (joint) {
+    eps_feat = eps_samp;
+  }
+  if (!(eps_samp > 0.0) || !(eps_feat > 0.0)) {
+    Rcpp::stop("KL Sinkhorn UCOOT requires positive `epsilon` values.");
+  }
+
+  arma::mat M_samp_use = M_samp;
+  arma::mat M_feat_use = M_feat;
+  if (M_samp_use.n_elem == 0) {
+    M_samp_use.zeros(nx_samp, ny_samp);
+  } else if (M_samp_use.n_rows != nx_samp || M_samp_use.n_cols != ny_samp) {
+    Rcpp::stop("`M_samp` has incompatible shape.");
+  }
+  if (M_feat_use.n_elem == 0) {
+    M_feat_use.zeros(nx_feat, ny_feat);
+  } else if (M_feat_use.n_rows != nx_feat || M_feat_use.n_cols != ny_feat) {
+    Rcpp::stop("`M_feat` has incompatible shape.");
+  }
+
+  const arma::mat X_sqr = X % X;
+  const arma::mat Y_sqr = Y % Y;
+  const arma::mat Xt = X.t();
+  const arma::mat Yt = Y.t();
+  const arma::mat X_sqr_t = X_sqr.t();
+  const arma::mat Y_sqr_t = Y_sqr.t();
+  const arma::mat wxy_samp = wx_samp * wy_samp.t();
+  const arma::mat wxy_feat = wx_feat * wy_feat.t();
+  const arma::vec log_wx_samp = arma::log(wx_samp + kTiny);
+  const arma::vec log_wy_samp = arma::log(wy_samp + kTiny);
+  const arma::vec log_wx_feat = arma::log(wx_feat + kTiny);
+  const arma::vec log_wy_feat = arma::log(wy_feat + kTiny);
+  const double eps_cost_feat = joint ? eps_samp : 0.0;
+  const double eps_cost_samp = joint ? eps_feat : 0.0;
+
+  arma::mat pi_samp = init_pi_samp;
+  arma::mat pi_feat = init_pi_feat;
+  if (pi_samp.n_elem == 0) {
+    pi_samp = wxy_samp;
+  } else if (pi_samp.n_rows != nx_samp || pi_samp.n_cols != ny_samp) {
+    Rcpp::stop("`init_pi_samp` has incompatible shape.");
+  }
+  if (pi_feat.n_elem == 0) {
+    pi_feat = wxy_feat;
+  } else if (pi_feat.n_rows != nx_feat || pi_feat.n_cols != ny_feat) {
+    Rcpp::stop("`init_pi_feat` has incompatible shape.");
+  }
+
+  SinkhornUnbalancedWorkspace ws_samp;
+  SinkhornUnbalancedWorkspace ws_feat;
+  arma::mat uot_cost_feat(nx_feat, ny_feat);
+  arma::mat scratch_feat(nx_feat, ny_samp);
+  arma::mat uot_cost_samp(nx_samp, ny_samp);
+  arma::mat scratch_samp(nx_samp, ny_feat);
+  arma::vec pi1_s(nx_samp);
+  arma::vec pi2_s(ny_samp);
+  arma::vec A_feat(nx_feat);
+  arma::vec B_feat(ny_feat);
+  arma::vec pi1_f(nx_feat);
+  arma::vec pi2_f(ny_feat);
+  arma::vec A_samp(nx_samp);
+  arma::vec B_samp(ny_samp);
+
+  std::vector<int> inner_iters_feat;
+  std::vector<int> inner_iters_samp;
+  std::vector<int> inner_warm_feat;
+  std::vector<int> inner_warm_samp;
+  std::vector<int> inner_fallback_feat;
+  std::vector<int> inner_fallback_samp;
+  inner_iters_feat.reserve(static_cast<std::size_t>(max_iter));
+  inner_iters_samp.reserve(static_cast<std::size_t>(max_iter));
+  inner_warm_feat.reserve(static_cast<std::size_t>(max_iter));
+  inner_warm_samp.reserve(static_cast<std::size_t>(max_iter));
+  inner_fallback_feat.reserve(static_cast<std::size_t>(max_iter));
+  inner_fallback_samp.reserve(static_cast<std::size_t>(max_iter));
+
+  Rcpp::NumericVector err_trace;
+  double err = std::numeric_limits<double>::infinity();
+  int it = 0;
+  double feat_ms = 0.0;
+  double samp_ms = 0.0;
+
+  for (; it < max_iter; ++it) {
+    const auto t_feat0 = std::chrono::steady_clock::now();
+    const double mass_samp = arma::accu(pi_samp);
+    uot_cost_matrix_kl_joint_inplace(
+      X_sqr_t, Y_sqr_t, Xt, Y, M_feat_use, pi_samp,
+      wx_samp, wy_samp, log_wx_samp, log_wy_samp,
+      rho_x, rho_y, eps_cost_feat,
+      uot_cost_feat, scratch_feat, pi1_s, pi2_s, A_feat, B_feat
+    );
+    const double eps_feat_ot = joint ? (mass_samp * eps_feat) : eps_feat;
+    SinkhornUnbalancedResult su_feat = sinkhorn_unbalanced_kl(
+      uot_cost_feat, wx_feat, wy_feat, wxy_feat,
+      rho_x * mass_samp, rho_y * mass_samp, eps_feat_ot,
+      max_iter_ot, tol_ot, pi_feat, ws_feat, use_warm_start
+    );
+    inner_iters_feat.push_back(su_feat.iters);
+    inner_warm_feat.push_back(su_feat.warm_started ? 1 : 0);
+    inner_fallback_feat.push_back(su_feat.warm_fallback ? 1 : 0);
+    pi_feat = std::move(su_feat.plan);
+    if (rescale_plan) {
+      const double mass_feat = arma::accu(pi_feat);
+      if (mass_feat > 0.0) {
+        pi_feat *= std::sqrt(mass_samp / mass_feat);
+      }
+    }
+    feat_ms += std::chrono::duration<double, std::milli>(
+      std::chrono::steady_clock::now() - t_feat0
+    ).count();
+
+    const auto t_samp0 = std::chrono::steady_clock::now();
+    const double mass_feat = arma::accu(pi_feat);
+    uot_cost_matrix_kl_joint_inplace(
+      X_sqr, Y_sqr, X, Yt, M_samp_use, pi_feat,
+      wx_feat, wy_feat, log_wx_feat, log_wy_feat,
+      rho_x, rho_y, eps_cost_samp,
+      uot_cost_samp, scratch_samp, pi1_f, pi2_f, A_samp, B_samp
+    );
+    const double eps_samp_ot = joint ? (mass_feat * eps_feat) : eps_feat;
+    SinkhornUnbalancedResult su_samp = sinkhorn_unbalanced_kl(
+      uot_cost_samp, wx_samp, wy_samp, wxy_samp,
+      rho_x * mass_feat, rho_y * mass_feat, eps_samp_ot,
+      max_iter_ot, tol_ot, pi_samp, ws_samp, use_warm_start
+    );
+    inner_iters_samp.push_back(su_samp.iters);
+    inner_warm_samp.push_back(su_samp.warm_started ? 1 : 0);
+    inner_fallback_samp.push_back(su_samp.warm_fallback ? 1 : 0);
+    arma::mat pi_next = std::move(su_samp.plan);
+    if (rescale_plan) {
+      const double mass_next = arma::accu(pi_next);
+      if (mass_next > 0.0) {
+        pi_next *= std::sqrt(mass_feat / mass_next);
+      }
+    }
+    err = arma::accu(arma::abs(pi_next - pi_samp));
+    pi_samp = std::move(pi_next);
+    samp_ms += std::chrono::duration<double, std::milli>(
+      std::chrono::steady_clock::now() - t_samp0
+    ).count();
+
+    err_trace.push_back(err);
+    if (err < tol) {
+      ++it;
+      break;
+    }
+  }
+
+  if (!pi_samp.is_finite() || !pi_feat.is_finite()) {
+    Rcpp::stop("Encountered non-finite values in coupling matrices. Adjust hyperparameters.");
+  }
+
+  const auto costs = ucoot_cost_kl(
+    X, Y, X_sqr, Y_sqr, M_samp_use, M_feat_use,
+    wx_samp, wy_samp, wx_feat, wy_feat, wxy_samp, wxy_feat,
+    pi_samp, pi_feat, rho_x, rho_y, eps_samp, eps_feat, joint
+  );
+  const int inner_total = std::accumulate(inner_iters_feat.begin(), inner_iters_feat.end(), 0) +
+    std::accumulate(inner_iters_samp.begin(), inner_iters_samp.end(), 0);
+
+  return Rcpp::List::create(
+    Rcpp::Named("pi_samp") = pi_samp,
+    Rcpp::Named("pi_feat") = pi_feat,
+    Rcpp::Named("linear_cost") = costs.first,
+    Rcpp::Named("ucoot_cost") = costs.second,
+    Rcpp::Named("iterations") = it,
+    Rcpp::Named("error") = err,
+    Rcpp::Named("err_trace") = err_trace,
+    Rcpp::Named("inner_iters_feat") = Rcpp::IntegerVector(inner_iters_feat.begin(), inner_iters_feat.end()),
+    Rcpp::Named("inner_iters_samp") = Rcpp::IntegerVector(inner_iters_samp.begin(), inner_iters_samp.end()),
+    Rcpp::Named("inner_warm_feat") = Rcpp::LogicalVector(inner_warm_feat.begin(), inner_warm_feat.end()),
+    Rcpp::Named("inner_warm_samp") = Rcpp::LogicalVector(inner_warm_samp.begin(), inner_warm_samp.end()),
+    Rcpp::Named("inner_warm_fallback_feat") = Rcpp::LogicalVector(inner_fallback_feat.begin(), inner_fallback_feat.end()),
+    Rcpp::Named("inner_warm_fallback_samp") = Rcpp::LogicalVector(inner_fallback_samp.begin(), inner_fallback_samp.end()),
+    Rcpp::Named("inner_iters_total") = inner_total,
+    Rcpp::Named("feat_ms") = feat_ms,
+    Rcpp::Named("samp_ms") = samp_ms,
+    Rcpp::Named("warm_start") = use_warm_start
   );
 }

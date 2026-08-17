@@ -3,12 +3,12 @@
 [![Sparse Sampled Perf Gate (Fast)](https://github.com/bbuchsbaum/rfugw/actions/workflows/sparse-sampled-perf-gate.yml/badge.svg)](https://github.com/bbuchsbaum/rfugw/actions/workflows/sparse-sampled-perf-gate.yml)
 [![Sparse Sampled Perf Gate (Nightly)](https://github.com/bbuchsbaum/rfugw/actions/workflows/sparse-sampled-perf-gate-nightly.yml/badge.svg)](https://github.com/bbuchsbaum/rfugw/actions/workflows/sparse-sampled-perf-gate-nightly.yml)
 
-If this repository is hosted under a different GitHub owner/name, update the badge URLs above accordingly.
-
 Fast R + C++ implementations of:
 
+- Balanced and KL-unbalanced linear optimal transport (`ot_sinkhorn`,
+  `ot_emd`, `ot_sinkhorn_unbalanced`)
 - Entropic Fused Gromov-Wasserstein (FGW, square loss)
-- Exact FGW via conditional gradient + LP direction
+- Unregularized FGW via conditional gradient + LP direction
 - Fused Unbalanced Gromov-Wasserstein (FUGW, KL divergence with Sinkhorn inner solver)
 
 The implementation follows the POT reference formulations in:
@@ -28,18 +28,30 @@ or from the repo root:
 devtools::install("rfugw")
 ```
 
-Compiler flags default to an aggressive CPU-tuned build:
+Default builds are conservative and portable (R's `-O2`, no `-march=native`,
+no `-ffast-math`). OpenMP uses `$(SHLIB_OPENMP_CXXFLAGS)` when the
+toolchain provides it. On macOS Homebrew, set `RFUGW_OPENMP_FLAGS` /
+`RFUGW_OPENMP_LIBS` if those defaults are not enough; see
+`inst/build-profiles.md`.
 
-- `-march=native -ffast-math -fno-math-errno -fno-trapping-math`
-
-To disable these and build conservatively:
+To opt in to aggressive, machine-local flags (not for CRAN, sanitizers, or
+reproducible comparisons):
 
 ```bash
-RFUGW_FAST_FLAGS="" R CMD INSTALL .
+RFUGW_FAST_FLAGS="-march=native -ffast-math -fno-math-errno -fno-trapping-math" \
+  R CMD INSTALL .
 ```
 
-OpenMP is enabled when available. On macOS, the package auto-detects Homebrew
-`libomp` at `/opt/homebrew/opt/libomp` or `/usr/local/opt/libomp`.
+The default exact FGW/GW and unregularized partial GW/FGW paths
+(`lp_solver = "cpp_transport"`) do not need `lpSolve`. The
+`"lp_transport"` and `"lp_matrix"` backends still do. At `n >= 24`,
+`lp_solver = "lp_matrix"` is typically faster when `lpSolve` is installed:
+
+```r
+install.packages("lpSolve")
+```
+
+Entropic partial solvers also do not need `lpSolve`.
 
 ## Example
 
@@ -63,6 +75,13 @@ str(out)
 out_exact <- fgw_exact_cg(M, C1, C2, alpha = 0.5, max_iter = 120)
 str(out_exact)
 ```
+
+## Guides
+
+- `vignette("linear-ot")` — balanced and unbalanced linear OT
+- `vignette("solver-guide")` — which GW/FGW solver to call
+- `vignette("barycenters")` — fixed-support barycenters
+- `vignette("multiset-alignment")` — many subjects to one template
 
 ## Multiset Alignment (Fixed Template)
 
@@ -102,6 +121,19 @@ Performance knobs for large multiset runs:
 - `square_loss` only
 - No Python runtime dependency
 - Differential tests against frozen POT fixtures shipped in `inst/extdata/fixtures`
+- Supported names, aliases, parameters, and diagnostic meanings are specified
+  in [`inst/solver-contract.md`](inst/solver-contract.md)
+- Unregularized GW/FGW solvers are conditional-gradient procedures with an
+  exact linear-OT subproblem. They do not claim a global minimizer.
+
+## Citation
+
+```r
+citation("rfugw")
+```
+
+See `NEWS.md` and `CONTRIBUTING.md` for the 0.1 compatibility and evidence
+policy.
 
 ## Benchmarking
 

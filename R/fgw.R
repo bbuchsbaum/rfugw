@@ -21,14 +21,16 @@
 #' Entropic Fused Gromov-Wasserstein (square loss)
 #'
 #' POT-style projected gradient iterations with Sinkhorn projections.
+#' Reported `fgw_dist` is the unregularized FGW objective at the returned plan;
+#' it does not add the entropic term.
 #'
 #' @param M Cross-domain feature cost matrix (`ns x nt`).
 #' @param C1 Source structure cost matrix (`ns x ns`).
 #' @param C2 Target structure cost matrix (`nt x nt`).
-#' @param p Source weights (default uniform).
-#' @param q Target weights (default uniform).
-#' @param alpha Trade-off between feature and structure terms.
-#' @param epsilon Entropic regularization.
+#' @param p Source weights (default uniform). Renormalized to sum 1.
+#' @param q Target weights (default uniform). Renormalized to sum 1.
+#' @param alpha Trade-off between feature and structure terms, in `[0, 1]`.
+#' @param epsilon Entropic regularization (must be positive).
 #' @param max_iter Max outer FGW iterations.
 #' @param tol Outer stopping tolerance on Frobenius norm of plan updates.
 #' @param sinkhorn_max_iter Max Sinkhorn iterations per outer step.
@@ -36,14 +38,27 @@
 #' @param init_plan Optional initial coupling (`ns x nt`) used as a warm start.
 #' @param structure_rank Optional low-rank approximation rank for structure
 #'   matrices in the FGW tensor product (`0` disables approximation).
+#' @param sinkhorn_method Sinkhorn variant: `"scaling"` or `"log"`.
 #' @param precision Numeric precision mode: `"mixed"` (default) or `"double"`
 #'   (`"mixed"` uses float inner iterations with double final objective
 #'   evaluation). For larger problems, `"double"` uses a mixed-precision
 #'   accelerated inner Sinkhorn path while returning double outputs.
-#' @param symmetric Assume `C1` and `C2` are symmetric if `TRUE`.
+#' @param symmetric `NULL` auto-detects symmetry of `C1` and `C2`. `TRUE`
+#'   requires both costs to be symmetric within `1e-10`. `FALSE` uses the
+#'   two-sided tensor.
 #' @param solver Either `"PGD"` or `"PPA"`.
 #' @param check_every Evaluate outer stopping error every `check_every` iterations.
-#' @return A list with `plan`, `fgw_dist`, `iterations`, `error`.
+#' @return A list with `plan`, `fgw_dist`, `iterations`, `error`, `residual`,
+#'   `status`, `converged`, and marginal residuals. See
+#'   `inst/solver-contract.md`.
+#' @examples
+#' set.seed(1)
+#' C1 <- as.matrix(dist(matrix(rnorm(8), 4, 2)))
+#' C2 <- as.matrix(dist(matrix(rnorm(10), 5, 2)))
+#' M <- matrix(runif(20), 4, 5)
+#' out <- fgw_entropic(M, C1, C2, epsilon = 0.1, max_iter = 40L)
+#' out$status
+#' out$residual
 #' @export
 fgw_entropic <- function(
     M,
@@ -61,37 +76,34 @@ fgw_entropic <- function(
     structure_rank = 0L,
     sinkhorn_method = c("scaling", "log"),
     precision = c("mixed", "double"),
-    symmetric = TRUE,
+    symmetric = NULL,
     solver = c("PGD", "PPA"),
     check_every = 1L) {
-  .assert_matrix(M, "M")
-  .assert_matrix(C1, "C1")
-  .assert_matrix(C2, "C2")
+  M <- .validate_finite_matrix(M, "M")
+  C1 <- .validate_finite_matrix(C1, "C1", square = TRUE)
+  C2 <- .validate_finite_matrix(C2, "C2", square = TRUE)
 
   ns <- nrow(C1)
   nt <- nrow(C2)
-  if (ncol(C1) != ns) stop("`C1` must be square.", call. = FALSE)
-  if (ncol(C2) != nt) stop("`C2` must be square.", call. = FALSE)
   if (nrow(M) != ns || ncol(M) != nt) {
     stop("`M` must have shape nrow(C1) x nrow(C2).", call. = FALSE)
   }
+
+  alpha <- .validate_alpha(alpha)
+  epsilon <- .validate_positive_scalar(epsilon, "epsilon")
+  tol <- .validate_positive_scalar(tol, "tol")
+  sinkhorn_tol <- .validate_positive_scalar(sinkhorn_tol, "sinkhorn_tol")
+  max_iter <- .validate_count(max_iter, "max_iter")
+  sinkhorn_max_iter <- .validate_count(sinkhorn_max_iter, "sinkhorn_max_iter")
+  check_every <- .validate_count(check_every, "check_every")
+  structure_rank <- .validate_count(structure_rank, "structure_rank", min = 0L)
+  symmetric <- .resolve_symmetric(symmetric, C1, C2)
 
   if (is.null(p)) p <- rep(1 / ns, ns)
   if (is.null(q)) q <- rep(1 / nt, nt)
   p <- .assert_prob(p, ns, "p")
   q <- .assert_prob(q, nt, "q")
-  if (is.null(init_plan)) {
-    init_plan <- matrix(numeric(0), nrow = 0, ncol = 0)
-  } else {
-    .assert_matrix(init_plan, "init_plan")
-    if (nrow(init_plan) != ns || ncol(init_plan) != nt) {
-      stop("`init_plan` must have shape nrow(C1) x nrow(C2).", call. = FALSE)
-    }
-  }
-  structure_rank <- as.integer(structure_rank)[1]
-  if (!is.finite(structure_rank) || structure_rank < 0) {
-    stop("`structure_rank` must be a nonnegative integer.", call. = FALSE)
-  }
+  init_plan <- .validate_optional_init_plan(init_plan, ns, nt, "init_plan")
 
   solver <- match.arg(solver)
   sinkhorn_method <- match.arg(sinkhorn_method)
@@ -100,7 +112,7 @@ fgw_entropic <- function(
   use_log_sinkhorn <- identical(sinkhorn_method, "log")
   use_mixed_precision <- identical(precision, "mixed")
 
-  cpp_fgw_entropic_square(
+  out <- cpp_fgw_entropic_square(
     M = unname(M),
     C1 = unname(C1),
     C2 = unname(C2),
@@ -108,17 +120,28 @@ fgw_entropic <- function(
     q = unname(q),
     alpha = alpha,
     epsilon = epsilon,
-    max_iter = as.integer(max_iter),
+    max_iter = max_iter,
     tol = tol,
-    sinkhorn_max_iter = as.integer(sinkhorn_max_iter),
+    sinkhorn_max_iter = sinkhorn_max_iter,
     sinkhorn_tol = sinkhorn_tol,
     init_plan = unname(init_plan),
-    symmetric = isTRUE(symmetric),
+    symmetric = symmetric,
     use_ppa = use_ppa,
     use_log_sinkhorn = use_log_sinkhorn,
     use_mixed_precision = use_mixed_precision,
-    check_every = as.integer(check_every),
+    check_every = check_every,
     approx_rank = structure_rank
+  )
+  residual <- if (!is.null(out$error)) out$error else Inf
+  .attach_solver_diagnostics(
+    out,
+    residual = residual,
+    converged = is.finite(residual) && residual <= tol,
+    iterations = out$iterations,
+    max_iter = max_iter,
+    p = p,
+    q = q,
+    plan = out$plan
   )
 }
 
@@ -126,6 +149,7 @@ fgw_entropic <- function(
 #'
 #' @inheritParams fgw_entropic
 #' @return Numeric scalar FGW value.
+#' @param ... Additional arguments. Unused extras are rejected when the solver uses `.reject_unused_dots()`; otherwise they are forwarded to the primary solver.
 #' @export
 fgw_entropic2 <- function(...) {
   out <- fgw_entropic(...)
@@ -138,11 +162,11 @@ fgw_entropic2 <- function(...) {
 #'
 #' @param Cx Source structure matrix.
 #' @param Cy Target structure matrix.
-#' @param wx Source weights (default uniform).
-#' @param wy Target weights (default uniform).
+#' @param wx Source weights (default uniform). Renormalized to sum 1.
+#' @param wy Target weights (default uniform). Renormalized to sum 1.
 #' @param reg_marginals Length-1 or length-2 marginal relaxation parameters.
 #' @param epsilon Joint KL regularization parameter (entropic term).
-#' @param alpha Linear FGW term coefficient.
+#' @param alpha Linear FGW term coefficient, in `[0, 1]`.
 #' @param M Linear sample cost matrix (default `NULL`).
 #' @param init_pi Optional initial sample coupling (`nx x ny`).
 #' @param max_iter Max BCD iterations.
@@ -154,7 +178,13 @@ fgw_entropic2 <- function(...) {
 #' @param precision Numeric precision mode for the C++ solver (`"double"` or
 #'   `"mixed"`).
 #' @return A list with `pi_samp`, `pi_feat`, `fugw_cost`, `linear_cost`,
-#'   `iterations`, and `error`.
+#'   `iterations`, `error`, `status`, and `converged`.
+#' @examples
+#' set.seed(1)
+#' Cx <- as.matrix(dist(matrix(rnorm(8), 4, 2)))
+#' Cy <- as.matrix(dist(matrix(rnorm(10), 5, 2)))
+#' out <- fugw_kl(Cx, Cy, epsilon = 0.05, max_iter = 20L)
+#' out$status
 #' @export
 fugw_kl <- function(
     Cx,
@@ -174,12 +204,17 @@ fugw_kl <- function(
     check_every = 1L,
     precision = c("double", "mixed")) {
   precision <- match.arg(precision)
-  .assert_matrix(Cx, "Cx")
-  .assert_matrix(Cy, "Cy")
+  Cx <- .validate_finite_matrix(Cx, "Cx", square = TRUE)
+  Cy <- .validate_finite_matrix(Cy, "Cy", square = TRUE)
   nx <- nrow(Cx)
   ny <- nrow(Cy)
-  if (ncol(Cx) != nx) stop("`Cx` must be square.", call. = FALSE)
-  if (ncol(Cy) != ny) stop("`Cy` must be square.", call. = FALSE)
+  alpha <- .validate_alpha(alpha)
+  epsilon <- .validate_positive_scalar(epsilon, "epsilon")
+  tol <- .validate_positive_scalar(tol, "tol")
+  tol_ot <- .validate_positive_scalar(tol_ot, "tol_ot")
+  max_iter <- .validate_count(max_iter, "max_iter")
+  max_iter_ot <- .validate_count(max_iter_ot, "max_iter_ot")
+  check_every <- .validate_count(check_every, "check_every")
 
   if (is.null(wx)) wx <- rep(1 / nx, nx)
   if (is.null(wy)) wy <- rep(1 / ny, ny)
@@ -189,7 +224,7 @@ fugw_kl <- function(
   if (is.null(M)) {
     M <- matrix(0, nrow = nx, ncol = ny)
   } else {
-    .assert_matrix(M, "M")
+    M <- .validate_finite_matrix(M, "M")
     if (nrow(M) != nx || ncol(M) != ny) {
       stop("`M` must have shape nrow(Cx) x nrow(Cy).", call. = FALSE)
     }
@@ -198,20 +233,20 @@ fugw_kl <- function(
   if (length(reg_marginals) == 1L) {
     reg_marginals <- c(reg_marginals, reg_marginals)
   }
-  if (length(reg_marginals) != 2L) {
-    stop("`reg_marginals` must have length 1 or 2.", call. = FALSE)
+  if (length(reg_marginals) != 2L || any(!is.finite(reg_marginals)) || any(reg_marginals <= 0)) {
+    stop("`reg_marginals` must be one or two finite positive numbers.", call. = FALSE)
   }
 
   if (is.null(init_pi)) {
     init_pi <- tcrossprod(wx, wy)
   } else {
-    .assert_matrix(init_pi, "init_pi")
-    if (nrow(init_pi) != nx || ncol(init_pi) != ny) {
+    init_pi <- .validate_optional_init_plan(init_pi, nx, ny, "init_pi")
+    if (length(init_pi) == 0L) {
       stop("`init_pi` must have shape nrow(Cx) x nrow(Cy).", call. = FALSE)
     }
   }
 
-  cpp_fugw_kl_square(
+  out <- cpp_fugw_kl_square(
     Cx = unname(Cx),
     Cy = unname(Cy),
     wx = unname(wx),
@@ -221,13 +256,28 @@ fugw_kl <- function(
     alpha = alpha,
     M = unname(M),
     init_pi = unname(init_pi),
-    max_iter = as.integer(max_iter),
+    max_iter = max_iter,
     tol = tol,
-    max_iter_ot = as.integer(max_iter_ot),
+    max_iter_ot = max_iter_ot,
     tol_ot = tol_ot,
     rescale_plan = isTRUE(rescale_plan),
-    check_every = as.integer(check_every),
+    check_every = check_every,
     use_mixed_precision = identical(precision, "mixed")
+  )
+  residual <- if (!is.null(out$error)) out$error else Inf
+  inner_iters <- if (!is.null(out$inner_iters_total)) {
+    as.integer(out$inner_iters_total)
+  } else {
+    NA_integer_
+  }
+  .attach_solver_diagnostics(
+    out,
+    residual = residual,
+    converged = is.finite(residual) && residual <= tol,
+    iterations = out$iterations,
+    max_iter = max_iter,
+    plan = out$pi_samp,
+    inner_iterations = inner_iters
   )
 }
 
@@ -235,6 +285,7 @@ fugw_kl <- function(
 #'
 #' @inheritParams fugw_kl
 #' @return Numeric scalar FUGW objective value.
+#' @param ... Additional arguments. Unused extras are rejected when the solver uses `.reject_unused_dots()`; otherwise they are forwarded to the primary solver.
 #' @export
 fugw_kl2 <- function(...) {
   out <- fugw_kl(...)
@@ -291,7 +342,11 @@ fugw_kl2 <- function(...) {
     solver = c("lp_matrix", "lp_transport")) {
   if (!requireNamespace("lpSolve", quietly = TRUE)) {
     stop(
-      "`fgw_exact_cg()` requires package `lpSolve` for the EMD/LP direction step.",
+      paste(
+        "`lp_solver = \"lp_transport\"` and `\"lp_matrix\"` require package `lpSolve`.",
+        "Install it with install.packages(\"lpSolve\"), or use the default",
+        "`lp_solver = \"cpp_transport\"` which has no extra dependency."
+      ),
       call. = FALSE
     )
   }
@@ -348,18 +403,33 @@ fugw_kl2 <- function(...) {
   }
 }
 
-#' Exact FGW via Conditional Gradient + LP Direction (square loss)
+#' Unregularized FGW via Conditional Gradient + LP Direction (square loss)
 #'
-#' POT-style CG iterations with a linear-program transport direction step.
+#' Conditional-gradient iterations with an exact linear-OT direction step.
+#' The outer GW/FGW problem is non-convex; the returned plan is a stationary
+#' point of this procedure, not a certified global minimizer. Reported
+#' `fgw_dist` is the unregularized FGW objective.
 #'
 #' @inheritParams fgw_entropic
-#' @param lp_scale Integer mass scaling used for LP marginals.
+#' @param G0 Optional feasible initial coupling (`ns x nt`). Honored by every
+#'   `lp_solver` backend.
+#' @param tol_rel Relative stopping tolerance on objective change.
+#' @param tol_abs Absolute stopping tolerance on objective change.
+#' @param lp_scale Integer mass scaling used for LP marginals (lpSolve backends).
 #' @param lp_solver LP backend for direction step: `"cpp_transport"` (default,
 #'   C++ transport-simplex backend), `"lp_transport"` (lpSolve), or `"lp_matrix"`
 #'   (cached dense lpSolve constraints).
 #' @param lp_max_iter Maximum iterations for the C++ transport-simplex LP backend.
 #' @param lp_tol Optimality tolerance for the C++ transport-simplex LP backend.
-#' @return A list with `plan`, `fgw_dist`, `iterations`, `error`, `loss_trace`.
+#' @return A list with `plan`, `fgw_dist`, `iterations`, `error`, `rel_error`,
+#'   `loss_trace`, `status`, and `converged`.
+#' @examples
+#' set.seed(1)
+#' C1 <- as.matrix(dist(matrix(rnorm(8), 4, 2)))
+#' C2 <- as.matrix(dist(matrix(rnorm(8), 4, 2)))
+#' M <- matrix(runif(16), 4, 4)
+#' out <- fgw_exact_cg(M, C1, C2, max_iter = 20L)
+#' out$status
 #' @export
 fgw_exact_cg <- function(
     M,
@@ -368,7 +438,7 @@ fgw_exact_cg <- function(
     p = NULL,
     q = NULL,
     alpha = 0.5,
-    symmetric = TRUE,
+    symmetric = NULL,
     G0 = NULL,
     max_iter = 500L,
     tol_rel = 1e-9,
@@ -377,51 +447,76 @@ fgw_exact_cg <- function(
     lp_solver = c("cpp_transport", "lp_transport", "lp_matrix"),
     lp_max_iter = 20000L,
     lp_tol = 1e-12) {
-  .assert_matrix(M, "M")
-  .assert_matrix(C1, "C1")
-  .assert_matrix(C2, "C2")
+  M <- .validate_finite_matrix(M, "M")
+  C1 <- .validate_finite_matrix(C1, "C1", square = TRUE)
+  C2 <- .validate_finite_matrix(C2, "C2", square = TRUE)
 
   ns <- nrow(C1)
   nt <- nrow(C2)
-  if (ncol(C1) != ns) stop("`C1` must be square.", call. = FALSE)
-  if (ncol(C2) != nt) stop("`C2` must be square.", call. = FALSE)
   if (nrow(M) != ns || ncol(M) != nt) {
     stop("`M` must have shape nrow(C1) x nrow(C2).", call. = FALSE)
   }
+
+  alpha <- .validate_alpha(alpha)
+  tol_rel <- .validate_positive_scalar(tol_rel, "tol_rel")
+  tol_abs <- .validate_positive_scalar(tol_abs, "tol_abs")
+  lp_tol <- .validate_positive_scalar(lp_tol, "lp_tol")
+  max_iter <- .validate_count(max_iter, "max_iter", min = 0L)
+  lp_max_iter <- .validate_count(lp_max_iter, "lp_max_iter")
+  lp_scale <- .validate_positive_scalar(lp_scale, "lp_scale")
+  symmetric <- .resolve_symmetric(symmetric, C1, C2)
 
   if (is.null(p)) p <- rep(1 / ns, ns)
   if (is.null(q)) q <- rep(1 / nt, nt)
   p <- .assert_prob(p, ns, "p")
   q <- .assert_prob(q, nt, "q")
   lp_solver <- match.arg(lp_solver)
+  if (!is.null(G0)) {
+    G0 <- .validate_balanced_plan(G0, p, q, "G0")
+  }
 
   if (identical(lp_solver, "cpp_transport")) {
-    return(cpp_fgw_exact_cg_square(
+    init_plan <- if (is.null(G0)) {
+      matrix(numeric(0), nrow = 0, ncol = 0)
+    } else {
+      unname(G0)
+    }
+    out <- cpp_fgw_exact_cg_square(
       M = unname(M),
       C1 = unname(C1),
       C2 = unname(C2),
       p = unname(p),
       q = unname(q),
       alpha = alpha,
-      symmetric = isTRUE(symmetric),
-      max_iter = as.integer(max_iter),
+      symmetric = symmetric,
+      max_iter = max_iter,
       tol_rel = tol_rel,
       tol_abs = tol_abs,
-      lp_max_iter = as.integer(lp_max_iter),
-      lp_tol = lp_tol
+      lp_max_iter = lp_max_iter,
+      lp_tol = lp_tol,
+      init_plan = init_plan
+    )
+    residual <- if (!is.null(out$error)) out$error else Inf
+    rel_error <- if (!is.null(out$rel_error)) out$rel_error else Inf
+    converged <- (is.finite(rel_error) && rel_error < tol_rel) ||
+      (is.finite(residual) && residual < tol_abs)
+    return(.attach_solver_diagnostics(
+      out,
+      residual = residual,
+      converged = converged,
+      iterations = out$iterations,
+      max_iter = max_iter,
+      p = p,
+      q = q,
+      plan = out$plan,
+      inner_iterations = if (!is.null(out$inner_iterations)) out$inner_iterations else NA_integer_,
+      lp_ok = isTRUE(out$lp_ok)
     ))
   }
 
   if (is.null(G0)) {
     G <- tcrossprod(p, q)
   } else {
-    .assert_matrix(G0, "G0")
-    if (nrow(G0) != ns || ncol(G0) != nt) {
-      stop("`G0` must have shape nrow(C1) x nrow(C2).", call. = FALSE)
-    }
-    if (max(abs(rowSums(G0) - p)) > 1e-8 || max(abs(colSums(G0) - q)) > 1e-8) {
-      stop("`G0` must satisfy the marginal constraints.", call. = FALSE)
-    }
     G <- G0
   }
 
@@ -502,12 +597,24 @@ fgw_exact_cg <- function(
     }
   }
 
-  list(
+  out <- list(
     plan = G,
     fgw_dist = cost_G,
     iterations = it,
     error = abs_delta,
     rel_error = rel_delta,
     loss_trace = loss_trace[seq_len(it + 1L)]
+  )
+  converged <- (is.finite(rel_delta) && rel_delta < tol_rel) ||
+    (is.finite(abs_delta) && abs_delta < tol_abs)
+  .attach_solver_diagnostics(
+    out,
+    residual = abs_delta,
+    converged = converged,
+    iterations = it,
+    max_iter = max_iter,
+    p = p,
+    q = q,
+    plan = G
   )
 }

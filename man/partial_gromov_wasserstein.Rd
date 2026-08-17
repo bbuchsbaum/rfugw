@@ -20,7 +20,7 @@ partial_gromov_wasserstein(
   warn = TRUE,
   log = FALSE,
   verbose = FALSE,
-  lp_solver = c("lp_matrix", "lp_transport"),
+  lp_solver = c("cpp_transport", "lp_matrix", "lp_transport"),
   lp_scale = 1e+06,
   ...
 )
@@ -46,13 +46,22 @@ partial_gromov_wasserstein(
 
 \item{numItermax}{Maximum CG iterations.}
 
+\item{tol}{Relative stopping tolerance on the partial objective.}
+
 \item{symmetric}{Assume \code{C1} and \code{C2} are symmetric if \code{TRUE}.}
 
 \item{warn}{Ignored; retained for POT signature compatibility.}
 
-\item{lp_solver}{LP backend (\code{"cpp_transport"}, \code{"lp_transport"}, \code{"lp_matrix"}).}
+\item{log}{If \code{TRUE}, return a list with diagnostics; otherwise the plan.}
+
+\item{verbose}{If \code{TRUE}, print CG diagnostics.}
+
+\item{lp_solver}{LP backend for the linearized partial OT step
+(\code{"cpp_transport"} default, \code{"lp_transport"}, \code{"lp_matrix"}).}
 
 \item{lp_scale}{Integer scaling factor for LP marginal discretization.}
+
+\item{...}{Additional arguments. Unused extras are rejected when the solver uses \code{.reject_unused_dots()}; otherwise they are forwarded to the primary solver.}
 }
 \value{
 If \code{log = FALSE}, returns a coupling matrix. If \code{log = TRUE}, returns

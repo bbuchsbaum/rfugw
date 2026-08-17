@@ -64,7 +64,7 @@
       Sys.unsetenv(unset)
     }
   }, add = TRUE)
-  do.call(Sys.setenv, as.list(setNames(rep("1", length(vars)), vars)))
+  do.call(Sys.setenv, as.list(stats::setNames(rep("1", length(vars)), vars)))
   eval.parent(substitute(expr))
 }
 

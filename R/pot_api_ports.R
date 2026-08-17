@@ -63,15 +63,20 @@
     b,
     m,
     nb_dummies = 1L,
-    lp_solver = c("lp_matrix", "lp_transport"),
+    lp_solver = c("cpp_transport", "lp_matrix", "lp_transport"),
     lp_scale = 1e6) {
-  if (!requireNamespace("lpSolve", quietly = TRUE)) {
+  lp_solver <- match.arg(lp_solver)
+  if (!identical(lp_solver, "cpp_transport") && !requireNamespace("lpSolve", quietly = TRUE)) {
     stop(
-      "Partial GW solvers require package `lpSolve` for linearized partial OT steps.",
+      paste(
+        "`lp_solver = \"lp_transport\"` and `\"lp_matrix\"` require package `lpSolve`.",
+        "Install it with install.packages(\"lpSolve\"), or use the default",
+        "`lp_solver = \"cpp_transport\"` which has no extra dependency.",
+        "Entropic partial solvers do not need lpSolve."
+      ),
       call. = FALSE
     )
   }
-  lp_solver <- match.arg(lp_solver)
   nb_dummies <- as.integer(nb_dummies)[1]
   if (!is.finite(nb_dummies) || nb_dummies < 1L) {
     stop("`nb_dummies` must be an integer >= 1.", call. = FALSE)
@@ -367,7 +372,7 @@
         obj <- lin_w * sum(M * G) + quad_w * .gw_square_terms(C1, C2, G, symmetric = symmetric)$loss
         cat(sprintf("iter=%d err=%.8e obj=%.8e\n", k, err, obj))
       }
-      if (err <= tol) {
+      if (isTRUE(err <= tol)) {
         it <- k
         break
       }
@@ -388,6 +393,118 @@
     iterations = as.integer(it),
     error = as.numeric(err),
     err_trace = err_trace
+  )
+}
+
+.partial_fgw_exact_dispatch <- function(
+    M,
+    C1,
+    C2,
+    p,
+    q,
+    m,
+    alpha,
+    G0,
+    max_iter,
+    tol,
+    symmetric,
+    lp_solver,
+    lp_scale,
+    nb_dummies,
+    verbose = FALSE) {
+  if (identical(lp_solver, "cpp_transport") &&
+      exists("cpp_partial_fgw_exact_square", mode = "function")) {
+    return(cpp_partial_fgw_exact_square(
+      M = M,
+      C1 = C1,
+      C2 = C2,
+      p = p,
+      q = q,
+      m = m,
+      alpha = alpha,
+      symmetric = isTRUE(symmetric),
+      init_plan = if (is.null(G0)) .empty_feature_cost() else G0,
+      max_iter = as.integer(max_iter),
+      tol = tol,
+      nb_dummies = as.integer(nb_dummies),
+      lp_max_iter = 20000L,
+      lp_tol = 1e-12
+    ))
+  }
+  M_r <- if (length(M) == 0L) matrix(0, nrow(C1), nrow(C2)) else M
+  .partial_fgw_cg_core(
+    M = M_r,
+    C1 = C1,
+    C2 = C2,
+    p = p,
+    q = q,
+    m = m,
+    alpha = alpha,
+    G0 = G0,
+    max_iter = as.integer(max_iter),
+    tol = tol,
+    symmetric = symmetric,
+    lp_solver = lp_solver,
+    lp_scale = lp_scale,
+    nb_dummies = as.integer(nb_dummies),
+    verbose = verbose
+  )
+}
+
+.partial_fgw_entropic_dispatch <- function(
+    M,
+    C1,
+    C2,
+    p,
+    q,
+    m,
+    reg,
+    alpha,
+    G0,
+    max_iter,
+    tol,
+    symmetric,
+    inner_max_iter,
+    inner_tol,
+    verbose = FALSE,
+    check_every = 10L) {
+  if (exists("cpp_partial_fgw_entropic_square", mode = "function")) {
+    return(cpp_partial_fgw_entropic_square(
+      M = M,
+      C1 = C1,
+      C2 = C2,
+      p = p,
+      q = q,
+      m = m,
+      reg = reg,
+      alpha = alpha,
+      symmetric = isTRUE(symmetric),
+      init_plan = if (is.null(G0)) .empty_feature_cost() else G0,
+      max_iter = as.integer(max_iter),
+      tol = tol,
+      inner_max_iter = as.integer(inner_max_iter),
+      inner_tol = inner_tol,
+      check_every = as.integer(check_every)
+    ))
+  }
+  M_r <- if (length(M) == 0L) matrix(0, nrow(C1), nrow(C2)) else M
+  .partial_fgw_entropic_core(
+    M = M_r,
+    C1 = C1,
+    C2 = C2,
+    p = p,
+    q = q,
+    m = m,
+    reg = reg,
+    alpha = alpha,
+    G0 = G0,
+    max_iter = as.integer(max_iter),
+    tol = tol,
+    symmetric = symmetric,
+    inner_max_iter = inner_max_iter,
+    inner_tol = inner_tol,
+    verbose = verbose,
+    check_every = check_every
   )
 }
 
@@ -524,6 +641,72 @@
     abs_error = as.numeric(abs_delta),
     loss_trace = loss_trace[seq_len(it + 1L)],
     symmetric = symmetric
+  )
+}
+
+.semirelaxed_fgw_exact_dispatch <- function(
+    M,
+    C1,
+    C2,
+    p,
+    alpha,
+    symmetric,
+    G0,
+    max_iter,
+    tol_rel,
+    tol_abs,
+    verbose = FALSE) {
+  ns <- nrow(C1)
+  nt <- nrow(C2)
+  G_init <- if (is.null(G0)) {
+    .empty_feature_cost()
+  } else {
+    .validate_semirelaxed_init(G0, p, ns, nt)
+  }
+  use_mixed_precision <- (ns * nt >= 4000L) &&
+    identical(Sys.getenv("RFUGW_SEMIRELAXED_MIXED", "1"), "1")
+  if (isTRUE(symmetric) && exists("cpp_semirelaxed_fgw_cg_square_fast", mode = "function")) {
+    return(cpp_semirelaxed_fgw_cg_square_fast(
+      M = M,
+      C1 = C1,
+      C2 = C2,
+      p = p,
+      alpha = alpha,
+      init_plan = G_init,
+      max_iter = as.integer(max_iter),
+      tol_rel = tol_rel,
+      tol_abs = tol_abs,
+      verbose = isTRUE(verbose),
+      use_mixed_precision = use_mixed_precision
+    ))
+  }
+  if (exists("cpp_semirelaxed_fgw_exact_square", mode = "function")) {
+    return(cpp_semirelaxed_fgw_exact_square(
+      M = M,
+      C1 = C1,
+      C2 = C2,
+      p = p,
+      alpha = alpha,
+      symmetric = isTRUE(symmetric),
+      init_plan = G_init,
+      max_iter = as.integer(max_iter),
+      tol_rel = tol_rel,
+      tol_abs = tol_abs
+    ))
+  }
+  M_r <- if (length(M) == 0L) matrix(0, ns, nt) else M
+  .semirelaxed_fgw_cg_core(
+    M = M_r,
+    C1 = C1,
+    C2 = C2,
+    p = p,
+    alpha = alpha,
+    symmetric = symmetric,
+    G0 = G0,
+    max_iter = as.integer(max_iter),
+    tol_rel = tol_rel,
+    tol_abs = tol_abs,
+    verbose = verbose
   )
 }
 
@@ -799,9 +982,15 @@
 #' @param thres Unused POT compatibility parameter.
 #' @param numItermax Maximum CG iterations.
 #' @param warn Ignored; retained for POT signature compatibility.
+#' @param lp_solver LP backend for the linearized partial OT step
+#'   (`"cpp_transport"` default, `"lp_transport"`, `"lp_matrix"`).
 #' @param lp_scale Integer scaling factor for LP marginal discretization.
+#' @param tol Relative stopping tolerance on the partial objective.
+#' @param log If `TRUE`, return a list with diagnostics; otherwise the plan.
+#' @param verbose If `TRUE`, print CG diagnostics.
 #' @return If `log = FALSE`, returns a coupling matrix. If `log = TRUE`, returns
 #'   a list with `plan`, `partial_gw_dist`, `iterations`, `error`, and `loss_trace`.
+#' @param ... Additional arguments. Unused extras are rejected when the solver uses `.reject_unused_dots()`; otherwise they are forwarded to the primary solver.
 #' @export
 partial_gromov_wasserstein <- function(
     C1,
@@ -819,7 +1008,7 @@ partial_gromov_wasserstein <- function(
     warn = TRUE,
     log = FALSE,
     verbose = FALSE,
-    lp_solver = c("lp_matrix", "lp_transport"),
+    lp_solver = c("cpp_transport", "lp_matrix", "lp_transport"),
     lp_scale = 1e6,
     ...) {
   .check_square_loss(loss_fun)
@@ -844,10 +1033,9 @@ partial_gromov_wasserstein <- function(
   }
 
   G0 <- .validate_partial_init(G0, p, q, m, ns, nt)
-  M0 <- matrix(0, nrow = ns, ncol = nt)
 
-  out <- .partial_fgw_cg_core(
-    M = M0,
+  out <- .partial_fgw_exact_dispatch(
+    M = .empty_feature_cost(),
     C1 = C1,
     C2 = C2,
     p = p,
@@ -881,6 +1069,7 @@ partial_gromov_wasserstein <- function(
 #'
 #' @inheritParams partial_gromov_wasserstein
 #' @return Partial GW value.
+#' @param ... Additional arguments. Unused extras are rejected when the solver uses `.reject_unused_dots()`; otherwise they are forwarded to the primary solver.
 #' @export
 partial_gromov_wasserstein2 <- function(...) {
   out <- partial_gromov_wasserstein(..., log = TRUE)
@@ -897,6 +1086,7 @@ partial_gromov_wasserstein2 <- function(...) {
 #' @return If `log = FALSE`, returns a coupling matrix. If `log = TRUE`, returns
 #'   a list with `plan`, `partial_fgw_dist`, `lin_loss`, `quad_loss`,
 #'   `iterations`, `error`, and `loss_trace`.
+#' @param ... Additional arguments. Unused extras are rejected when the solver uses `.reject_unused_dots()`; otherwise they are forwarded to the primary solver.
 #' @export
 partial_fused_gromov_wasserstein <- function(
     M,
@@ -916,7 +1106,7 @@ partial_fused_gromov_wasserstein <- function(
     warn = TRUE,
     log = FALSE,
     verbose = FALSE,
-    lp_solver = c("lp_matrix", "lp_transport"),
+    lp_solver = c("cpp_transport", "lp_matrix", "lp_transport"),
     lp_scale = 1e6,
     ...) {
   .check_square_loss(loss_fun)
@@ -950,8 +1140,8 @@ partial_fused_gromov_wasserstein <- function(
 
   G0 <- .validate_partial_init(G0, p, q, m, ns, nt)
 
-  out <- .partial_fgw_cg_core(
-    M = M,
+  out <- .partial_fgw_exact_dispatch(
+    M = if (alpha >= 1) .empty_feature_cost() else M,
     C1 = C1,
     C2 = C2,
     p = p,
@@ -987,6 +1177,7 @@ partial_fused_gromov_wasserstein <- function(
 #'
 #' @inheritParams partial_fused_gromov_wasserstein
 #' @return Partial FGW value.
+#' @param ... Additional arguments. Unused extras are rejected when the solver uses `.reject_unused_dots()`; otherwise they are forwarded to the primary solver.
 #' @export
 partial_fused_gromov_wasserstein2 <- function(...) {
   out <- partial_fused_gromov_wasserstein(..., log = TRUE)
@@ -1048,10 +1239,9 @@ entropic_partial_gromov_wasserstein <- function(
   }
 
   G0 <- .validate_partial_init(G0, p, q, m, ns, nt)
-  M0 <- matrix(0, nrow = ns, ncol = nt)
 
-  out <- .partial_fgw_entropic_core(
-    M = M0,
+  out <- .partial_fgw_entropic_dispatch(
+    M = .empty_feature_cost(),
     C1 = C1,
     C2 = C2,
     p = p,
@@ -1086,6 +1276,7 @@ entropic_partial_gromov_wasserstein <- function(
 #'
 #' @inheritParams entropic_partial_gromov_wasserstein
 #' @return Entropic partial GW value.
+#' @param ... Additional arguments. Unused extras are rejected when the solver uses `.reject_unused_dots()`; otherwise they are forwarded to the primary solver.
 #' @export
 entropic_partial_gromov_wasserstein2 <- function(...) {
   out <- entropic_partial_gromov_wasserstein(..., log = TRUE)
@@ -1155,8 +1346,8 @@ entropic_partial_fused_gromov_wasserstein <- function(
 
   G0 <- .validate_partial_init(G0, p, q, m, ns, nt)
 
-  out <- .partial_fgw_entropic_core(
-    M = M,
+  out <- .partial_fgw_entropic_dispatch(
+    M = if (alpha >= 1) .empty_feature_cost() else M,
     C1 = C1,
     C2 = C2,
     p = p,
@@ -1193,6 +1384,7 @@ entropic_partial_fused_gromov_wasserstein <- function(
 #'
 #' @inheritParams entropic_partial_fused_gromov_wasserstein
 #' @return Entropic partial FGW value.
+#' @param ... Additional arguments. Unused extras are rejected when the solver uses `.reject_unused_dots()`; otherwise they are forwarded to the primary solver.
 #' @export
 entropic_partial_fused_gromov_wasserstein2 <- function(...) {
   out <- entropic_partial_fused_gromov_wasserstein(..., log = TRUE)
@@ -1206,8 +1398,11 @@ entropic_partial_fused_gromov_wasserstein2 <- function(...) {
 #' @inheritParams entropic_semirelaxed_gromov_wasserstein
 #' @param tol_rel Relative stopping tolerance.
 #' @param tol_abs Absolute stopping tolerance.
+#' @param log If `TRUE`, include `loss_trace`.
+#' @param random_state Ignored; retained for POT signature compatibility.
 #' @return A list with `plan`, `q`, `srgw_dist`, `iterations`, `error`, and
 #'   `abs_error`.
+#' @param ... Additional arguments. Unused extras are rejected when the solver uses `.reject_unused_dots()`; otherwise they are forwarded to the primary solver.
 #' @export
 semirelaxed_gromov_wasserstein <- function(
     C1,
@@ -1241,38 +1436,19 @@ semirelaxed_gromov_wasserstein <- function(
     symmetric <- isTRUE(symmetric)
   }
 
-  M0 <- matrix(0, nrow = ns, ncol = nt)
-  if (isTRUE(symmetric) && exists("cpp_semirelaxed_fgw_cg_square_fast", mode = "function")) {
-    G_init <- if (is.null(G0)) matrix(numeric(0), nrow = 0, ncol = 0) else .validate_semirelaxed_init(G0, p, ns, nt)
-    use_mixed_precision <- (ns * nt >= 4000L) && identical(Sys.getenv("RFUGW_SEMIRELAXED_MIXED", "1"), "1")
-    out <- cpp_semirelaxed_fgw_cg_square_fast(
-      M = M0,
-      C1 = C1,
-      C2 = C2,
-      p = p,
-      alpha = 1,
-      init_plan = G_init,
-      max_iter = as.integer(max_iter),
-      tol_rel = tol_rel,
-      tol_abs = tol_abs,
-      verbose = isTRUE(verbose),
-      use_mixed_precision = use_mixed_precision
-    )
-  } else {
-    out <- .semirelaxed_fgw_cg_core(
-      M = M0,
-      C1 = C1,
-      C2 = C2,
-      p = p,
-      alpha = 1,
-      symmetric = symmetric,
-      G0 = G0,
-      max_iter = as.integer(max_iter),
-      tol_rel = tol_rel,
-      tol_abs = tol_abs,
-      verbose = verbose
-    )
-  }
+  out <- .semirelaxed_fgw_exact_dispatch(
+    M = .empty_feature_cost(),
+    C1 = C1,
+    C2 = C2,
+    p = p,
+    alpha = 1,
+    symmetric = symmetric,
+    G0 = G0,
+    max_iter = as.integer(max_iter),
+    tol_rel = tol_rel,
+    tol_abs = tol_abs,
+    verbose = verbose
+  )
 
   res <- list(
     plan = out$plan,
@@ -1294,6 +1470,7 @@ semirelaxed_gromov_wasserstein <- function(
 #'
 #' @inheritParams semirelaxed_gromov_wasserstein
 #' @return Semirelaxed GW value.
+#' @param ... Additional arguments. Unused extras are rejected when the solver uses `.reject_unused_dots()`; otherwise they are forwarded to the primary solver.
 #' @export
 semirelaxed_gromov_wasserstein2 <- function(...) {
   out <- semirelaxed_gromov_wasserstein(...)
@@ -1307,8 +1484,11 @@ semirelaxed_gromov_wasserstein2 <- function(...) {
 #' @inheritParams entropic_semirelaxed_fused_gromov_wasserstein
 #' @param tol_rel Relative stopping tolerance.
 #' @param tol_abs Absolute stopping tolerance.
+#' @param log If `TRUE`, include `loss_trace`.
+#' @param random_state Ignored; retained for POT signature compatibility.
 #' @return A list with `plan`, `q`, `srfgw_dist`, `lin_loss`, `quad_loss`,
 #'   `iterations`, `error`, and `abs_error`.
+#' @param ... Additional arguments. Unused extras are rejected when the solver uses `.reject_unused_dots()`; otherwise they are forwarded to the primary solver.
 #' @export
 semirelaxed_fused_gromov_wasserstein <- function(
     M,
@@ -1351,37 +1531,19 @@ semirelaxed_fused_gromov_wasserstein <- function(
     symmetric <- isTRUE(symmetric)
   }
 
-  if (isTRUE(symmetric) && exists("cpp_semirelaxed_fgw_cg_square_fast", mode = "function")) {
-    G_init <- if (is.null(G0)) matrix(numeric(0), nrow = 0, ncol = 0) else .validate_semirelaxed_init(G0, p, ns, nt)
-    use_mixed_precision <- (ns * nt >= 4000L) && identical(Sys.getenv("RFUGW_SEMIRELAXED_MIXED", "1"), "1")
-    out <- cpp_semirelaxed_fgw_cg_square_fast(
-      M = M,
-      C1 = C1,
-      C2 = C2,
-      p = p,
-      alpha = alpha,
-      init_plan = G_init,
-      max_iter = as.integer(max_iter),
-      tol_rel = tol_rel,
-      tol_abs = tol_abs,
-      verbose = isTRUE(verbose),
-      use_mixed_precision = use_mixed_precision
-    )
-  } else {
-    out <- .semirelaxed_fgw_cg_core(
-      M = M,
-      C1 = C1,
-      C2 = C2,
-      p = p,
-      alpha = alpha,
-      symmetric = symmetric,
-      G0 = G0,
-      max_iter = as.integer(max_iter),
-      tol_rel = tol_rel,
-      tol_abs = tol_abs,
-      verbose = verbose
-    )
-  }
+  out <- .semirelaxed_fgw_exact_dispatch(
+    M = if (alpha >= 1) .empty_feature_cost() else M,
+    C1 = C1,
+    C2 = C2,
+    p = p,
+    alpha = alpha,
+    symmetric = symmetric,
+    G0 = G0,
+    max_iter = as.integer(max_iter),
+    tol_rel = tol_rel,
+    tol_abs = tol_abs,
+    verbose = verbose
+  )
 
   res <- list(
     plan = out$plan,
@@ -1405,6 +1567,7 @@ semirelaxed_fused_gromov_wasserstein <- function(
 #'
 #' @inheritParams semirelaxed_fused_gromov_wasserstein
 #' @return Semirelaxed FGW value.
+#' @param ... Additional arguments. Unused extras are rejected when the solver uses `.reject_unused_dots()`; otherwise they are forwarded to the primary solver.
 #' @export
 semirelaxed_fused_gromov_wasserstein2 <- function(...) {
   out <- semirelaxed_fused_gromov_wasserstein(...)
@@ -1435,6 +1598,7 @@ semirelaxed_fused_gromov_wasserstein2 <- function(...) {
 #' @return If `log = FALSE`, returns barycenter structure matrix `C`. If
 #'   `log = TRUE`, returns a list with `C`, `p`, `couplings`, `history`, and
 #'   `objective`.
+#' @param ... Additional arguments. Unused extras are rejected when the solver uses `.reject_unused_dots()`; otherwise they are forwarded to the primary solver.
 #' @export
 entropic_gromov_barycenters <- function(
     N,
@@ -1508,8 +1672,10 @@ entropic_gromov_barycenters <- function(
 #' @inheritParams fgw_barycenters
 #' @param stop_criterion Currently only `"barycenter"` is supported.
 #' @param init_Y Optional initial barycenter features.
+#' @param log If `TRUE`, return full diagnostics; otherwise `Y` and `C`.
 #' @return If `log = FALSE`, returns a list with `Y` and `C`. If `log = TRUE`,
 #'   returns full diagnostics.
+#' @param ... Additional arguments. Unused extras are rejected when the solver uses `.reject_unused_dots()`; otherwise they are forwarded to the primary solver.
 #' @export
 entropic_fused_gromov_barycenters <- function(
     N,
@@ -1584,6 +1750,7 @@ entropic_fused_gromov_barycenters <- function(
 #' Convenience alias to `entropic_gromov_barycenters`.
 #'
 #' @inheritParams entropic_gromov_barycenters
+#' @param ... Additional arguments. Unused extras are rejected when the solver uses `.reject_unused_dots()`; otherwise they are forwarded to the primary solver.
 #' @export
 gromov_barycenters <- function(...) {
   entropic_gromov_barycenters(...)
@@ -1594,6 +1761,7 @@ gromov_barycenters <- function(...) {
 #' Convenience alias to `entropic_fused_gromov_barycenters`.
 #'
 #' @inheritParams entropic_fused_gromov_barycenters
+#' @param ... Additional arguments. Unused extras are rejected when the solver uses `.reject_unused_dots()`; otherwise they are forwarded to the primary solver.
 #' @export
 fused_gromov_barycenters <- function(...) {
   entropic_fused_gromov_barycenters(...)
@@ -1610,7 +1778,8 @@ fused_gromov_barycenters <- function(...) {
 #' @param q Target weights (default uniform).
 #' @param loss_fun Currently only `"square_loss"` is supported.
 #' @param nb_samples_grad Number of sampled gradient points, or length-2 vector
-#'   `(n_source_samples, n_target_samples)`.
+#'   `(n_source_samples, n_target_samples)`. Values below 1 error. Source or
+#'   target counts above `ns` / `nt` warn and clamp.
 #' @param epsilon Entropic regularization for the OT projection step. If `<= 0`,
 #'   exact LP projection is used.
 #' @param max_iter Maximum stochastic iterations.
@@ -1623,6 +1792,13 @@ fused_gromov_barycenters <- function(...) {
 #' @param lp_scale Integer scaling for LP marginals.
 #' @return If `log = FALSE`, returns coupling matrix `T`. If `log = TRUE`,
 #'   returns a list with `plan`, `gw_dist_estimated`, and `iterations`.
+#'
+#' @section Experimental:
+#' Sampled GW is experimental. The certified 0.1 envelope is that a full
+#' budget `(ns, nt)` is closer to dense [entropic_gromov_wasserstein()]
+#' than a tiny budget such as `(2, 1)`, in square-loss GW and plan
+#' Frobenius distance. Intermediate budgets are not certified as
+#' monotone. See `inst/bench/sampled-budget-curves.md`.
 #' @export
 sampled_gromov_wasserstein <- function(
     C1,
@@ -1654,26 +1830,9 @@ sampled_gromov_wasserstein <- function(
   p <- .assert_prob(p, ns, "p")
   q <- .assert_prob(q, nt, "q")
 
-  if (length(nb_samples_grad) == 1L) {
-    nb_samples_grad <- as.integer(nb_samples_grad)
-    if (!is.finite(nb_samples_grad) || nb_samples_grad < 1L) {
-      stop("`nb_samples_grad` must be >= 1.", call. = FALSE)
-    }
-    if (nb_samples_grad > ns) {
-      nb_p <- ns
-      nb_q <- max(1L, as.integer(nb_samples_grad %/% ns))
-    } else {
-      nb_p <- nb_samples_grad
-      nb_q <- 1L
-    }
-  } else {
-    nb_samples_grad <- as.integer(nb_samples_grad)
-    if (length(nb_samples_grad) != 2L || any(!is.finite(nb_samples_grad)) || any(nb_samples_grad < 1L)) {
-      stop("`nb_samples_grad` must be an integer >=1 or a length-2 integer vector.", call. = FALSE)
-    }
-    nb_p <- nb_samples_grad[[1]]
-    nb_q <- nb_samples_grad[[2]]
-  }
+  budget <- .parse_sampled_budget(nb_samples_grad, ns, nt)
+  nb_p <- budget$nb_p
+  nb_q <- budget$nb_q
 
   if (!is.null(random_state)) set.seed(as.integer(random_state))
 
@@ -1731,7 +1890,7 @@ sampled_gromov_wasserstein <- function(
           tcrossprod(rep(1, ns), mu2_sq) -
           2 * tcrossprod(C1[i, ], mu2)
 
-        if (!symmetric && runif(1) > 0.5) {
+        if (!symmetric && stats::runif(1) > 0.5) {
           C2_sub_t <- C2[, idx1, drop = FALSE]
           mu2_t <- rowMeans(C2_sub_t)
           mu2_t_sq <- rowMeans(C2_sub_t^2)
@@ -1810,7 +1969,8 @@ sampled_gromov_wasserstein <- function(
 #' @param a Optional source weights.
 #' @param b Optional target weights.
 #' @param reg Entropic regularization used for the inner GW solve.
-#' @param rank Target low-rank factorization rank.
+#' @param rank Target low-rank factorization rank. Values below 1 error.
+#'   Values above `min(ns, nt)` warn and clamp.
 #' @param alpha Lower bound parameter retained for POT compatibility.
 #' @param gamma_init Retained for POT compatibility.
 #' @param rescale_cost Whether to normalize structure costs to `[0, 1]`.
@@ -1826,6 +1986,12 @@ sampled_gromov_wasserstein <- function(
 #' @param log If `TRUE`, return diagnostics.
 #' @return A list with `Q`, `R`, `g`. If `log = TRUE`, includes `plan`,
 #'   `value_quad`, and `value`.
+#'
+#' @section Experimental:
+#' This is a post-hoc SVD of a dense GW plan, not a factorized solver.
+#' Reconstruction error `||T - T_r||_F / ||T||_F` decreases as rank
+#' increases up to `min(ns, nt)`. It is experimental and may be renamed
+#' (`bd-01M05QY9GKDDTB3CXTKAJE0E8G`). See `inst/bench/sampled-budget-curves.md`.
 #' @export
 lowrank_gromov_wasserstein_samples <- function(
     X_s,
@@ -1883,7 +2049,7 @@ lowrank_gromov_wasserstein_samples <- function(
   )
 
   T <- out$plan
-  r <- if (is.null(rank)) min(ns, nt) else max(1L, min(as.integer(rank), ns, nt))
+  r <- .parse_lowrank_rank(rank, ns, nt)
 
   sv <- svd(T, nu = r, nv = r)
   s <- pmax(sv$d[seq_len(r)], 0)
@@ -1913,24 +2079,27 @@ lowrank_gromov_wasserstein_samples <- function(
 #' @param wy_samp Target sample weights.
 #' @param wy_feat Target feature weights.
 #' @param reg_marginals Marginal relaxation(s), length 1 or 2.
-#' @param epsilon Entropic regularization(s), scalar or length 2.
+#' @param epsilon Entropic regularization(s), scalar or length 2. Must be
+#'   positive; default `1e-2`.
 #' @param reg_type Either `"joint"` (FUGW-style) or `"independent"` (UCOOT).
-#' @param divergence Currently only `"kl"` is supported.
-#' @param unbalanced_solver Currently only `"sinkhorn"` is supported.
+#' @param divergence Only `"kl"` is supported. `"l2"` is rejected.
+#' @param unbalanced_solver `"sinkhorn"` or `"sinkhorn_log"` (currently the
+#'   same scaling-domain implementation). `"mm"` and `"lbfgsb"` are rejected.
 #' @param alpha Linear-term coefficient(s), scalar or length 2.
 #' @param M_samp Optional sample linear cost matrix.
 #' @param M_feat Optional feature linear cost matrix.
 #' @param rescale_plan Rescale sample/feature plans to equal mass each BCD step.
 #' @param init_pi Optional list with `pi_samp` and `pi_feat` initial couplings.
-#' @param init_duals Retained for POT signature compatibility.
+#' @param init_duals Accepted for POT-shaped signatures and ignored.
 #' @param max_iter Max BCD iterations.
 #' @param tol BCD stopping tolerance on sample coupling change.
 #' @param max_iter_ot Max iterations for inner unbalanced Sinkhorn solves.
 #' @param tol_ot Inner unbalanced Sinkhorn tolerance.
 #' @param log If `TRUE`, return diagnostics and objective decomposition.
 #' @param verbose If `TRUE`, print BCD diagnostics.
-#' @return If `log = FALSE`, returns list with `pi_samp` and `pi_feat`. If
-#'   `log = TRUE`, includes `error`, `linear_cost`, and `ucoot_cost`.
+#' @return A list with `pi_samp`, `pi_feat`, `status`, and `converged`. If
+#'   `log = TRUE`, also includes `error`, `linear_cost`, and `ucoot_cost`.
+#' @param ... Additional arguments. Unused extras are rejected when the solver uses `.reject_unused_dots()`; otherwise they are forwarded to the primary solver.
 #' @export
 fused_unbalanced_across_spaces_divergence <- function(
     X,
@@ -1940,10 +2109,10 @@ fused_unbalanced_across_spaces_divergence <- function(
     wy_samp = NULL,
     wy_feat = NULL,
     reg_marginals = 10,
-    epsilon = 0,
+    epsilon = 1e-2,
     reg_type = c("joint", "independent"),
-    divergence = c("kl", "l2"),
-    unbalanced_solver = c("sinkhorn", "sinkhorn_log", "mm", "lbfgsb"),
+    divergence = c("kl"),
+    unbalanced_solver = c("sinkhorn", "sinkhorn_log"),
     alpha = 0,
     M_samp = NULL,
     M_feat = NULL,
@@ -1957,17 +2126,27 @@ fused_unbalanced_across_spaces_divergence <- function(
     log = FALSE,
     verbose = FALSE,
     ...) {
+  .reject_unused_dots(...)
   .assert_matrix(X, "X")
   .assert_matrix(Y, "Y")
   reg_type <- match.arg(reg_type)
   divergence <- match.arg(divergence)
   unbalanced_solver <- match.arg(unbalanced_solver)
-
   if (!identical(divergence, "kl")) {
-    stop("Currently only `divergence = \"kl\"` is supported.", call. = FALSE)
+    stop(
+      "`divergence = \"l2\"` is unsupported. Use `divergence = \"kl\"`.",
+      call. = FALSE
+    )
   }
-  if (!identical(unbalanced_solver, "sinkhorn") && !identical(unbalanced_solver, "sinkhorn_log")) {
-    stop("Currently only `unbalanced_solver = \"sinkhorn\"` (or `sinkhorn_log`) is supported.", call. = FALSE)
+  if (!unbalanced_solver %in% c("sinkhorn", "sinkhorn_log")) {
+    stop(
+      paste(
+        "Unsupported `unbalanced_solver`.",
+        "Supported choices: \"sinkhorn\", \"sinkhorn_log\".",
+        "\"mm\" and \"lbfgsb\" are not implemented."
+      ),
+      call. = FALSE
+    )
   }
 
   nx_samp <- nrow(X)
@@ -2038,6 +2217,124 @@ fused_unbalanced_across_spaces_divergence <- function(
     }
   }
 
+  if (exists("cpp_ucoot_kl", mode = "function")) {
+    out <- cpp_ucoot_kl(
+      X = X,
+      Y = Y,
+      wx_samp = wx_samp,
+      wx_feat = wx_feat,
+      wy_samp = wy_samp,
+      wy_feat = wy_feat,
+      reg_marginals = c(rho_x, rho_y),
+      epsilon = c(eps_samp, eps_feat),
+      M_samp = if (is.null(M_samp)) .empty_feature_cost() else M_samp,
+      M_feat = if (is.null(M_feat)) .empty_feature_cost() else M_feat,
+      init_pi_samp = pi_samp,
+      init_pi_feat = pi_feat,
+      joint = identical(reg_type, "joint"),
+      rescale_plan = isTRUE(rescale_plan),
+      max_iter = as.integer(max_iter),
+      tol = tol,
+      max_iter_ot = as.integer(max_iter_ot),
+      tol_ot = tol_ot,
+      use_warm_start = TRUE
+    )
+    residual <- if (length(out$err_trace)) out$err_trace[length(out$err_trace)] else out$error
+    if (!isTRUE(log)) {
+      out$linear_cost <- NULL
+      out$ucoot_cost <- NULL
+      out$error <- NULL
+      out$err_trace <- NULL
+    } else {
+      out$error <- out$err_trace
+    }
+    return(.attach_solver_diagnostics(
+      out,
+      residual = residual,
+      converged = is.finite(residual) && residual < tol,
+      iterations = out$iterations,
+      max_iter = as.integer(max_iter),
+      plan = out$pi_samp,
+      inner_iterations = if (!is.null(out$inner_iters_total)) {
+        as.integer(out$inner_iters_total)
+      } else {
+        NA_integer_
+      }
+    ))
+  }
+
+  out <- .ucoot_kl_r_core(
+    X = X,
+    Y = Y,
+    wx_samp = wx_samp,
+    wx_feat = wx_feat,
+    wy_samp = wy_samp,
+    wy_feat = wy_feat,
+    wxy_samp = wxy_samp,
+    wxy_feat = wxy_feat,
+    rho_x = rho_x,
+    rho_y = rho_y,
+    eps_samp = eps_samp,
+    eps_feat = eps_feat,
+    M_samp = M_samp,
+    M_feat = M_feat,
+    pi_samp = pi_samp,
+    pi_feat = pi_feat,
+    reg_type = reg_type,
+    rescale_plan = rescale_plan,
+    max_iter = max_iter,
+    tol = tol,
+    max_iter_ot = max_iter_ot,
+    tol_ot = tol_ot,
+    log = log,
+    verbose = verbose
+  )
+  residual <- if (length(out$err_trace)) out$err_trace[length(out$err_trace)] else Inf
+  if (!isTRUE(log)) {
+    out$error <- NULL
+    out$err_trace <- NULL
+    out$linear_cost <- NULL
+    out$ucoot_cost <- NULL
+    out$duals_sample <- NULL
+    out$duals_feature <- NULL
+  } else {
+    out$error <- out$err_trace
+  }
+  return(.attach_solver_diagnostics(
+    out,
+    residual = residual,
+    converged = is.finite(residual) && residual < tol,
+    iterations = length(out$err_trace),
+    max_iter = as.integer(max_iter),
+    plan = out$pi_samp
+  ))
+}
+
+.ucoot_kl_r_core <- function(
+    X,
+    Y,
+    wx_samp,
+    wx_feat,
+    wy_samp,
+    wy_feat,
+    wxy_samp,
+    wxy_feat,
+    rho_x,
+    rho_y,
+    eps_samp,
+    eps_feat,
+    M_samp,
+    M_feat,
+    pi_samp,
+    pi_feat,
+    reg_type,
+    rescale_plan,
+    max_iter,
+    tol,
+    max_iter_ot,
+    tol_ot,
+    log = TRUE,
+    verbose = FALSE) {
   X_sqr <- X^2
   Y_sqr <- Y^2
 
@@ -2141,30 +2438,24 @@ fused_unbalanced_across_spaces_divergence <- function(
     stop("Encountered non-finite values in coupling matrices. Adjust hyperparameters.", call. = FALSE)
   }
 
-  if (!isTRUE(log)) {
-    return(list(pi_samp = pi_samp, pi_feat = pi_feat))
+  out <- list(pi_samp = pi_samp, pi_feat = pi_feat, err_trace = err_trace)
+  if (isTRUE(log)) {
+    costs <- .fused_unbalanced_across_spaces_cost_kl(
+      M_linear = list(M_samp, M_feat),
+      data = list(X_sqr, Y_sqr, X, Y),
+      tuple_pxy_samp = list(wx_samp, wy_samp, wxy_samp),
+      tuple_pxy_feat = list(wx_feat, wy_feat, wxy_feat),
+      pi_samp = pi_samp,
+      pi_feat = pi_feat,
+      hyperparams = c(rho_x, rho_y, eps_samp, eps_feat),
+      reg_type = reg_type
+    )
+    out$duals_sample <- duals_samp
+    out$duals_feature <- duals_feat
+    out$linear_cost <- costs$linear_cost
+    out$ucoot_cost <- costs$ucoot_cost
   }
-
-  costs <- .fused_unbalanced_across_spaces_cost_kl(
-    M_linear = list(M_samp, M_feat),
-    data = list(X_sqr, Y_sqr, X, Y),
-    tuple_pxy_samp = list(wx_samp, wy_samp, wxy_samp),
-    tuple_pxy_feat = list(wx_feat, wy_feat, wxy_feat),
-    pi_samp = pi_samp,
-    pi_feat = pi_feat,
-    hyperparams = c(rho_x, rho_y, eps_samp, eps_feat),
-    reg_type = reg_type
-  )
-
-  list(
-    pi_samp = pi_samp,
-    pi_feat = pi_feat,
-    error = err_trace,
-    duals_sample = duals_samp,
-    duals_feature = duals_feat,
-    linear_cost = costs$linear_cost,
-    ucoot_cost = costs$ucoot_cost
-  )
+  out
 }
 
 #' Unbalanced Co-Optimal Transport
@@ -2174,6 +2465,7 @@ fused_unbalanced_across_spaces_divergence <- function(
 #' @inheritParams fused_unbalanced_across_spaces_divergence
 #' @return A list with sample and feature couplings; with `log = TRUE`, includes
 #'   objective diagnostics.
+#' @param ... Additional arguments. Unused extras are rejected when the solver uses `.reject_unused_dots()`; otherwise they are forwarded to the primary solver.
 #' @export
 unbalanced_co_optimal_transport <- function(
     X,
@@ -2183,9 +2475,9 @@ unbalanced_co_optimal_transport <- function(
     wy_samp = NULL,
     wy_feat = NULL,
     reg_marginals = 10,
-    epsilon = 0,
-    divergence = c("kl", "l2"),
-    unbalanced_solver = c("sinkhorn", "sinkhorn_log", "mm", "lbfgsb"),
+    epsilon = 1e-2,
+    divergence = c("kl"),
+    unbalanced_solver = c("sinkhorn", "sinkhorn_log"),
     alpha = 0,
     M_samp = NULL,
     M_feat = NULL,
@@ -2232,6 +2524,7 @@ unbalanced_co_optimal_transport <- function(
 #' @inheritParams unbalanced_co_optimal_transport
 #' @return Numeric UCOOT objective value. If `log = TRUE`, returns a list with
 #'   `ucoot` and detailed diagnostics.
+#' @param ... Additional arguments. Unused extras are rejected when the solver uses `.reject_unused_dots()`; otherwise they are forwarded to the primary solver.
 #' @export
 unbalanced_co_optimal_transport2 <- function(..., log = FALSE) {
   out <- unbalanced_co_optimal_transport(..., log = TRUE)

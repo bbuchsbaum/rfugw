@@ -142,8 +142,8 @@ BEGIN_RCPP
 END_RCPP
 }
 // cpp_fgw_exact_cg_square
-Rcpp::List cpp_fgw_exact_cg_square(const arma::mat& M, const arma::mat& C1, const arma::mat& C2, const arma::vec& p, const arma::vec& q, double alpha, bool symmetric, int max_iter, double tol_rel, double tol_abs, int lp_max_iter, double lp_tol);
-RcppExport SEXP _rfugw_cpp_fgw_exact_cg_square(SEXP MSEXP, SEXP C1SEXP, SEXP C2SEXP, SEXP pSEXP, SEXP qSEXP, SEXP alphaSEXP, SEXP symmetricSEXP, SEXP max_iterSEXP, SEXP tol_relSEXP, SEXP tol_absSEXP, SEXP lp_max_iterSEXP, SEXP lp_tolSEXP) {
+Rcpp::List cpp_fgw_exact_cg_square(const arma::mat& M, const arma::mat& C1, const arma::mat& C2, const arma::vec& p, const arma::vec& q, double alpha, bool symmetric, int max_iter, double tol_rel, double tol_abs, int lp_max_iter, double lp_tol, const arma::mat& init_plan);
+RcppExport SEXP _rfugw_cpp_fgw_exact_cg_square(SEXP MSEXP, SEXP C1SEXP, SEXP C2SEXP, SEXP pSEXP, SEXP qSEXP, SEXP alphaSEXP, SEXP symmetricSEXP, SEXP max_iterSEXP, SEXP tol_relSEXP, SEXP tol_absSEXP, SEXP lp_max_iterSEXP, SEXP lp_tolSEXP, SEXP init_planSEXP) {
 BEGIN_RCPP
     Rcpp::RObject rcpp_result_gen;
     Rcpp::RNGScope rcpp_rngScope_gen;
@@ -159,7 +159,8 @@ BEGIN_RCPP
     Rcpp::traits::input_parameter< double >::type tol_abs(tol_absSEXP);
     Rcpp::traits::input_parameter< int >::type lp_max_iter(lp_max_iterSEXP);
     Rcpp::traits::input_parameter< double >::type lp_tol(lp_tolSEXP);
-    rcpp_result_gen = Rcpp::wrap(cpp_fgw_exact_cg_square(M, C1, C2, p, q, alpha, symmetric, max_iter, tol_rel, tol_abs, lp_max_iter, lp_tol));
+    Rcpp::traits::input_parameter< const arma::mat& >::type init_plan(init_planSEXP);
+    rcpp_result_gen = Rcpp::wrap(cpp_fgw_exact_cg_square(M, C1, C2, p, q, alpha, symmetric, max_iter, tol_rel, tol_abs, lp_max_iter, lp_tol, init_plan));
     return rcpp_result_gen;
 END_RCPP
 }
@@ -350,6 +351,135 @@ BEGIN_RCPP
     return rcpp_result_gen;
 END_RCPP
 }
+// cpp_ot_sinkhorn
+Rcpp::List cpp_ot_sinkhorn(const arma::mat& M, const arma::vec& p, const arma::vec& q, double epsilon, int max_iter, double tol, bool use_log);
+RcppExport SEXP _rfugw_cpp_ot_sinkhorn(SEXP MSEXP, SEXP pSEXP, SEXP qSEXP, SEXP epsilonSEXP, SEXP max_iterSEXP, SEXP tolSEXP, SEXP use_logSEXP) {
+BEGIN_RCPP
+    Rcpp::RObject rcpp_result_gen;
+    Rcpp::RNGScope rcpp_rngScope_gen;
+    Rcpp::traits::input_parameter< const arma::mat& >::type M(MSEXP);
+    Rcpp::traits::input_parameter< const arma::vec& >::type p(pSEXP);
+    Rcpp::traits::input_parameter< const arma::vec& >::type q(qSEXP);
+    Rcpp::traits::input_parameter< double >::type epsilon(epsilonSEXP);
+    Rcpp::traits::input_parameter< int >::type max_iter(max_iterSEXP);
+    Rcpp::traits::input_parameter< double >::type tol(tolSEXP);
+    Rcpp::traits::input_parameter< bool >::type use_log(use_logSEXP);
+    rcpp_result_gen = Rcpp::wrap(cpp_ot_sinkhorn(M, p, q, epsilon, max_iter, tol, use_log));
+    return rcpp_result_gen;
+END_RCPP
+}
+// cpp_ot_emd
+Rcpp::List cpp_ot_emd(const arma::mat& M, const arma::vec& p, const arma::vec& q, int max_iter, double tol);
+RcppExport SEXP _rfugw_cpp_ot_emd(SEXP MSEXP, SEXP pSEXP, SEXP qSEXP, SEXP max_iterSEXP, SEXP tolSEXP) {
+BEGIN_RCPP
+    Rcpp::RObject rcpp_result_gen;
+    Rcpp::RNGScope rcpp_rngScope_gen;
+    Rcpp::traits::input_parameter< const arma::mat& >::type M(MSEXP);
+    Rcpp::traits::input_parameter< const arma::vec& >::type p(pSEXP);
+    Rcpp::traits::input_parameter< const arma::vec& >::type q(qSEXP);
+    Rcpp::traits::input_parameter< int >::type max_iter(max_iterSEXP);
+    Rcpp::traits::input_parameter< double >::type tol(tolSEXP);
+    rcpp_result_gen = Rcpp::wrap(cpp_ot_emd(M, p, q, max_iter, tol));
+    return rcpp_result_gen;
+END_RCPP
+}
+// cpp_ot_sinkhorn_unbalanced
+Rcpp::List cpp_ot_sinkhorn_unbalanced(const arma::mat& M, const arma::vec& a, const arma::vec& b, double epsilon, double rho1, double rho2, int max_iter, double tol, const arma::mat& init_plan);
+RcppExport SEXP _rfugw_cpp_ot_sinkhorn_unbalanced(SEXP MSEXP, SEXP aSEXP, SEXP bSEXP, SEXP epsilonSEXP, SEXP rho1SEXP, SEXP rho2SEXP, SEXP max_iterSEXP, SEXP tolSEXP, SEXP init_planSEXP) {
+BEGIN_RCPP
+    Rcpp::RObject rcpp_result_gen;
+    Rcpp::RNGScope rcpp_rngScope_gen;
+    Rcpp::traits::input_parameter< const arma::mat& >::type M(MSEXP);
+    Rcpp::traits::input_parameter< const arma::vec& >::type a(aSEXP);
+    Rcpp::traits::input_parameter< const arma::vec& >::type b(bSEXP);
+    Rcpp::traits::input_parameter< double >::type epsilon(epsilonSEXP);
+    Rcpp::traits::input_parameter< double >::type rho1(rho1SEXP);
+    Rcpp::traits::input_parameter< double >::type rho2(rho2SEXP);
+    Rcpp::traits::input_parameter< int >::type max_iter(max_iterSEXP);
+    Rcpp::traits::input_parameter< double >::type tol(tolSEXP);
+    Rcpp::traits::input_parameter< const arma::mat& >::type init_plan(init_planSEXP);
+    rcpp_result_gen = Rcpp::wrap(cpp_ot_sinkhorn_unbalanced(M, a, b, epsilon, rho1, rho2, max_iter, tol, init_plan));
+    return rcpp_result_gen;
+END_RCPP
+}
+// cpp_partial_fgw_exact_square
+Rcpp::List cpp_partial_fgw_exact_square(const arma::mat& M, const arma::mat& C1, const arma::mat& C2, const arma::vec& p, const arma::vec& q, double m, double alpha, bool symmetric, const arma::mat& init_plan, int max_iter, double tol, int nb_dummies, int lp_max_iter, double lp_tol);
+RcppExport SEXP _rfugw_cpp_partial_fgw_exact_square(SEXP MSEXP, SEXP C1SEXP, SEXP C2SEXP, SEXP pSEXP, SEXP qSEXP, SEXP mSEXP, SEXP alphaSEXP, SEXP symmetricSEXP, SEXP init_planSEXP, SEXP max_iterSEXP, SEXP tolSEXP, SEXP nb_dummiesSEXP, SEXP lp_max_iterSEXP, SEXP lp_tolSEXP) {
+BEGIN_RCPP
+    Rcpp::RObject rcpp_result_gen;
+    Rcpp::RNGScope rcpp_rngScope_gen;
+    Rcpp::traits::input_parameter< const arma::mat& >::type M(MSEXP);
+    Rcpp::traits::input_parameter< const arma::mat& >::type C1(C1SEXP);
+    Rcpp::traits::input_parameter< const arma::mat& >::type C2(C2SEXP);
+    Rcpp::traits::input_parameter< const arma::vec& >::type p(pSEXP);
+    Rcpp::traits::input_parameter< const arma::vec& >::type q(qSEXP);
+    Rcpp::traits::input_parameter< double >::type m(mSEXP);
+    Rcpp::traits::input_parameter< double >::type alpha(alphaSEXP);
+    Rcpp::traits::input_parameter< bool >::type symmetric(symmetricSEXP);
+    Rcpp::traits::input_parameter< const arma::mat& >::type init_plan(init_planSEXP);
+    Rcpp::traits::input_parameter< int >::type max_iter(max_iterSEXP);
+    Rcpp::traits::input_parameter< double >::type tol(tolSEXP);
+    Rcpp::traits::input_parameter< int >::type nb_dummies(nb_dummiesSEXP);
+    Rcpp::traits::input_parameter< int >::type lp_max_iter(lp_max_iterSEXP);
+    Rcpp::traits::input_parameter< double >::type lp_tol(lp_tolSEXP);
+    rcpp_result_gen = Rcpp::wrap(cpp_partial_fgw_exact_square(M, C1, C2, p, q, m, alpha, symmetric, init_plan, max_iter, tol, nb_dummies, lp_max_iter, lp_tol));
+    return rcpp_result_gen;
+END_RCPP
+}
+// cpp_partial_fgw_entropic_square
+Rcpp::List cpp_partial_fgw_entropic_square(const arma::mat& M, const arma::mat& C1, const arma::mat& C2, const arma::vec& p, const arma::vec& q, double m, double reg, double alpha, bool symmetric, const arma::mat& init_plan, int max_iter, double tol, int inner_max_iter, double inner_tol, int check_every);
+RcppExport SEXP _rfugw_cpp_partial_fgw_entropic_square(SEXP MSEXP, SEXP C1SEXP, SEXP C2SEXP, SEXP pSEXP, SEXP qSEXP, SEXP mSEXP, SEXP regSEXP, SEXP alphaSEXP, SEXP symmetricSEXP, SEXP init_planSEXP, SEXP max_iterSEXP, SEXP tolSEXP, SEXP inner_max_iterSEXP, SEXP inner_tolSEXP, SEXP check_everySEXP) {
+BEGIN_RCPP
+    Rcpp::RObject rcpp_result_gen;
+    Rcpp::RNGScope rcpp_rngScope_gen;
+    Rcpp::traits::input_parameter< const arma::mat& >::type M(MSEXP);
+    Rcpp::traits::input_parameter< const arma::mat& >::type C1(C1SEXP);
+    Rcpp::traits::input_parameter< const arma::mat& >::type C2(C2SEXP);
+    Rcpp::traits::input_parameter< const arma::vec& >::type p(pSEXP);
+    Rcpp::traits::input_parameter< const arma::vec& >::type q(qSEXP);
+    Rcpp::traits::input_parameter< double >::type m(mSEXP);
+    Rcpp::traits::input_parameter< double >::type reg(regSEXP);
+    Rcpp::traits::input_parameter< double >::type alpha(alphaSEXP);
+    Rcpp::traits::input_parameter< bool >::type symmetric(symmetricSEXP);
+    Rcpp::traits::input_parameter< const arma::mat& >::type init_plan(init_planSEXP);
+    Rcpp::traits::input_parameter< int >::type max_iter(max_iterSEXP);
+    Rcpp::traits::input_parameter< double >::type tol(tolSEXP);
+    Rcpp::traits::input_parameter< int >::type inner_max_iter(inner_max_iterSEXP);
+    Rcpp::traits::input_parameter< double >::type inner_tol(inner_tolSEXP);
+    Rcpp::traits::input_parameter< int >::type check_every(check_everySEXP);
+    rcpp_result_gen = Rcpp::wrap(cpp_partial_fgw_entropic_square(M, C1, C2, p, q, m, reg, alpha, symmetric, init_plan, max_iter, tol, inner_max_iter, inner_tol, check_every));
+    return rcpp_result_gen;
+END_RCPP
+}
+// cpp_ucoot_kl
+Rcpp::List cpp_ucoot_kl(const arma::mat& X, const arma::mat& Y, const arma::vec& wx_samp, const arma::vec& wx_feat, const arma::vec& wy_samp, const arma::vec& wy_feat, const arma::vec& reg_marginals, const arma::vec& epsilon, const arma::mat& M_samp, const arma::mat& M_feat, const arma::mat& init_pi_samp, const arma::mat& init_pi_feat, bool joint, bool rescale_plan, int max_iter, double tol, int max_iter_ot, double tol_ot, bool use_warm_start);
+RcppExport SEXP _rfugw_cpp_ucoot_kl(SEXP XSEXP, SEXP YSEXP, SEXP wx_sampSEXP, SEXP wx_featSEXP, SEXP wy_sampSEXP, SEXP wy_featSEXP, SEXP reg_marginalsSEXP, SEXP epsilonSEXP, SEXP M_sampSEXP, SEXP M_featSEXP, SEXP init_pi_sampSEXP, SEXP init_pi_featSEXP, SEXP jointSEXP, SEXP rescale_planSEXP, SEXP max_iterSEXP, SEXP tolSEXP, SEXP max_iter_otSEXP, SEXP tol_otSEXP, SEXP use_warm_startSEXP) {
+BEGIN_RCPP
+    Rcpp::RObject rcpp_result_gen;
+    Rcpp::RNGScope rcpp_rngScope_gen;
+    Rcpp::traits::input_parameter< const arma::mat& >::type X(XSEXP);
+    Rcpp::traits::input_parameter< const arma::mat& >::type Y(YSEXP);
+    Rcpp::traits::input_parameter< const arma::vec& >::type wx_samp(wx_sampSEXP);
+    Rcpp::traits::input_parameter< const arma::vec& >::type wx_feat(wx_featSEXP);
+    Rcpp::traits::input_parameter< const arma::vec& >::type wy_samp(wy_sampSEXP);
+    Rcpp::traits::input_parameter< const arma::vec& >::type wy_feat(wy_featSEXP);
+    Rcpp::traits::input_parameter< const arma::vec& >::type reg_marginals(reg_marginalsSEXP);
+    Rcpp::traits::input_parameter< const arma::vec& >::type epsilon(epsilonSEXP);
+    Rcpp::traits::input_parameter< const arma::mat& >::type M_samp(M_sampSEXP);
+    Rcpp::traits::input_parameter< const arma::mat& >::type M_feat(M_featSEXP);
+    Rcpp::traits::input_parameter< const arma::mat& >::type init_pi_samp(init_pi_sampSEXP);
+    Rcpp::traits::input_parameter< const arma::mat& >::type init_pi_feat(init_pi_featSEXP);
+    Rcpp::traits::input_parameter< bool >::type joint(jointSEXP);
+    Rcpp::traits::input_parameter< bool >::type rescale_plan(rescale_planSEXP);
+    Rcpp::traits::input_parameter< int >::type max_iter(max_iterSEXP);
+    Rcpp::traits::input_parameter< double >::type tol(tolSEXP);
+    Rcpp::traits::input_parameter< int >::type max_iter_ot(max_iter_otSEXP);
+    Rcpp::traits::input_parameter< double >::type tol_ot(tol_otSEXP);
+    Rcpp::traits::input_parameter< bool >::type use_warm_start(use_warm_startSEXP);
+    rcpp_result_gen = Rcpp::wrap(cpp_ucoot_kl(X, Y, wx_samp, wx_feat, wy_samp, wy_feat, reg_marginals, epsilon, M_samp, M_feat, init_pi_samp, init_pi_feat, joint, rescale_plan, max_iter, tol, max_iter_ot, tol_ot, use_warm_start));
+    return rcpp_result_gen;
+END_RCPP
+}
 
 static const R_CallMethodDef CallEntries[] = {
     {"_rfugw_cpp_fgw_entropic_square", (DL_FUNC) &_rfugw_cpp_fgw_entropic_square, 18},
@@ -357,7 +487,7 @@ static const R_CallMethodDef CallEntries[] = {
     {"_rfugw_cpp_fgw_entropic_square_batch", (DL_FUNC) &_rfugw_cpp_fgw_entropic_square_batch, 21},
     {"_rfugw_cpp_fgw_entropic_square_batch_features", (DL_FUNC) &_rfugw_cpp_fgw_entropic_square_batch_features, 24},
     {"_rfugw_cpp_feature_cost_batch", (DL_FUNC) &_rfugw_cpp_feature_cost_batch, 5},
-    {"_rfugw_cpp_fgw_exact_cg_square", (DL_FUNC) &_rfugw_cpp_fgw_exact_cg_square, 12},
+    {"_rfugw_cpp_fgw_exact_cg_square", (DL_FUNC) &_rfugw_cpp_fgw_exact_cg_square, 13},
     {"_rfugw_cpp_fugw_kl_square", (DL_FUNC) &_rfugw_cpp_fugw_kl_square, 16},
     {"_rfugw_cpp_fugw_kl_square_batch", (DL_FUNC) &_rfugw_cpp_fugw_kl_square_batch, 16},
     {"_rfugw_cpp_sampled_gromov_wasserstein_entropic_square", (DL_FUNC) &_rfugw_cpp_sampled_gromov_wasserstein_entropic_square, 14},
@@ -367,6 +497,12 @@ static const R_CallMethodDef CallEntries[] = {
     {"_rfugw_cpp_entropic_partial_wasserstein", (DL_FUNC) &_rfugw_cpp_entropic_partial_wasserstein, 9},
     {"_rfugw_cpp_semirelaxed_fgw_exact_square", (DL_FUNC) &_rfugw_cpp_semirelaxed_fgw_exact_square, 10},
     {"_rfugw_cpp_semirelaxed_fgw_cg_square_fast", (DL_FUNC) &_rfugw_cpp_semirelaxed_fgw_cg_square_fast, 11},
+    {"_rfugw_cpp_ot_sinkhorn", (DL_FUNC) &_rfugw_cpp_ot_sinkhorn, 7},
+    {"_rfugw_cpp_ot_emd", (DL_FUNC) &_rfugw_cpp_ot_emd, 5},
+    {"_rfugw_cpp_ot_sinkhorn_unbalanced", (DL_FUNC) &_rfugw_cpp_ot_sinkhorn_unbalanced, 9},
+    {"_rfugw_cpp_partial_fgw_exact_square", (DL_FUNC) &_rfugw_cpp_partial_fgw_exact_square, 14},
+    {"_rfugw_cpp_partial_fgw_entropic_square", (DL_FUNC) &_rfugw_cpp_partial_fgw_entropic_square, 15},
+    {"_rfugw_cpp_ucoot_kl", (DL_FUNC) &_rfugw_cpp_ucoot_kl, 19},
     {NULL, NULL, 0}
 };
 

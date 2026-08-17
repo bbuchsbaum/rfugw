@@ -31,6 +31,8 @@ semirelaxed_gromov_wasserstein(
 
 \item{symmetric}{If \code{NULL}, inferred from \code{C1} and \code{C2}; otherwise logical.}
 
+\item{log}{If \code{TRUE}, include \code{loss_trace}.}
+
 \item{G0}{Optional initial semirelaxed plan (\verb{ns x nt}) satisfying
 \code{rowSums(G0) == p}.}
 
@@ -40,7 +42,11 @@ semirelaxed_gromov_wasserstein(
 
 \item{tol_abs}{Absolute stopping tolerance.}
 
+\item{random_state}{Ignored; retained for POT signature compatibility.}
+
 \item{verbose}{If \code{TRUE}, print iterative error diagnostics.}
+
+\item{...}{Additional arguments. Unused extras are rejected when the solver uses \code{.reject_unused_dots()}; otherwise they are forwarded to the primary solver.}
 }
 \value{
 A list with \code{plan}, \code{q}, \code{srgw_dist}, \code{iterations}, \code{error}, and

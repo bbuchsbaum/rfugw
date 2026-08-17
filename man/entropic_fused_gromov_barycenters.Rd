@@ -60,6 +60,8 @@ entropic_fused_gromov_barycenters(
 
 \item{verbose}{If \code{TRUE}, print outer-iteration diagnostics.}
 
+\item{log}{If \code{TRUE}, return full diagnostics; otherwise \code{Y} and \code{C}.}
+
 \item{init_C}{Optional initial barycenter structure (\verb{N x N}).}
 
 \item{init_Y}{Optional initial barycenter features.}
@@ -69,6 +71,8 @@ entropic_fused_gromov_barycenters(
 \item{fixed_features}{If \code{TRUE}, keep barycenter features fixed at \code{init_X}.}
 
 \item{random_state}{Optional seed used only when \code{init_C} is \code{NULL}.}
+
+\item{...}{Additional arguments. Unused extras are rejected when the solver uses \code{.reject_unused_dots()}; otherwise they are forwarded to the primary solver.}
 }
 \value{
 If \code{log = FALSE}, returns a list with \code{Y} and \code{C}. If \code{log = TRUE},
