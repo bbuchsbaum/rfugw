@@ -6,6 +6,7 @@ reps <- if (length(args) >= 1L) as.integer(args[[1]]) else 3L
 seed <- if (length(args) >= 2L) as.integer(args[[2]]) else 20260816L
 out_dir <- if (length(args) >= 3L) args[[3]] else "inst/bench/results/current"
 threads <- if (length(args) >= 4L) as.integer(args[[4]]) else 1L
+scale <- Sys.getenv("RFUGW_PROTOCOL_SCALE", unset = "full")
 warmup <- 1L
 
 if (!file.exists("DESCRIPTION")) {
@@ -20,15 +21,41 @@ suppressPackageStartupMessages({
 })
 
 source("inst/bench/protocol.R")
+suites <- bench_parse_suites(if (length(args) >= 5L) args[[5]] else "")
 
 profile <- if (nzchar(Sys.getenv("RFUGW_FAST_FLAGS"))) "fast" else "conservative"
 threads <- bench_pin_threads(threads)
 meta <- bench_capture_env(seed, threads, warmup, reps, profile)
+meta$suites <- paste(suites, collapse = ",")
+meta$scale <- scale
 
 bench_archive_current(dirname(out_dir))
 
-sizes_linear <- c(16L, 24L)
-sizes_fgw <- c(12L, 16L)
+if (identical(scale, "pr")) {
+  sizes_linear <- 16L
+  sizes_fgw <- 12L
+  sizes_fugw <- 8L
+  sizes_sr <- 12L
+  sizes_partial <- 8L
+  sizes_ucoot <- 8L
+  sizes_sampled <- 12L
+} else if (identical(scale, "nightly")) {
+  sizes_linear <- c(16L, 24L)
+  sizes_fgw <- c(16L, 24L)
+  sizes_fugw <- c(8L, 12L)
+  sizes_sr <- c(12L, 16L)
+  sizes_partial <- c(8L, 10L)
+  sizes_ucoot <- c(8L, 12L)
+  sizes_sampled <- 12L
+} else {
+  sizes_linear <- c(16L, 24L)
+  sizes_fgw <- c(12L, 16L)
+  sizes_fugw <- c(8L, 12L)
+  sizes_sr <- c(12L, 16L)
+  sizes_partial <- c(8L, 10L)
+  sizes_ucoot <- c(8L, 12L)
+  sizes_sampled <- 12L
+}
 
 runs <- list()
 quality <- list()
@@ -56,13 +83,16 @@ add_row <- function(suite, method, n, timing, extra = list()) {
     reject_reason = timing$reject_reason,
     status = timing$result$status %||% NA_character_,
     residual = timing$result$residual %||% NA_real_,
-    value = tryCatch(rfugw_value(timing$result), error = function(e) NA_real_),
+    value = tryCatch(
+      rfugw_value(timing$result),
+      error = function(e) timing$result$gw_dist_estimated %||% NA_real_
+    ),
     stringsAsFactors = FALSE
   )
   k <<- k + 1L
 }
 
-for (n in sizes_linear) {
+if ("linear" %in% suites) for (n in sizes_linear) {
   prob <- bench_make_problem("linear", n, seed)
   stop <- bench_read_thresholds("ot_sinkhorn")$stop
   add_row("linear", "ot_sinkhorn", n, bench_run_split(
@@ -85,7 +115,7 @@ for (n in sizes_linear) {
   ))
 }
 
-for (n in sizes_fgw) {
+if ("fgw" %in% suites) for (n in sizes_fgw) {
   prob <- bench_make_problem("fgw", n, seed)
   stop <- bench_read_thresholds("fgw_entropic")$stop
   add_row("fgw", "fgw_entropic", n, bench_run_split(
@@ -100,8 +130,26 @@ for (n in sizes_fgw) {
   ))
 }
 
-sizes_sr <- c(12L, 16L)
-for (n in sizes_sr) {
+if ("fugw" %in% suites) for (n in sizes_fugw) {
+  prob <- bench_make_problem("fgw", n, seed)
+  stop_f <- bench_read_thresholds("fugw_kl")$stop
+  add_row("fugw", "fugw_kl", n, bench_run_split(
+    prepare_fn = function() bench_make_problem("fgw", n, seed),
+    solve_fn = function(d) {
+      fugw_kl(
+        Cx = d$C1, Cy = d$C2, wx = d$p, wy = d$q, M = d$M,
+        alpha = stop_f$alpha, epsilon = stop_f$epsilon,
+        reg_marginals = unlist(stop_f$reg_marginals),
+        max_iter = as.integer(stop_f$max_iter), tol = stop_f$tol,
+        max_iter_ot = as.integer(stop_f$max_iter_ot), tol_ot = stop_f$tol_ot
+      )
+    },
+    warmup = warmup, reps = reps, method = "fugw_kl",
+    problem_for_quality = prob
+  ))
+}
+
+if ("semirelaxed" %in% suites) for (n in sizes_sr) {
   prob <- bench_make_problem("fgw", n, seed)
   stop_sr <- bench_read_thresholds("semirelaxed_gromov_wasserstein")$stop
   add_row("semirelaxed", "semirelaxed_gromov_wasserstein", n, bench_run_split(
@@ -144,8 +192,7 @@ for (n in sizes_sr) {
   ))
 }
 
-sizes_partial <- c(8L, 10L)
-for (n in sizes_partial) {
+if ("partial" %in% suites) for (n in sizes_partial) {
   prob <- bench_make_problem("fgw", n, seed)
   stop_pgw <- bench_read_thresholds("partial_gromov_wasserstein")$stop
   add_row("partial", "partial_gromov_wasserstein", n, bench_run_split(
@@ -189,8 +236,7 @@ for (n in sizes_partial) {
   ))
 }
 
-sizes_ucoot <- c(8L, 12L)
-for (n in sizes_ucoot) {
+if ("ucoot" %in% suites) for (n in sizes_ucoot) {
   prob <- bench_make_problem("ucoot", n, seed)
   stop_u <- bench_read_thresholds("unbalanced_co_optimal_transport")$stop
   add_row("ucoot", "unbalanced_co_optimal_transport", n, bench_run_split(
@@ -227,6 +273,26 @@ for (n in sizes_ucoot) {
       )
     },
     warmup = warmup, reps = reps, method = "fused_unbalanced_across_spaces_divergence",
+    problem_for_quality = prob
+  ))
+}
+
+if ("sampled" %in% suites) for (n in sizes_sampled) {
+  prob <- bench_make_problem("fgw", n, seed)
+  stop_s <- bench_read_thresholds("sampled_gromov_wasserstein")$stop
+  add_row("sampled", "sampled_gromov_wasserstein", n, bench_run_split(
+    prepare_fn = function() bench_make_problem("fgw", n, seed),
+    solve_fn = function(d) {
+      sampled_gromov_wasserstein(
+        d$C1, d$C2, p = d$p, q = d$q,
+        nb_samples_grad = c(as.integer(stop_s$nb_p), as.integer(stop_s$nb_q)),
+        epsilon = stop_s$epsilon,
+        max_iter = as.integer(stop_s$max_iter),
+        random_state = as.integer(seed),
+        log = TRUE
+      )
+    },
+    warmup = warmup, reps = reps, method = "sampled_gromov_wasserstein",
     problem_for_quality = prob
   ))
 }

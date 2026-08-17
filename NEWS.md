@@ -74,6 +74,11 @@ Development version toward the focused 0.1 release.
   oversubscription, and `structure_knn` is documented as a metric
   change rather than a memory saving. See
   `inst/bench/threading-memory.md`.
+- Hosted flagship gates run the canonical protocol with quality
+  checks first. The PR gate covers FGW, FUGW, and semirelaxed. Nightly
+  adds partial, UCOOT, sampled, larger sizes, and a 1-vs-2 thread
+  smoke. Time caps are median `solve_ms` slack, not tight speed
+  claims. Exit 1 is a solver regression; exit 2 is infrastructure.
 
 ## Metadata
 

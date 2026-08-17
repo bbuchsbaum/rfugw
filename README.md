@@ -2,6 +2,8 @@
 
 [![Sparse Sampled Perf Gate (Fast)](https://github.com/bbuchsbaum/rfugw/actions/workflows/sparse-sampled-perf-gate.yml/badge.svg)](https://github.com/bbuchsbaum/rfugw/actions/workflows/sparse-sampled-perf-gate.yml)
 [![Sparse Sampled Perf Gate (Nightly)](https://github.com/bbuchsbaum/rfugw/actions/workflows/sparse-sampled-perf-gate-nightly.yml/badge.svg)](https://github.com/bbuchsbaum/rfugw/actions/workflows/sparse-sampled-perf-gate-nightly.yml)
+[![Flagship protocol gate (PR)](https://github.com/bbuchsbaum/rfugw/actions/workflows/flagship-gate.yml/badge.svg)](https://github.com/bbuchsbaum/rfugw/actions/workflows/flagship-gate.yml)
+[![Flagship protocol gate (Nightly)](https://github.com/bbuchsbaum/rfugw/actions/workflows/flagship-gate-nightly.yml/badge.svg)](https://github.com/bbuchsbaum/rfugw/actions/workflows/flagship-gate-nightly.yml)
 
 Fast R + C++ implementations of:
 
@@ -136,6 +138,15 @@ See `NEWS.md` and `CONTRIBUTING.md` for the 0.1 compatibility and evidence
 policy.
 
 ## Benchmarking
+
+Quality-controlled speed evidence uses `inst/bench/PROTOCOL.md`. The
+hosted PR gate is FGW, FUGW, and semirelaxed; nightly also covers
+partial, UCOOT, sampled, larger sizes, and 1-vs-2 threads.
+
+```bash
+inst/bench/run_flagship_gate.sh inst/bench/results/current \
+  fgw,fugw,semirelaxed pr 1 20260816 1
+```
 
 Run rfugw benchmarks:
 

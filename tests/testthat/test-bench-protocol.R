@@ -100,6 +100,97 @@ test_that("shared problems are determined by kind, n, and seed", {
   expect_false(isTRUE(all.equal(a$M, c$M)))
 })
 
+test_that("protocol suite filter accepts known families and rejects unknown", {
+  old <- Sys.getenv("RFUGW_PROTOCOL_SUITES", unset = NA)
+  on.exit({
+    if (is.na(old)) Sys.unsetenv("RFUGW_PROTOCOL_SUITES") else Sys.setenv(RFUGW_PROTOCOL_SUITES = old)
+  })
+  Sys.unsetenv("RFUGW_PROTOCOL_SUITES")
+  expect_equal(
+    bench_parse_suites("fgw,fugw"),
+    c("fgw", "fugw")
+  )
+  expect_error(bench_parse_suites("nope"), "Unknown protocol suite")
+  expect_true("sampled" %in% bench_parse_suites(""))
+})
+
+test_that("FUGW and sampled quality helpers accept finite solves", {
+  d <- bench_make_problem("fgw", 6L, 20260816L)
+  fugw <- fugw_kl(
+    Cx = d$C1, Cy = d$C2, wx = d$p, wy = d$q, M = d$M,
+    epsilon = 0.05, max_iter = 20L, max_iter_ot = 80L
+  )
+  expect_true(bench_check_quality("fugw_kl", fugw, d)$valid)
+
+  samp <- sampled_gromov_wasserstein(
+    d$C1, d$C2, p = d$p, q = d$q,
+    nb_samples_grad = c(3L, 2L),
+    epsilon = 0.15,
+    max_iter = 15L,
+    random_state = 20260816L,
+    log = TRUE
+  )
+  expect_true(bench_check_quality("sampled_gromov_wasserstein", samp, d)$valid)
+})
+
+test_that("protocol gate distinguishes infrastructure from solver failures", {
+  gate <- testthat::test_path("..", "..", "inst", "bench", "gate_protocol.R")
+  caps <- testthat::test_path("..", "..", "inst", "bench", "ci_time_caps.json")
+  missing <- suppressWarnings(system2(
+    file.path(R.home("bin"), "Rscript"),
+    c(gate, tempfile("no-such-gate-"), caps, "pr"),
+    stdout = TRUE,
+    stderr = TRUE
+  ))
+  expect_identical(attr(missing, "status"), 2L)
+
+  good <- tempfile("gate-ok-")
+  dir.create(good)
+  jsonlite::write_json(
+    list(commit = "test", seed = 1L, threads = 1L, profile = "conservative", suites = "fgw"),
+    file.path(good, "meta.json"),
+    auto_unbox = TRUE
+  )
+  utils::write.csv(
+    data.frame(suite = "fgw", method = "fgw_entropic", n = 12L, valid = TRUE,
+               reject_reason = "", solve_ms = 10, stringsAsFactors = FALSE),
+    file.path(good, "runs.csv"),
+    row.names = FALSE
+  )
+  utils::write.csv(
+    data.frame(suite = "fgw", method = "fgw_entropic", n = 12L, valid = TRUE,
+               stringsAsFactors = FALSE),
+    file.path(good, "quality.csv"),
+    row.names = FALSE
+  )
+  ok <- system2(
+    file.path(R.home("bin"), "Rscript"),
+    c(gate, good, caps, "pr"),
+    stdout = TRUE,
+    stderr = TRUE
+  )
+  expect_true(is.null(attr(ok, "status")) || identical(attr(ok, "status"), 0L))
+
+  bad <- tempfile("gate-bad-")
+  dir.create(bad)
+  file.copy(file.path(good, "meta.json"), file.path(bad, "meta.json"))
+  file.copy(file.path(good, "quality.csv"), file.path(bad, "quality.csv"))
+  utils::write.csv(
+    data.frame(suite = "fgw", method = "fgw_entropic", n = 12L, valid = FALSE,
+               reject_reason = "status=numerical_failure", solve_ms = 10,
+               stringsAsFactors = FALSE),
+    file.path(bad, "runs.csv"),
+    row.names = FALSE
+  )
+  failed <- suppressWarnings(system2(
+    file.path(R.home("bin"), "Rscript"),
+    c(gate, bad, caps, "pr"),
+    stdout = TRUE,
+    stderr = TRUE
+  ))
+  expect_identical(attr(failed, "status"), 1L)
+})
+
 test_that("current baselines are archived into scratch, not mixed in", {
   root <- tempfile("bench-results-")
   dir.create(file.path(root, "current"), recursive = TRUE)

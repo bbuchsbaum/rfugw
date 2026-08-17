@@ -13,7 +13,12 @@ From the package root, after installing the conservative profile:
 Rscript inst/bench/run_protocol.R
 ```
 
-Optional arguments: `reps` `seed` `out_dir` `threads`.
+Optional arguments: `reps` `seed` `out_dir` `threads` `suites`.
+
+`suites` is a comma-separated list from
+`linear,fgw,fugw,semirelaxed,partial,ucoot,sampled`. Empty means all.
+`RFUGW_PROTOCOL_SCALE` is `full` (default), `pr`, or `nightly` and
+selects the size grid.
 
 Writes:
 
@@ -93,3 +98,49 @@ guard remain. New comparisons must go through `protocol.R` helpers so
 quality and metadata stay uniform. Do not treat a CSV from those older
 scripts as a 0.1 baseline unless it was regenerated through this
 protocol.
+
+## Hosted CI gates
+
+Quality-controlled hosted gates use this protocol, not the older
+suite CSVs.
+
+| Gate | Workflow | Suites | Scale |
+|---|---|---|---|
+| Fast PR | `.github/workflows/flagship-gate.yml` | FGW, FUGW, semirelaxed | `pr` |
+| Nightly | `.github/workflows/flagship-gate-nightly.yml` | FGW, FUGW, semirelaxed, partial, UCOOT, sampled, plus a 1-vs-2 thread smoke | `nightly` |
+
+The sparse-sampled POT speed gates stay separate. They are not a
+substitute for these quality gates.
+
+Entry point:
+
+```
+inst/bench/run_flagship_gate.sh inst/bench/results/current \
+  fgw,fugw,semirelaxed pr 1 20260816 1
+```
+
+Artifacts in the output directory: `meta.json`, `runs.csv`,
+`quality.csv`, `gate_report.md`. Nightly also writes `threads.csv`.
+Hosted jobs upload that tree.
+
+### Regression criteria
+
+- Quality is the hard gate. A row is invalid unless
+  `inst/bench/thresholds.json` checks pass. Invalid rows cannot update
+  a cap or count as a pass.
+- Time caps in `inst/bench/ci_time_caps.json` are median `solve_ms`
+  after warmup. A row fails only if that median exceeds the cap. Caps
+  are slack for GitHub-hosted runner noise, not tight speed claims.
+- Changing `thresholds.json` or a time cap requires a protocol
+  artifact from the same commit in the PR and an explicit reviewer
+  note. Silent cap edits are not accepted.
+
+### Exit codes
+
+`run_flagship_gate.sh` and `gate_protocol.R` distinguish failures:
+
+| Code | Meaning |
+|---|---|
+| 0 | Quality and caps passed |
+| 1 | Solver / quality / time-cap regression |
+| 2 | Infrastructure: missing artifacts, unreadable JSON, protocol did not write |

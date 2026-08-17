@@ -50,7 +50,13 @@ Rscript inst/bench/run_protocol.R
 - Record commit, compiler flags, thread counts, seed, and hardware
   (`results/current/meta.json`).
 - Threshold changes need reviewed evidence, not a silent edit.
+  Hosted caps live in `inst/bench/ci_time_caps.json`. A PR that changes
+  either file must attach `meta.json` and `runs.csv` from
+  `inst/bench/run_flagship_gate.sh` and say so in the review.
 - Scratch under `inst/bench/results/scratch/` is not a baseline.
+- Fast PR gate: FGW, FUGW, and semirelaxed. Nightly also covers
+  partial, UCOOT, sampled, larger sizes, and 1-vs-2 thread equivalence.
+  Exit 1 is a solver regression; exit 2 is infrastructure.
 
 ## Generated documentation
 

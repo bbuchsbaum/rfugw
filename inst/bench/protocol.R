@@ -13,6 +13,26 @@ bench_thresholds_path <- function() {
   hit[[1]]
 }
 
+bench_parse_suites <- function(x) {
+  if (length(x) == 0L || (length(x) == 1L && !nzchar(x[[1]]))) {
+    x <- Sys.getenv("RFUGW_PROTOCOL_SUITES", unset = "")
+  }
+  if (length(x) == 1L) {
+    x <- strsplit(as.character(x), ",", fixed = TRUE)[[1]]
+  }
+  suites <- unique(trimws(as.character(x)))
+  suites <- suites[nzchar(suites)]
+  known <- c("linear", "fgw", "fugw", "semirelaxed", "partial", "ucoot", "sampled")
+  if (!length(suites)) {
+    return(known)
+  }
+  bad <- setdiff(suites, known)
+  if (length(bad)) {
+    stop("Unknown protocol suite(s): ", paste(bad, collapse = ", "), call. = FALSE)
+  }
+  suites
+}
+
 bench_read_thresholds <- function(method = NULL) {
   all <- jsonlite::fromJSON(bench_thresholds_path(), simplifyVector = TRUE)
   if (is.null(method)) {
@@ -128,12 +148,16 @@ bench_check_quality <- function(method, result, problem) {
   if (!is.null(spec$status) && !is.null(status) && !status %in% spec$status) {
     reasons <- c(reasons, sprintf("status=%s", status))
   }
-  residual <- result$residual %||% result$error
+  residual <- result$residual %||% result$error %||% NA_real_
+  residual <- as.numeric(residual)[1]
   if (!is.null(spec$residual_max) &&
       (!is.finite(residual) || residual > spec$residual_max)) {
     reasons <- c(reasons, sprintf("residual=%s", residual))
   }
   value <- tryCatch(rfugw_value(result), error = function(e) NA_real_)
+  if (!is.finite(value) && !is.null(result$gw_dist_estimated)) {
+    value <- as.numeric(result$gw_dist_estimated)[1]
+  }
   if (!is.finite(value)) {
     reasons <- c(reasons, "nonfinite_objective")
   }
@@ -162,6 +186,29 @@ bench_check_quality <- function(method, result, problem) {
     recon <- ot_fgw_square(problem$M, problem$C1, problem$C2, result, alpha = 0.5)
     if (!bench_close(recon, value, spec$objective_atol, spec$objective_rtol)) {
       reasons <- c(reasons, "objective_mismatch")
+    }
+  }
+  if (identical(method, "fugw_kl")) {
+    if (!is.finite(value)) {
+      reasons <- c(reasons, "nonfinite_objective")
+    }
+    if (is.null(result$pi_samp) || any(!is.finite(result$pi_samp))) {
+      reasons <- c(reasons, "invalid_plan")
+    }
+  }
+  if (identical(method, "sampled_gromov_wasserstein")) {
+    plan <- result$plan %||% result
+    if (!is.matrix(plan) || any(!is.finite(plan))) {
+      reasons <- c(reasons, "invalid_plan")
+    } else {
+      if (max(abs(rowSums(plan) - problem$p)) > 1e-3 ||
+          max(abs(colSums(plan) - problem$q)) > 1e-3) {
+        reasons <- c(reasons, "invalid_plan")
+      }
+    }
+    est <- result$gw_dist_estimated %||% NA_real_
+    if (!is.finite(est)) {
+      reasons <- c(reasons, "nonfinite_objective")
     }
   }
   if (method %in% c("semirelaxed_gromov_wasserstein",
