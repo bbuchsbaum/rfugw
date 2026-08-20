@@ -24,15 +24,19 @@ LinkingTo:
     Rcpp,
     RcppArmadillo
 Suggests:
+    albersdown,
     testthat (>= 3.0.0),
     bench,
+    ggplot2,
     jsonlite,
     lpSolve,
     Matrix,
     RSpectra,
     knitr,
+    ragg,
+    systemfonts,
     rmarkdown
 VignetteBuilder: knitr
 Config/testthat/edition: 3
-Config/Needs/website: pkgdown
+Config/Needs/website: pkgdown, albersdown
 SystemRequirements: C++17
