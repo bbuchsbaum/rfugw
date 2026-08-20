@@ -60,6 +60,26 @@ test_that("multialign_fit (FGW) matches direct pairwise solve", {
 
   expect_equal(fit$objectives[[1]], direct$fgw_dist, tolerance = 1e-12)
   expect_equal(fit$couplings[[1]], direct$plan, tolerance = 1e-12)
+  legacy_diagnostic_names <- c(
+    "id", "n_nodes", "objective", "iterations", "error", "plan_mass",
+    "kernel_ms", "feature_ms", "solve_ms", "lowrank_used", "c1_cache_used",
+    "c2_cache_used", "square_cache_used"
+  )
+  expect_identical(
+    head(names(fit$diagnostics), length(legacy_diagnostic_names)),
+    legacy_diagnostic_names
+  )
+  diag_fields <- c(
+    "status", "converged", "residual", "inner_status", "inner_converged",
+    "inner_residual", "max_inner_residual", "inner_iterations"
+  )
+  expect_true(all(diag_fields %in% names(fit$diagnostics)))
+  expect_identical(fit$diagnostics$status[[1]], direct$status)
+  expect_identical(fit$diagnostics$converged[[1]], direct$converged)
+  expect_identical(fit$diagnostics$inner_status[[1]], direct$inner_status)
+  expect_identical(fit$diagnostics$inner_converged[[1]], direct$inner_converged)
+  expect_equal(fit$diagnostics$inner_residual[[1]], direct$inner_residual)
+  expect_equal(fit$diagnostics$max_inner_residual[[1]], direct$max_inner_residual)
 })
 
 test_that("multialign sampled-graph coarse init matches explicit warm-started FGW", {
@@ -399,6 +419,15 @@ test_that("multialign fixed C++ batch matches R-loop baseline", {
   expect_equal(out_cpp$couplings$s1, out_r$couplings$s1, tolerance = 1e-10)
   expect_equal(out_cpp$couplings$s2, out_r$couplings$s2, tolerance = 1e-10)
   expect_equal(out_cpp$couplings$s3, out_r$couplings$s3, tolerance = 1e-10)
+  diag_fields <- c(
+    "status", "converged", "residual", "inner_status", "inner_converged",
+    "inner_residual", "max_inner_residual", "inner_iterations"
+  )
+  expect_true(all(diag_fields %in% names(out_r$diagnostics)))
+  expect_true(all(diag_fields %in% names(out_cpp$diagnostics)))
+  expect_true(all(!is.na(out_r$diagnostics$status)))
+  expect_true(all(out_cpp$diagnostics$inner_status == "unavailable"))
+  expect_true(all(is.na(out_cpp$diagnostics$inner_converged)))
 })
 
 test_that("multialign fused feature+solve batch matches non-fused batch (double)", {

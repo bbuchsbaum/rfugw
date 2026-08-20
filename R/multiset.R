@@ -474,6 +474,14 @@
   objectives <- numeric(length(sets))
   iterations <- integer(length(sets))
   errors <- numeric(length(sets))
+  statuses <- rep(NA_character_, length(sets))
+  converged <- rep(NA, length(sets))
+  residuals <- rep(NA_real_, length(sets))
+  inner_statuses <- rep(NA_character_, length(sets))
+  inner_converged <- rep(NA, length(sets))
+  inner_residuals <- rep(NA_real_, length(sets))
+  max_inner_residuals <- rep(NA_real_, length(sets))
+  inner_iterations <- rep(NA_integer_, length(sets))
   couplings <- vector("list", length(sets))
   names(couplings) <- ids
   used_threads <- 1L
@@ -593,6 +601,15 @@
     objectives[] <- as.numeric(batch$fgw_dist)
     iterations[] <- as.integer(batch$iterations)
     errors[] <- as.numeric(batch$error)
+    outer_ok <- is.finite(errors) & errors <= tol
+    statuses[] <- ifelse(
+      outer_ok,
+      "outer_converged_inner_unavailable",
+      ifelse(is.finite(errors), "max_iter", "numerical_failure")
+    )
+    converged[] <- ifelse(outer_ok, NA, FALSE)
+    residuals[] <- errors
+    inner_statuses[] <- "unavailable"
     used_threads <- as.integer(batch$used_threads)
     if (!is.null(batch$kernel_ms)) {
       batch_kernel_ms[] <- as.numeric(batch$kernel_ms)
@@ -651,6 +668,15 @@
     objectives[] <- as.numeric(batch$fugw_cost)
     iterations[] <- as.integer(batch$iterations)
     errors[] <- as.numeric(batch$error)
+    outer_ok <- is.finite(errors) & errors <= tol
+    statuses[] <- ifelse(
+      outer_ok,
+      "outer_converged_inner_unavailable",
+      ifelse(is.finite(errors), "max_iter", "numerical_failure")
+    )
+    converged[] <- ifelse(outer_ok, NA, FALSE)
+    residuals[] <- errors
+    inner_statuses[] <- "unavailable"
     used_threads <- as.integer(batch$used_threads)
     if (!is.null(batch$kernel_ms)) {
       batch_kernel_ms[] <- as.numeric(batch$kernel_ms)
@@ -712,6 +738,15 @@
         iterations[[i]] <- out$iterations
         errors[[i]] <- out$error
       }
+      solver_diag <- .compact_nested_solver_diagnostics(out)
+      statuses[[i]] <- solver_diag$status
+      converged[[i]] <- solver_diag$converged
+      residuals[[i]] <- solver_diag$residual
+      inner_statuses[[i]] <- solver_diag$inner_status
+      inner_converged[[i]] <- solver_diag$inner_converged
+      inner_residuals[[i]] <- solver_diag$inner_residual
+      max_inner_residuals[[i]] <- solver_diag$max_inner_residual
+      inner_iterations[[i]] <- solver_diag$inner_iterations
     }
   }
 
@@ -729,6 +764,14 @@
     c1_cache_used = batch_c1_cache_used,
     c2_cache_used = batch_c2_cache_used,
     square_cache_used = batch_square_cache_used,
+    status = statuses,
+    converged = converged,
+    residual = residuals,
+    inner_status = inner_statuses,
+    inner_converged = inner_converged,
+    inner_residual = inner_residuals,
+    max_inner_residual = max_inner_residuals,
+    inner_iterations = inner_iterations,
     stringsAsFactors = FALSE
   )
 
@@ -951,7 +994,9 @@ multialign_make_template <- function(
 #' @param final_refit If `TRUE`, run one final alignment against the last updated
 #'   learned template. If `FALSE` (default), skip this extra pass for speed.
 #' @return A list with `couplings`, `objectives`, `template`, `diagnostics`,
-#'   and run settings.
+#'   and run settings. Per-subject `diagnostics` include outer and nested-solver
+#'   status and residual fields when the selected backend exposes them; batch
+#'   paths mark unavailable nested certificates explicitly.
 #' @export
 multialign_fit <- function(
     subjects,

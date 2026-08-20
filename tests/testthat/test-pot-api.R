@@ -355,4 +355,26 @@ test_that("fgw_barycenters returns valid fixed-support outputs", {
   expect_equal(vapply(out$couplings, nrow, integer(1)), rep(7L, 3L))
   expect_equal(out$history$iter[[nrow(out$history)]], out$iterations)
   expect_true(is.finite(out$objective))
+  legacy_names <- c(
+    "X", "C", "p", "couplings", "objectives", "objective", "history",
+    "iterations", "sinkhorn_dispatches", "error"
+  )
+  expect_identical(head(names(out), length(legacy_names)), legacy_names)
+  expect_true(all(c("status", "converged", "solver_diagnostics", "iteration_solver_diagnostics") %in% names(out)))
+  expect_length(out$solver_diagnostics, 3L)
+  expect_length(out$iteration_solver_diagnostics, out$iterations)
+  expect_true(all(c(
+    "solver_status", "all_solvers_converged", "max_solver_residual",
+    "inner_status", "all_inner_converged", "max_inner_residual"
+  ) %in% names(out$history)))
+  expected_diagnostics <- c(
+    "status", "converged", "residual", "iterations", "inner_status",
+    "inner_converged", "inner_residual", "max_inner_residual",
+    "inner_iterations"
+  )
+  expect_true(all(vapply(
+    out$solver_diagnostics,
+    function(x) identical(names(x), expected_diagnostics),
+    logical(1)
+  )))
 })

@@ -174,7 +174,9 @@ learned template. If \code{FALSE} (default), skip this extra pass for speed.}
 }
 \value{
 A list with \code{couplings}, \code{objectives}, \code{template}, \code{diagnostics},
-and run settings.
+and run settings. Per-subject \code{diagnostics} include outer and nested-solver
+status and residual fields when the selected backend exposes them; batch
+paths mark unavailable nested certificates explicitly.
 }
 \description{
 Aligns a list of attributed metric-measure sets to a fixed template using

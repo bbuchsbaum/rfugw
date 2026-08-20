@@ -637,6 +637,33 @@ entropic_semirelaxed_fused_gromov_wasserstein2 <- function(...) {
   out$srfgw_dist
 }
 
+.compact_nested_solver_diagnostics <- function(out) {
+  scalar_character <- function(x, default = NA_character_) {
+    if (is.null(x) || length(x) == 0L) default else as.character(x[[1]])
+  }
+  scalar_logical <- function(x, default = NA) {
+    if (is.null(x) || length(x) == 0L) default else as.logical(x[[1]])
+  }
+  scalar_numeric <- function(x, default = NA_real_) {
+    if (is.null(x) || length(x) == 0L) default else as.numeric(x[[1]])
+  }
+  scalar_integer <- function(x, default = NA_integer_) {
+    if (is.null(x) || length(x) == 0L) default else as.integer(x[[1]])
+  }
+
+  list(
+    status = scalar_character(out$status),
+    converged = scalar_logical(out$converged),
+    residual = scalar_numeric(out$residual),
+    iterations = scalar_integer(out$iterations),
+    inner_status = scalar_character(out$inner_status),
+    inner_converged = scalar_logical(out$inner_converged),
+    inner_residual = scalar_numeric(out$inner_residual),
+    max_inner_residual = scalar_numeric(out$max_inner_residual),
+    inner_iterations = scalar_integer(out$inner_iterations)
+  )
+}
+
 #' Fixed-Support FGW Barycenters
 #'
 #' Learns a fixed-size barycenter support by alternating between (entropic) FGW
@@ -672,7 +699,9 @@ entropic_semirelaxed_fused_gromov_wasserstein2 <- function(...) {
 #' @param barycenter_eps Stabilizer for divisions in barycenter updates.
 #' @param verbose If `TRUE`, print outer-iteration diagnostics.
 #' @return A list with `X`, `C`, `p`, `couplings`, `history`, `iterations`,
-#'   and `objective`.
+#'   `objective`, outer `status`/`converged`, and compact final
+#'   `solver_diagnostics` for each inner FGW problem. `history` includes
+#'   aggregate inner-solver diagnostics for every barycenter iteration.
 #' @export
 fgw_barycenters <- function(
     N,
@@ -820,8 +849,10 @@ fgw_barycenters <- function(
   T <- vector("list", S)
   objectives <- rep(NA_real_, S)
   history <- vector("list", as.integer(max_iter))
+  iteration_solver_diagnostics <- vector("list", as.integer(max_iter))
   outer_done <- 0L
   sinkhorn_dispatches <- vector("list", S)
+  solver_diagnostics <- vector("list", S)
 
   for (it in seq_len(as.integer(max_iter))) {
     Cprev <- C
@@ -851,6 +882,7 @@ fgw_barycenters <- function(
       )
       T[[s]] <- out$plan
       objectives[[s]] <- out$fgw_dist
+      solver_diagnostics[[s]] <- .compact_nested_solver_diagnostics(out)
       sinkhorn_dispatches[[s]] <- list(
         requested = out$requested_sinkhorn_method,
         effective = out$effective_sinkhorn_method,
@@ -885,11 +917,24 @@ fgw_barycenters <- function(
     err_feature <- if (isTRUE(fixed_features)) 0 else sqrt(sum((X - Xprev)^2))
     err_structure <- if (isTRUE(fixed_structure)) 0 else sqrt(sum((C - Cprev)^2))
     obj_total <- sum(lambdas * objectives)
+    iteration_solver_diagnostics[[it]] <- solver_diagnostics
+    statuses <- vapply(solver_diagnostics, `[[`, character(1), "status")
+    solver_converged <- vapply(solver_diagnostics, `[[`, logical(1), "converged")
+    inner_statuses <- vapply(solver_diagnostics, `[[`, character(1), "inner_status")
+    inner_converged <- vapply(solver_diagnostics, `[[`, logical(1), "inner_converged")
+    residuals <- vapply(solver_diagnostics, `[[`, numeric(1), "residual")
+    inner_residuals <- vapply(solver_diagnostics, `[[`, numeric(1), "max_inner_residual")
     history[[it]] <- data.frame(
       iter = it,
       objective = obj_total,
       err_feature = err_feature,
       err_structure = err_structure,
+      solver_status = paste(unique(statuses), collapse = ","),
+      all_solvers_converged = all(solver_converged),
+      max_solver_residual = max(residuals),
+      inner_status = paste(unique(inner_statuses), collapse = ","),
+      all_inner_converged = all(inner_converged),
+      max_inner_residual = max(inner_residuals),
       stringsAsFactors = FALSE
     )
     outer_done <- it
@@ -906,6 +951,12 @@ fgw_barycenters <- function(
   }
 
   hist_df <- do.call(rbind, history[seq_len(outer_done)])
+  barycenter_error <- if (outer_done > 0L) {
+    max(hist_df$err_feature[[outer_done]], hist_df$err_structure[[outer_done]])
+  } else {
+    NA_real_
+  }
+  barycenter_converged <- is.finite(barycenter_error) && barycenter_error <= tol
   list(
     X = X,
     C = C,
@@ -916,10 +967,10 @@ fgw_barycenters <- function(
     history = hist_df,
     iterations = as.integer(outer_done),
     sinkhorn_dispatches = sinkhorn_dispatches,
-    error = if (outer_done > 0L) {
-      max(hist_df$err_feature[[outer_done]], hist_df$err_structure[[outer_done]])
-    } else {
-      NA_real_
-    }
+    error = barycenter_error,
+    status = if (barycenter_converged) "converged" else "max_iter",
+    converged = barycenter_converged,
+    solver_diagnostics = solver_diagnostics,
+    iteration_solver_diagnostics = iteration_solver_diagnostics[seq_len(outer_done)]
   )
 }

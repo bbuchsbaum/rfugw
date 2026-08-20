@@ -12,302 +12,279 @@ knitr::opts_chunk$set(
   collapse = TRUE,
   comment = "#>",
   message = FALSE,
-  warning = FALSE,
-  fig.width = 5,
-  fig.height = 4
+  warning = FALSE
 )
 ```
 
-`rfugw` ships linear optimal transport plus Gromov-Wasserstein variants. This
-guide compares formulation, marginals, regularization, maturity, and typical
-performance. See `inst/solver-contract.md` for the supported API.
+Choosing a solver starts with the correspondence you want. Do both
+distributions have fixed mass? Should every object participate? Do you have
+features that can be compared across domains? The answers determine the model;
+regularization and numerical controls come afterward.
 
-## Setup: two small metric spaces
+This guide fits several formulations to the same two small metric spaces. Each
+returns a soft correspondence, but the plans obey different marginal
+constraints and their objective values are not directly comparable.
 
-We'll use the same toy data throughout so you can compare outputs directly.
+Different numbers of source and target objects do not, by themselves, require
+partial or unbalanced transport. Balanced transport handles rectangular plans;
+choose a relaxed formulation only when the mass assumptions call for one.
 
-```{r data-setup}
+## What are we aligning?
+
+The source and target contain different numbers of objects. Each has an
+internal distance matrix, and each object has two features measured in a common
+space.
+
+```{r example-data}
 library(rfugw)
 
-set.seed(1)
-ns <- 15
-nt <- 18
+source_xy <- rbind(c(0, 0), c(1, 0), c(1.2, 0.8), c(0.4, 1.3), c(-0.3, 0.6))
+target_xy <- rbind(c(2.0, 1.0), c(2.5, 1.8), c(1.9, 2.4),
+                   c(1.2, 2.0), c(1.0, 1.2), c(2.8, 2.6))
+C1 <- as.matrix(dist(source_xy)); C1 <- C1 / max(C1)
+C2 <- as.matrix(dist(target_xy)); C2 <- C2 / max(C2)
+```
 
-# Source and target point clouds
-X_src <- matrix(rnorm(ns * 2), ns, 2)
-X_tgt <- matrix(rnorm(nt * 2), nt, 2)
-
-# Structure matrices (normalized pairwise distances)
-C1 <- as.matrix(dist(X_src)); C1 <- C1 / max(C1)
-C2 <- as.matrix(dist(X_tgt)); C2 <- C2 / max(C2)
-
-# Feature cost matrix for FGW variants
-F_src <- matrix(rnorm(ns * 3), ns, 3)
-F_tgt <- matrix(rnorm(nt * 3), nt, 3)
-M <- as.matrix(dist(rbind(F_src, F_tgt)))[1:ns, (ns + 1):(ns + nt)]
+```{r feature-cost}
+F1 <- cbind(source_xy[, 1] + source_xy[, 2], source_xy[, 2])
+F2 <- cbind(target_xy[, 1] + target_xy[, 2] - 3, target_xy[, 2] - 1)
+M <- as.matrix(dist(rbind(F1, F2)))[1:5, 6:11]
 M <- M / max(M)
+p <- rep(1 / nrow(C1), nrow(C1))
+q <- rep(1 / nrow(C2), nrow(C2))
 ```
 
-## Linear optimal transport
-
-Use these when you already have a cost matrix between the same feature space.
-
-```{r linear-ot}
-M_lin <- matrix(c(0, 1, 1, 0), 2, 2)
-sink <- ot_sinkhorn(M_lin, epsilon = 0.1)
-sink$status
-sink$residual
-emd <- ot_emd(M_lin)
-emd$ot_dist
-```
-
-`print(sink)` shows status and residuals without dumping the plan. Inspect
-`rfugw_value(sink)` and `ot_validate_plan(sink, c(0.5, 0.5), c(0.5, 0.5))`.
-
-## Decision tree
-
-```
-Do you have cross-domain features (M)?
-├─ No  → GW (structure only)
-│   ├─ Unregularized CG + LP?     → gromov_wasserstein()
-│   └─ Entropic / speed?          → entropic_gromov_wasserstein()
-└─ Yes → FGW (structure + features)
-    ├─ Unregularized CG + LP?     → fgw_exact_cg()
-    └─ Entropic / speed?          → fgw_entropic()
-
-Are your distributions the same total mass?
-├─ Yes, and both marginals fixed  → standard GW / FGW (above)
-├─ Yes, but target mass is free   → semirelaxed variants
-├─ No, different total mass       → partial or unbalanced variants
-└─ No, and you want KL relaxation → fugw_kl()
-```
-
-## Standard GW and FGW
-
-Both marginals are fixed (source and target weights sum to 1 each). The coupling
-must satisfy `rowSums(plan) == p` and `colSums(plan) == q`.
-
-```{r standard-gw}
-# Unregularized GW (conditional gradient + exact linear-OT direction)
-out_gw <- gromov_wasserstein(C1, C2)
-out_gw$gw_dist
-```
-
-```{r standard-fgw}
-# Entropic FGW (the workhorse)
-out_fgw <- fgw_entropic(M, C1, C2, alpha = 0.5, epsilon = 0.05)
-out_fgw$fgw_dist
-```
-
-```{r exact-fgw}
-# Unregularized FGW (conditional gradient, no entropic term)
-out_exact <- fgw_exact_cg(M, C1, C2, alpha = 0.5)
-out_exact$fgw_dist
-```
-
-**When to use unregularized CG vs. entropic:** Unregularized solvers give
-sparser, more interpretable couplings but scale poorly (an LP subproblem at
-each iteration). They are local procedures on a non-convex objective, not
-certified global minimizers. Entropic solvers are much faster for problems
-beyond ~50 points.
-
-## Partial GW and FGW
-
-Sometimes only a fraction of the mass should be transported---useful when the
-two domains have different sizes or when you expect only partial overlap.
-
-The `m` parameter controls how much mass to transport. Unregularized partial
-solvers need the Suggests package `lpSolve`
-(`install.packages("lpSolve")`). Entropic partial solvers do not.
-
-Both symmetric and asymmetric structure costs are supported. The general path
-uses the same canonical square-loss tensor as the symmetric path and is checked
-against independent gradient, exact-LP, and entropic-projection oracles. Do not
-force `symmetric = TRUE` on asymmetric inputs.
-
-```{r partial-gw, eval = requireNamespace("lpSolve", quietly = TRUE)}
-out_pgw <- partial_gromov_wasserstein(C1, C2, m = 0.5, log = TRUE)
-out_pgw$partial_gw_dist
-
-# Total transported mass
-sum(out_pgw$plan)
-```
-
-```{r partial-fgw, eval = requireNamespace("lpSolve", quietly = TRUE)}
-out_pfgw <- partial_fused_gromov_wasserstein(M, C1, C2, alpha = 0.5, m = 0.7, log = TRUE)
-out_pfgw$partial_fgw_dist
-```
-
-Entropic partial variants are also available and do not need `lpSolve`:
-
-```{r entropic-partial}
-out_epgw <- entropic_partial_gromov_wasserstein(C1, C2, m = 0.6, reg = 0.05, log = TRUE)
-out_epgw$partial_gw_dist
-```
-
-## Semirelaxed GW and FGW
-
-In semirelaxed mode, the source marginal is fixed but the target marginal is
-*free*---the solver learns it. This is useful when you don't know the right
-target distribution a priori (e.g., aligning a subject to a template of unknown
-density).
-
-```{r semirelaxed-gw}
-out_sr <- semirelaxed_gromov_wasserstein(C1, C2)
-out_sr$srgw_dist
-
-# Source marginal is fixed
-summary(rowSums(out_sr$plan))
-
-# Target marginal was learned
-round(out_sr$q, 4)
-```
-
-Entropic semirelaxed variants use mirror descent in KL geometry and are
-significantly faster:
-
-```{r entropic-semirelaxed}
-out_esr <- entropic_semirelaxed_gromov_wasserstein(
-  C1, C2,
-  epsilon = 0.05
-)
-out_esr$srgw_dist
-```
-
-```{r entropic-semirelaxed-fgw}
-out_esrf <- entropic_semirelaxed_fused_gromov_wasserstein(
-  M, C1, C2,
-  alpha = 0.5,
-  epsilon = 0.05
-)
-out_esrf$srfgw_dist
-```
-
-## Fused Unbalanced GW (FUGW)
-
-When both marginals can deviate from the prescribed distributions, use the
-unbalanced solver. It relaxes the marginal constraints with KL divergence
-penalties controlled by `reg_marginals`.
-
-```{r fugw}
-out_fugw <- fugw_kl(
-  Cx = C1,
-  Cy = C2,
-  M = M,
-  alpha = 0.5,
-  epsilon = 0.01,
-  reg_marginals = c(10, 10)
-)
-out_fugw$fugw_cost
-```
-
-Larger `reg_marginals` enforces the marginals more strictly (closer to standard
-FGW). Smaller values allow more deviation.
-
-```{r fugw-marginals}
-# Compare marginals to uniform
-cat("Source mass:", sum(out_fugw$pi_samp), "\n")
-cat("Row marginal range:", range(rowSums(out_fugw$pi_samp)), "\n")
-```
-
-## Performance tips
-
-### Mixed precision
-
-For large problems, `precision = "mixed"` uses single-precision arithmetic for
-inner Sinkhorn iterations and double for the final objective. This is the
-default in `multialign_fit()` and typically 1.5--2x faster with negligible
-accuracy loss.
-
-```{r precision-compare}
-t_double <- system.time(
-  fgw_entropic(M, C1, C2, alpha = 0.5, epsilon = 0.05, precision = "double")
-)
-t_mixed <- system.time(
-  fgw_entropic(M, C1, C2, alpha = 0.5, epsilon = 0.05, precision = "mixed")
-)
-cat("double:", t_double["elapsed"], "s, mixed:", t_mixed["elapsed"], "s\n")
-```
-
-### Check frequency
-
-Increase `check_every` to reduce the frequency of convergence checks. Each
-check involves computing a Frobenius norm, so larger values skip more work:
-
-```{r check-every}
-# Check convergence every 10 outer iterations instead of every 1
-out <- fgw_entropic(
-  M, C1, C2,
-  alpha = 0.5,
-  epsilon = 0.05,
-  check_every = 10L
+```{r validate-data, include = FALSE}
+stopifnot(
+  all(is.finite(C1)), all(is.finite(C2)), all(is.finite(M)),
+  all(dim(C1) == c(5, 5)), all(dim(C2) == c(6, 6)),
+  all(dim(M) == c(5, 6)),
+  max(C1) > 0, max(C2) > 0, max(M) > 0
 )
 ```
 
-### Low-rank structure approximation
+## Which family matches your assumptions?
 
-For very large structure matrices, the `structure_rank` parameter enables a
-low-rank approximation of the GW tensor product, reducing cost from
-O(n^2 * m) to O(n * m * r):
+Use the narrowest formulation that expresses the scientific problem:
 
-```{r low-rank}
-out_lr <- fgw_entropic(
-  M, C1, C2,
-  alpha = 0.5,
-  epsilon = 0.05,
-  structure_rank = 5L
+| Your data and assumptions | Solver family |
+|---|---|
+| A direct cost between objects; no relational structure | `ot_sinkhorn()` or `ot_emd()` |
+| Structure only; both marginals fixed | `entropic_gromov_wasserstein()` |
+| Structure plus shared features; both marginals fixed | `fgw_entropic()` |
+| Only a specified amount of mass should match | `entropic_partial_*()` or `partial_*()` |
+| Source weights fixed; target weights learned | `entropic_semirelaxed_*()` or `semirelaxed_*()` |
+| Both marginals may depart from reference weights | `fugw_kl()` |
+
+Within the balanced GW and FGW families, the unregularized counterparts
+`gromov_wasserstein()` and `fgw_exact_cg()` use conditional gradient with exact
+linear-OT directions. The entropic functions are usually the practical first
+attempt because their positive regularization produces smoother plans and
+avoids an exact transport solve at every outer iteration.
+
+## When are both marginals fixed?
+
+Balanced FGW requires every row and column sum to match the supplied weights.
+Use it when both distributions represent complete probability measures and all
+mass should be assigned.
+
+```{r balanced-fit}
+balanced <- fgw_entropic(
+  M, C1, C2, p = p, q = q,
+  alpha = 0.5, epsilon = 0.08
 )
-out_lr$fgw_dist
+balanced
 ```
 
-## Summary table
+```{r check-balanced, include = FALSE}
+balanced_plan <- rfugw_plan(balanced)
+ot_validate_plan(balanced, p, q, tol = 1e-6)
+stopifnot(
+  all(is.finite(balanced_plan)), diff(range(balanced_plan)) > 0,
+  is.finite(rfugw_value(balanced)),
+  identical(rfugw_status(balanced), "converged"),
+  isTRUE(balanced$converged),
+  isTRUE(rfugw_residuals(balanced)$inner_converged),
+  max(abs(rowSums(balanced_plan) - p)) < 1e-6,
+  max(abs(colSums(balanced_plan) - q)) < 1e-6
+)
+```
 
-| Function | Formulation | Marginals | Regularization | Maturity | Performance |
-|----------|-------------|-----------|----------------|----------|-------------|
-| `ot_emd()` | Linear OT, simplex | Both fixed | None | Flagship | Small/medium exact plans |
-| `ot_sinkhorn()` | Linear OT, Sinkhorn | Both fixed | Entropic `epsilon` | Flagship | Fast; log path for tiny `epsilon` |
-| `ot_sinkhorn_unbalanced()` | Linear UOT, KL | Relaxed | Entropic + KL `rho` | Flagship | Same inner kernel as FUGW |
-| `gromov_wasserstein()` / `fgw_exact_cg()` | Unregularized CG + LP | Both fixed | None | Flagship | Local CG, not a global minimizer |
-| `entropic_gromov_wasserstein()` / `fgw_entropic()` | Entropic PGD/PPA | Both fixed | Entropic `epsilon` | Flagship | Default workhorse |
-| `partial_*()` | Partial CG | Partial mass `m` | None; needs `lpSolve` | Supported | Exact partial LP steps |
-| `entropic_partial_*()` | Entropic partial | Partial mass `m` | Entropic `reg` | Supported | No `lpSolve` |
-| `semirelaxed_*()` | Unregularized / entropic SR | Source fixed | Optional entropy | Supported | Fast C++ path if symmetric |
-| `fugw_kl()` | Fused unbalanced GW | Both relaxed | Entropic + KL | Flagship | BCD with nested UOT |
-| `sampled_*()` / `lowrank_*()` | Approximate | Both fixed | Entropic | **Experimental** | Certified envelope only; see below |
+Set `alpha = 1` or call `entropic_gromov_wasserstein(C1, C2)` when no
+cross-domain features are available. Do not compare objective values across
+different `alpha` or `epsilon` settings as though they were the same quantity.
 
-## Experimental APIs
+## When should only part of the mass match?
+
+Partial GW is for overlap known through a total transported mass `m`. Rows and
+columns may retain unmatched mass, but the plan must transport exactly `m` and
+must not exceed either marginal.
+
+```{r partial-fit}
+partial <- entropic_partial_gromov_wasserstein(
+  C1, C2, p = p, q = q,
+  m = 0.7, reg = 0.10, log = TRUE
+)
+data.frame(
+  status = rfugw_status(partial),
+  objective = rfugw_value(partial),
+  transported_mass = sum(rfugw_plan(partial))
+)
+```
+
+```{r check-partial, include = FALSE}
+partial_plan <- rfugw_plan(partial)
+ot_validate_plan(
+  partial_plan, p, q, mass = 0.7,
+  marginals = "partial", tol = 1e-6
+)
+stopifnot(
+  all(is.finite(partial_plan)), diff(range(partial_plan)) > 0,
+  is.finite(rfugw_value(partial)),
+  identical(rfugw_status(partial), "converged"),
+  isTRUE(rfugw_residuals(partial)$inner_converged),
+  abs(sum(partial_plan) - 0.7) < 1e-6
+)
+```
+
+The exact `partial_gromov_wasserstein()` and
+`partial_fused_gromov_wasserstein()` default to the built-in
+`lp_solver = "cpp_transport"`. The optional `"lp_transport"` and
+`"lp_matrix"` backends require the suggested package `lpSolve`.
+
+Partial transport does not infer the scientifically correct overlap for you:
+choose `m` from the meaning of the data, or treat it as a sensitivity parameter
+and report how conclusions change.
+
+## When is the target distribution unknown?
+
+Semirelaxed GW fixes the source marginal and learns the target marginal. This
+fits problems where every source object must be represented but the appropriate
+mass allocation over target objects is unknown.
+
+```{r semirelaxed-fit}
+semirelaxed <- entropic_semirelaxed_gromov_wasserstein(
+  C1, C2, p = p, epsilon = 0.08, tol = 2e-8
+)
+data.frame(
+  status = rfugw_status(semirelaxed),
+  objective = rfugw_value(semirelaxed),
+  target_mass = sum(rfugw_plan(semirelaxed))
+)
+```
+
+```{r check-semirelaxed, include = FALSE}
+semirelaxed_plan <- rfugw_plan(semirelaxed)
+learned_q <- colSums(semirelaxed_plan)
+stopifnot(
+  all(is.finite(semirelaxed_plan)), all(semirelaxed_plan >= 0),
+  diff(range(semirelaxed_plan)) > 0, diff(range(learned_q)) > 0,
+  max(abs(rowSums(semirelaxed_plan) - p)) < 1e-6,
+  abs(sum(learned_q) - 1) < 1e-6,
+  is.finite(rfugw_value(semirelaxed)),
+  identical(rfugw_status(semirelaxed), "converged")
+)
+```
+
+This is not the same as partial transport: all source mass is transported, but
+the solver decides how it is distributed across target columns.
+
+## When may both marginals move?
+
+`fugw_kl()` relaxes both marginal constraints using KL penalties. It is useful
+when reference weights are meaningful but exact equality is too strong, for
+example when collections contain unequal or unreliable mass.
+
+```{r unbalanced-fit}
+unbalanced <- fugw_kl(
+  C1, C2, wx = p, wy = q, M = M,
+  alpha = 0.5, epsilon = 0.5,
+  reg_marginals = c(1, 1),
+  max_iter = 200L, tol = 1e-6,
+  max_iter_ot = 1000L, tol_ot = 1e-6
+)
+unbalanced
+```
+
+```{r check-unbalanced, include = FALSE}
+unbalanced_plan <- rfugw_plan(unbalanced)
+unbalanced_residuals <- rfugw_residuals(unbalanced)
+stopifnot(
+  all(is.finite(unbalanced_plan)), all(unbalanced_plan >= 0),
+  diff(range(unbalanced_plan)) > 0, sum(unbalanced_plan) > 0,
+  is.finite(rfugw_value(unbalanced)),
+  identical(rfugw_status(unbalanced), "converged"),
+  isTRUE(unbalanced$converged),
+  identical(unbalanced_residuals$inner_status, "converged"),
+  isTRUE(unbalanced_residuals$inner_converged)
+)
+```
+
+Larger `reg_marginals` penalizes departure from `wx` and `wy` more strongly;
+smaller values permit more creation, destruction, or redistribution of mass.
+There is no universal setting: inspect the transported mass and marginal
+deviations, and assess sensitivity on the scale relevant to your application.
+The relatively smooth `epsilon` above keeps this small teaching example's
+nested solve well conditioned; it is not a recommended value for every data
+set.
+
+## How do regularized and exact solvers differ?
+
+Entropic solvers require a positive `epsilon` (or `reg` for the partial API).
+Regularization smooths the coupling and changes the optimized objective. A
+smaller value is not automatically better: it may make the inner transport
+problem harder and can expose numerical limitations.
+
+Exact conditional-gradient variants optimize the unregularized objective and
+often yield sparser directions. They still solve a non-convex outer problem,
+so neither family certifies a global optimum. For asymmetric structure costs,
+leave `symmetric = NULL` so the solver detects the general path; setting
+`symmetric = TRUE` requires genuinely symmetric inputs.
+
+Start with documented defaults, normalize commensurate costs, and change one
+control at a time. Use `sinkhorn_method = "log"` or stricter precision only
+when diagnostics or the cost scale justify it; those are numerical choices,
+not different scientific models.
+
+## What should you check before using a plan?
+
+For result objects, use the common interface:
+
+```{r inspect-result}
+rfugw_status(balanced)
+rfugw_value(balanced)
+rfugw_residuals(balanced)[c("feasible", "objective_consistent")]
+```
+
+Check four things:
+
+1. The plan is finite, nonnegative, and non-degenerate.
+2. Its marginals satisfy the formulation you selected.
+3. Status and residuals support convergence rather than merely exhaustion of
+   the iteration budget.
+4. The objective is interpreted only within its exact formulation and
+   regularization convention.
+
+`ot_validate_plan()` checks balanced and partial marginal contracts. Unbalanced
+plans have no fixed marginal target, so inspect their total mass, row and column
+sums, and the diagnostics returned by `rfugw_residuals()`.
+
+## Which APIs are experimental?
 
 `sampled_gromov_wasserstein()`, `sampled_gromov_wasserstein_coords()`,
 `sampled_gw_from_graphs()`, and `lowrank_gromov_wasserstein_samples()` are
-labeled experimental. They are not certified 0.1 flagship solvers. Names
-and signatures may change (`bd-01M05QY9GKDDTB3CXTKAJE0E8G`).
+experimental. Their names and signatures may change, and their result status
+does not claim convergence certification. In particular, the low-rank samples
+function factorizes a dense plan after fitting; it is not an end-to-end
+low-memory GW solver.
 
-The only certified 0.1 claims are:
+Use these only when their documented envelope matches your task. See
+`inst/bench/sampled-budget-curves.md` for the package's current evidence and
+`inst/solver-contract.md` for detailed solver contracts.
 
-- Sampled GW quality versus a dense entropic GW reference improves from
-  a tiny budget such as `(2, 1)` to a full budget `(ns, nt)`. Intermediate
-  budgets are not certified as monotone.
-- Requested budgets below 1 error. Source or target sample counts above
-  `ns` / `nt` warn and clamp.
-- Coordinate-native and graph paths store less than two dense `n x n`
-  structure costs. The returned plan is still dense.
-- `lowrank_gromov_wasserstein_samples()` is a post-hoc SVD of a dense
-  plan. Reconstruction error decreases as rank grows up to `min(ns, nt)`.
+## Where should you go next?
 
-Evidence: `inst/bench/sampled-budget-curves.md`.
-
-## Threading and memory
-
-Single-subject solvers are serial. `multialign_fit(n_threads = ...)` is
-the parallel kernel: it farms subjects, not inner Sinkhorn iterations.
-`n_threads = 1` matches `n_threads > 1`. When using more than one
-subject thread, BLAS is pinned to one thread to avoid oversubscription.
-`structure_knn` does not shrink memory. The fused feature batch avoids
-an R-side `M_list`. Details: `inst/solver-contract.md` and
-`inst/bench/threading-memory.md`.
-
-## Next steps
-
-- `vignette("linear-ot")`: balanced and unbalanced linear OT, barycentric projection
-- `vignette("barycenters")`: computing average shapes
-- `vignette("multiset-alignment")`: aligning many subjects to a shared template
+- `vignette("rfugw")` gives the shortest end-to-end FGW workflow.
+- `vignette("linear-ot")` covers direct-cost balanced and unbalanced OT.
+- `vignette("barycenters")` covers representative metric spaces.
+- `vignette("multiset-alignment")` covers subject-to-template alignment.
