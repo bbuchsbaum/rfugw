@@ -53,8 +53,10 @@ positive; default \code{1e-2}.}
 
 \item{divergence}{Only \code{"kl"} is supported. \code{"l2"} is rejected.}
 
-\item{unbalanced_solver}{\code{"sinkhorn"} or \code{"sinkhorn_log"} (currently the
-same scaling-domain implementation). \code{"mm"} and \code{"lbfgsb"} are rejected.}
+\item{unbalanced_solver}{\code{"sinkhorn"} is the supported scaling-domain
+implementation. The former \code{"sinkhorn_log"} scaling alias is deprecated
+and errors because it was not a genuine log-domain solver. \code{"mm"} and
+\code{"lbfgsb"} are also rejected.}
 
 \item{alpha}{Linear-term coefficient(s), scalar or length 2.}
 

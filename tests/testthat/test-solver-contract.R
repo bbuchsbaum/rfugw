@@ -25,7 +25,7 @@ test_that("package metadata is real and citation validates", {
   expect_true(any(grepl("Buchsbaum", format(cit, "text"))))
 })
 
-test_that("UCOOT defaults succeed and unsupported choices fail early", {
+test_that("UCOOT defaults stay finite and expose uncertified inner solves", {
   set.seed(3)
   X <- matrix(rnorm(12), 4, 3)
   Y <- matrix(rnorm(15), 5, 3)
@@ -33,8 +33,12 @@ test_that("UCOOT defaults succeed and unsupported choices fail early", {
   out <- unbalanced_co_optimal_transport(X, Y)
   expect_true(is.matrix(out$pi_samp))
   expect_true(is.matrix(out$pi_feat))
-  expect_true(out$status %in% c("converged", "max_iter"))
+  expect_true(out$status %in% c("converged", "max_iter", "inner_failure"))
   expect_type(out$converged, "logical")
+  if (identical(out$status, "inner_failure")) {
+    expect_false(out$inner_converged)
+    expect_gt(out$max_inner_residual, 0)
+  }
 
   out2 <- fused_unbalanced_across_spaces_divergence(X, Y)
   expect_true(is.matrix(out2$pi_samp))

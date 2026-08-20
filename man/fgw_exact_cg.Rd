@@ -19,7 +19,9 @@ fgw_exact_cg(
   lp_scale = 1e+06,
   lp_solver = c("cpp_transport", "lp_transport", "lp_matrix"),
   lp_max_iter = 20000L,
-  lp_tol = 1e-12
+  lp_tol = 1e-12,
+  feature_weight = NULL,
+  structure_weight = NULL
 )
 }
 \arguments{
@@ -33,7 +35,8 @@ fgw_exact_cg(
 
 \item{q}{Target weights (default uniform). Renormalized to sum 1.}
 
-\item{alpha}{Trade-off between feature and structure terms, in \verb{[0, 1]}.}
+\item{alpha}{Trade-off between feature and structure terms, in \verb{[0, 1]}.
+It is the structure share, so the feature share is \code{1 - alpha}.}
 
 \item{symmetric}{\code{NULL} auto-detects symmetry of \code{C1} and \code{C2}. \code{TRUE}
 requires both costs to be symmetric within \code{1e-10}. \code{FALSE} uses the
@@ -57,6 +60,10 @@ C++ transport-simplex backend), \code{"lp_transport"} (lpSolve), or \code{"lp_ma
 \item{lp_max_iter}{Maximum iterations for the C++ transport-simplex LP backend.}
 
 \item{lp_tol}{Optimality tolerance for the C++ transport-simplex LP backend.}
+
+\item{feature_weight, structure_weight}{Explicit nonnegative aliases for the
+feature and structure shares. Supply both instead of \code{alpha}; they are
+normalized to sum to one.}
 }
 \value{
 A list with \code{plan}, \code{fgw_dist}, \code{iterations}, \code{error}, \code{rel_error},

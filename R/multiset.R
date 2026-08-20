@@ -242,10 +242,7 @@
     }
     stop("`structure_rank` must be a nonnegative integer or one of {'auto', 'off'}.", call. = FALSE)
   }
-  rank <- as.integer(structure_rank)[1]
-  if (!is.finite(rank) || rank < 0) {
-    stop("`structure_rank` must be a nonnegative integer or one of {'auto', 'off'}.", call. = FALSE)
-  }
+  rank <- .validate_count(structure_rank, "structure_rank", min = 0L)
   list(rank = rank, auto = FALSE, requested = rank)
 }
 
@@ -381,7 +378,7 @@
   pin_blas_threads <- use_cpp_batch_effective &&
     is.finite(n_threads) &&
     (n_threads > 1L) &&
-    !identical(Sys.getenv("RFUGW_PIN_BLAS_THREADS", unset = "1"), "0")
+    .runtime_env_bool("RFUGW_PIN_BLAS_THREADS", TRUE)
   C1_list <- if (is.null(subject_cache)) vector("list", length(sets)) else subject_cache$C1_list
   need_M_list <- TRUE
   p_list <- if (is.null(subject_cache)) vector("list", length(sets)) else subject_cache$p_list
@@ -492,8 +489,44 @@
 
   if (identical(method, "fgw_entropic") && use_cpp_batch_effective) {
     use_ppa <- identical(solver, "PPA")
-    use_log_sinkhorn <- identical(sinkhorn_method, "log")
-    use_mixed_precision <- identical(precision, "mixed")
+    structure_bound <- 2 * alpha * (
+      max(vapply(C1_list, function(x) max(abs(x)), numeric(1))) +
+        max(abs(C2))
+    )^2
+    feature_bound <- if (isTRUE(feature_cost_normalize)) {
+      1 - alpha
+    } else if (!is.null(M_list) && length(M_list)) {
+      (1 - alpha) * max(vapply(M_list, function(x) max(abs(x)), numeric(1)))
+    } else {
+      (1 - alpha) * max(vapply(sets, function(s) max(abs(s$F)), numeric(1)) +
+        max(abs(template$F)))^2
+    }
+    batch_dispatch <- .select_sinkhorn_method(
+      sinkhorn_method,
+      c(0, feature_bound + structure_bound, -(feature_bound + structure_bound)),
+      epsilon,
+      precision = precision,
+      context = "Multialign FGW batch Sinkhorn"
+    )
+    batch_sinkhorn_method <- batch_dispatch$effective
+    use_log_sinkhorn <- identical(batch_sinkhorn_method, "log")
+    batch_precision_policy <- .resolve_fgw_precision_policy(
+      requested_precision = precision,
+      requested_tol = tol,
+      requested_inner_tol = sinkhorn_tol,
+      ns = max(vapply(C1_list, nrow, integer(1))),
+      nt = nrow(C2),
+      sinkhorn_method = batch_sinkhorn_method,
+      solver = solver
+    )
+    use_mixed_precision <- identical(
+      batch_precision_policy$effective_precision,
+      "mixed"
+    )
+    allow_double_mixed_accel <- identical(
+      batch_precision_policy$effective_precision,
+      "mixed_accelerated"
+    )
     if (use_cpp_feature_fused) {
       batch <- .with_single_blas_threads(
         cpp_fgw_entropic_square_batch_features(
@@ -520,7 +553,8 @@
           c1_A_scaled_list = if (is.null(c1_lowrank_cache)) list() else c1_lowrank_cache$A_scaled_list,
           c1_Bt_list = if (is.null(c1_lowrank_cache)) list() else c1_lowrank_cache$Bt_list,
           approx_rank = as.integer(structure_rank),
-          n_threads = as.integer(n_threads)
+          n_threads = as.integer(n_threads),
+          allow_double_mixed_accel = allow_double_mixed_accel
         ),
         enable = pin_blas_threads
       )
@@ -547,7 +581,8 @@
           c1_A_scaled_list = if (is.null(c1_lowrank_cache)) list() else c1_lowrank_cache$A_scaled_list,
           c1_Bt_list = if (is.null(c1_lowrank_cache)) list() else c1_lowrank_cache$Bt_list,
           approx_rank = as.integer(structure_rank),
-          n_threads = as.integer(n_threads)
+          n_threads = as.integer(n_threads),
+          allow_double_mixed_accel = allow_double_mixed_accel
         ),
         enable = pin_blas_threads
       )
@@ -584,7 +619,8 @@
       n_lowrank = if (!is.null(batch$n_lowrank)) as.integer(batch$n_lowrank) else sum(batch_lowrank_used, na.rm = TRUE),
       n_c1_cache = if (!is.null(batch$n_c1_cache)) as.integer(batch$n_c1_cache) else sum(batch_c1_cache_used, na.rm = TRUE),
       n_c2_cache = if (!is.null(batch$n_c2_cache)) as.integer(batch$n_c2_cache) else sum(batch_c2_cache_used, na.rm = TRUE),
-      n_square_cache = if (!is.null(batch$n_square_cache)) as.integer(batch$n_square_cache) else sum(batch_square_cache_used, na.rm = TRUE)
+      n_square_cache = if (!is.null(batch$n_square_cache)) as.integer(batch$n_square_cache) else sum(batch_square_cache_used, na.rm = TRUE),
+      sinkhorn_dispatch = batch_dispatch
     )
     used_cpp_batch <- TRUE
   } else if (identical(method, "fugw_kl") && use_cpp_batch_effective) {
@@ -932,8 +968,8 @@ multialign_fit <- function(
     structure_knn_min_n = 600L,
     feature_cost_normalize = TRUE,
     solver = c("PGD", "PPA"),
-    precision = c("mixed", "double"),
-    sinkhorn_method = c("scaling", "log"),
+    precision = c("mixed", "double", "strict_double"),
+    sinkhorn_method = c("auto", "scaling", "log"),
     max_iter = 200L,
     tol = 1e-9,
     sinkhorn_max_iter = 500L,
@@ -983,7 +1019,8 @@ multialign_fit <- function(
   method <- match.arg(method)
   solver <- match.arg(solver)
   precision <- match.arg(precision)
-  sinkhorn_method <- match.arg(sinkhorn_method)
+  requested_sinkhorn_method <- match.arg(sinkhorn_method)
+  sinkhorn_method <- requested_sinkhorn_method
   coarse_init <- match.arg(coarse_init)
   coarse_init_sampling <- match.arg(coarse_init_sampling)
   autotune_level <- match.arg(autotune_level)
@@ -1209,7 +1246,8 @@ multialign_fit <- function(
       autotuned_controls = tuned_controls,
       coarse_init = coarse_init,
       template_history = NULL,
-      outer_iterations = 1L
+      outer_iterations = 1L,
+      runtime_provenance = .solver_runtime_provenance()
     ), class = "rfugw_multialign"))
   }
 
@@ -1303,7 +1341,8 @@ multialign_fit <- function(
     autotuned_controls = tuned_controls,
     coarse_init = coarse_init,
     template_history = history,
-    outer_iterations = outer_done
+    outer_iterations = outer_done,
+    runtime_provenance = .solver_runtime_provenance()
   ), class = "rfugw_multialign")
 }
 

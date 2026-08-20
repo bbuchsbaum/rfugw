@@ -38,6 +38,27 @@ if (is.null(meta) || is.null(runs) || is.null(qual)) {
 if (!nrow(runs)) {
   infra_fail("runs.csv has no rows")
 }
+required_run_columns <- c(
+  "evidence_class", "certified", "comparison_eligible",
+  "performance_regression_eligible", "prepare_ms", "setup_ms", "solve_ms", "e2e_ms",
+  "mem_solve_bytes", "mem_e2e_bytes", "requested_precision",
+  "effective_precision", "requested_threads", "used_threads"
+)
+missing_run_columns <- setdiff(required_run_columns, names(runs))
+if (length(missing_run_columns)) {
+  infra_fail("runs.csv missing evidence columns: ", paste(missing_run_columns, collapse = ", "))
+}
+if (nrow(qual) != nrow(runs) || !"status" %in% names(qual)) {
+  infra_fail("quality.csv must align one-for-one with runs.csv and include status")
+}
+thresholds_path <- file.path(dirname(caps_path), "thresholds.json")
+if (!file.exists(thresholds_path)) {
+  infra_fail("missing thresholds.json beside time caps")
+}
+thresholds_md5 <- unname(tools::md5sum(thresholds_path)[[1]])
+if (!identical(as.character(meta$thresholds_md5 %||% ""), thresholds_md5)) {
+  infra_fail("benchmark artifact threshold digest does not match this checkout")
+}
 
 caps <- list()
 if (file.exists(caps_path)) {
@@ -71,26 +92,47 @@ lines <- c(
   sprintf("- threads: %s", meta$threads %||% NA),
   sprintf("- profile: `%s`", meta$profile %||% NA),
   sprintf("- suites: `%s`", meta$suites %||% NA),
+  sprintf("- certified comparison rows: %d", sum(runs$evidence_class == "certified_comparison")),
+  sprintf("- fixed-budget performance rows: %d (not certification)", sum(runs$evidence_class == "fixed_budget_performance")),
   "",
-  "| suite | method | n | valid | solve_ms | cap_ms |",
-  "|---|---|---|---|---|---|"
+  "| suite | method | n | evidence | certified | comparison eligible | performance eligible | solve_ms | cap_ms |",
+  "|---|---|---|---|---|---|---|---|---|"
 )
 
 solver_reasons <- character()
 for (i in seq_len(nrow(runs))) {
   row <- runs[i, ]
+  qrow <- qual[i, ]
   cap <- find_cap(row$suite, row$method, row$n)
+  is_certified_class <- identical(as.character(row$evidence_class), "certified_comparison")
+  is_performance_class <- identical(as.character(row$evidence_class), "fixed_budget_performance")
+  eligible <- if (is_certified_class) {
+    isTRUE(as.logical(row$comparison_eligible))
+  } else if (is_performance_class) {
+    isTRUE(as.logical(row$performance_regression_eligible))
+  } else {
+    FALSE
+  }
   cap_txt <- if (is.finite(cap)) sprintf("%.0f", cap) else ""
   lines <- c(lines, sprintf(
-    "| %s | %s | %s | %s | %s | %s |",
-    row$suite, row$method, row$n, row$valid,
+    "| %s | %s | %s | %s | %s | %s | %s | %s | %s |",
+    row$suite, row$method, row$n, row$evidence_class, row$certified,
+    row$comparison_eligible, row$performance_regression_eligible,
     if (is.finite(row$solve_ms)) sprintf("%.1f", row$solve_ms) else "",
     cap_txt
   ))
-  if (!isTRUE(as.logical(row$valid))) {
+  if (is_certified_class && !identical(as.character(qrow$status), "converged")) {
     solver_reasons <- c(
       solver_reasons,
-      sprintf("%s/%s n=%s: %s", row$suite, row$method, row$n, row$reject_reason)
+      sprintf("%s/%s n=%s: certified row has status=%s",
+              row$suite, row$method, row$n, qrow$status)
+    )
+  }
+  if (!eligible) {
+    solver_reasons <- c(
+      solver_reasons,
+      sprintf("%s/%s n=%s [%s]: %s", row$suite, row$method, row$n,
+              row$evidence_class, row$reject_reason)
     )
   } else if (is.finite(cap) && is.finite(row$solve_ms) && row$solve_ms > cap) {
     solver_reasons <- c(
@@ -109,4 +151,8 @@ cat("Wrote ", report, "\n", sep = "")
 if (length(solver_reasons)) {
   solver_fail(paste(solver_reasons, collapse = "\n"))
 }
-cat("Flagship protocol gate passed.\n")
+cat(sprintf(
+  "Protocol gate passed: %d certified comparison row(s), %d non-certified fixed-budget row(s).\n",
+  sum(runs$evidence_class == "certified_comparison"),
+  sum(runs$evidence_class == "fixed_budget_performance")
+))

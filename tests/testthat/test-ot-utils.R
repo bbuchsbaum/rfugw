@@ -54,6 +54,34 @@ test_that("objective helpers match analytic and permutation identities", {
   expect_equal(ot_kl(G, c(0.5, 0.5), c(0.5, 0.5)), ot_entropy(G) - log(0.25), tolerance = 1e-12)
 })
 
+test_that("ot_kl handles unequal mass, zero support, and invalid references", {
+  independent_kl <- function(plan, p, q) {
+    reference <- tcrossprod(p, q)
+    if (any(plan > 0 & reference == 0)) return(Inf)
+    positive <- plan > 0
+    sum(plan[positive] * log(plan[positive] / reference[positive])) -
+      sum(plan) + sum(reference)
+  }
+
+  plan <- matrix(c(0.2, 0.1, 0, 0.3), 2, 2)
+  p <- c(0.4, 0.8)
+  q <- c(0.5, 1)
+  expect_equal(ot_kl(plan, p, q), independent_kl(plan, p, q), tolerance = 1e-12)
+  expect_equal(ot_kl(matrix(0, 2, 2), p, q), sum(p) * sum(q), tolerance = 1e-12)
+
+  supported_zero <- matrix(c(0.5, 0.5, 0, 0), 2, 2)
+  expect_true(is.finite(ot_kl(supported_zero, c(0.5, 0.5), c(1, 0))))
+  outside_support <- supported_zero
+  outside_support[1, 2] <- 0.1
+  expect_identical(ot_kl(outside_support, c(0.5, 0.5), c(1, 0)), Inf)
+
+  expect_error(ot_kl(plan, c(-1, 2), q), "nonnegative")
+  expect_error(ot_kl(plan, p, c(NA_real_, 1)), "finite")
+  expect_error(ot_kl(plan, p, c(1, Inf)), "finite")
+  expect_error(ot_kl(matrix(-1, 2, 2), p, q), "nonnegative")
+  expect_error(ot_kl(matrix(NaN, 2, 2), p, q), "finite")
+})
+
 test_that("barycentric projection handles orientation and zero mass", {
   plan <- matrix(c(1, 0, 0, 0), 2, 2)
   tgt <- matrix(c(10, 0, 0, 20), 2, 2, byrow = TRUE)

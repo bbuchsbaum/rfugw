@@ -13,6 +13,7 @@ reference:
     contents:
       - ot_sinkhorn
       - ot_emd
+      - ot_partial_emd
       - ot_sinkhorn_unbalanced
       - ot_validate_plan
       - ot_linear_cost

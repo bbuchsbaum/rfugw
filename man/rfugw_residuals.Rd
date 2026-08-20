@@ -10,7 +10,8 @@ rfugw_residuals(x)
 \item{x}{An \code{rfugw_result}.}
 }
 \value{
-A list with \code{residual}, \code{row_residual}, \code{col_residual}, and \code{mass}.
+A list with stopping, marginal, feasibility, objective, and nested
+solver certificate fields.
 }
 \description{
 Extract residual diagnostics

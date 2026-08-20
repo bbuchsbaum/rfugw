@@ -1,0 +1,98 @@
+name: Numerical trust (Release)
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+jobs:
+  release-matrix:
+    name: release-${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 150
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    env:
+      GITHUB_PAT: ${{ secrets.GITHUB_TOKEN }}
+      RFUGW_TRUST_SCOPE: release
+      OMP_NUM_THREADS: "1"
+      OPENBLAS_NUM_THREADS: "1"
+      MKL_NUM_THREADS: "1"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: r-lib/actions/setup-r@v2
+        with:
+          use-public-rspm: true
+      - uses: r-lib/actions/setup-r-dependencies@v2
+        with:
+          extra-packages: |
+            local::.
+            any::devtools
+            any::jsonlite
+            any::lpSolve
+            any::Matrix
+            any::testthat
+          needs: check
+      - name: Build and check exact source artifact
+        shell: Rscript {0}
+        run: |
+          status <- system2(file.path(R.home("bin"), "R"), c("CMD", "build", ".", "--md5"))
+          stopifnot(status == 0L)
+          tarball <- list.files(pattern = "^rfugw_[^/]+\\.tar\\.gz$", full.names = TRUE)
+          stopifnot(length(tarball) == 1L)
+          status <- system2(file.path(R.home("bin"), "R"), c("CMD", "check", "--as-cran", "--no-manual", tarball))
+          stopifnot(status == 0L)
+          status <- system2(file.path(R.home("bin"), "R"), c("CMD", "INSTALL", tarball))
+          stopifnot(status == 0L)
+      - name: Complete installed-package oracle matrix
+        run: Rscript tools/numerical-trust/run-laws.R --family=all --scope=release --installed
+      - name: Mutation proof and artifact ledger
+        run: |
+          Rscript tools/numerical-trust/run-mutation-proof.R .gate/numerical-trust
+          Rscript tools/numerical-trust/collect-evidence.R --output=.gate/numerical-trust --scope=release --channel=hosted --installed
+      - name: Upload release evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: numerical-trust-release-${{ matrix.os }}
+          if-no-files-found: error
+          path: |
+            .gate/numerical-trust
+            rfugw_*.tar.gz
+            rfugw.Rcheck/00check.log
+
+  release-sanitizers:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    env:
+      GITHUB_PAT: ${{ secrets.GITHUB_TOKEN }}
+      RFUGW_TRUST_SCOPE: release
+      RFUGW_OPENMP_FLAGS: ""
+      RFUGW_OPENMP_LIBS: ""
+      RFUGW_EXTRA_CXXFLAGS: "-O1 -g -fsanitize=address,undefined -fno-omit-frame-pointer -fno-sanitize-recover=undefined"
+      RFUGW_EXTRA_LIBS: "-fsanitize=address,undefined"
+      ASAN_OPTIONS: detect_leaks=0:abort_on_error=1
+      UBSAN_OPTIONS: print_stacktrace=1:halt_on_error=1
+    steps:
+      - uses: actions/checkout@v4
+      - uses: r-lib/actions/setup-r@v2
+        with:
+          use-public-rspm: true
+      - uses: r-lib/actions/setup-r-dependencies@v2
+        with:
+          extra-packages: any::testthat, any::jsonlite, any::lpSolve
+          needs: check
+      - name: Install and run sanitizer trust subset
+        run: |
+          R CMD INSTALL .
+          Rscript tools/smoke-flagship.R
+          Rscript tools/numerical-trust/run-mutation-proof.R .gate/numerical-trust
+      - name: Upload sanitizer evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: numerical-trust-release-sanitizers
+          if-no-files-found: warn
+          path: .gate/numerical-trust

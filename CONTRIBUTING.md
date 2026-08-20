@@ -19,6 +19,9 @@ Follow `inst/solver-contract.md`.
 ## Tests
 
 Every behavior change needs a regression test.
+The complete solver-path matrix, failure-mode mapping, tolerance policy, replay
+requirements, and PR/nightly/release scopes are in
+`inst/numerical-trust-charter.md`; numerical changes must satisfy that charter.
 
 - Flagship solvers: validation, warm starts, symmetry, convergence status,
   and at least one invariant (nonnegativity, marginals or mass, finite
@@ -27,6 +30,8 @@ Every behavior change needs a regression test.
   a fixture is generated.
 - Do not skip a test to make CI green. If a path is optional, test both
   present and absent dependency behavior.
+- A new numerical path needs a contract, metamorphic/property test,
+  adversarial case, independent oracle where feasible, and performance baseline.
 
 Run the package tests from the repo root:
 

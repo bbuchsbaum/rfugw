@@ -18,8 +18,8 @@ entropic_gromov_wasserstein(
   solver = c("PGD", "PPA"),
   sinkhorn_max_iter = 1000L,
   sinkhorn_tol = 1e-09,
-  sinkhorn_method = c("scaling", "log"),
-  precision = c("mixed", "double"),
+  sinkhorn_method = c("auto", "scaling", "log"),
+  precision = c("mixed", "double", "strict_double"),
   check_every = 1L,
   structure_rank = 0L
 )
@@ -53,7 +53,8 @@ entropic_gromov_wasserstein(
 
 \item{sinkhorn_method}{Sinkhorn variant (\code{"scaling"} or \code{"log"}).}
 
-\item{precision}{Numeric precision mode (\code{"mixed"} or \code{"double"}).}
+\item{precision}{Numeric precision mode (\code{"mixed"}, \code{"double"}, or
+\code{"strict_double"}).}
 
 \item{check_every}{Evaluate stopping criterion every \code{check_every} iterations.}
 

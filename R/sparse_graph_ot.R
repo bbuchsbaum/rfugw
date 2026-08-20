@@ -323,14 +323,8 @@ sampled_gromov_wasserstein_coords <- function(
   nb_p <- budget$nb_p
   nb_q <- budget$nb_q
 
-  max_iter <- as.integer(max_iter)[1]
-  if (!is.finite(max_iter) || max_iter < 1L) {
-    stop("`max_iter` must be an integer >= 1.", call. = FALSE)
-  }
-  sinkhorn_max_iter <- as.integer(sinkhorn_max_iter)[1]
-  if (!is.finite(sinkhorn_max_iter) || sinkhorn_max_iter < 1L) {
-    stop("`sinkhorn_max_iter` must be an integer >= 1.", call. = FALSE)
-  }
+  max_iter <- .validate_count(max_iter, "max_iter")
+  sinkhorn_max_iter <- .validate_count(sinkhorn_max_iter, "sinkhorn_max_iter")
 
   if (!is.null(random_state)) set.seed(as.integer(random_state))
 
@@ -345,7 +339,7 @@ sampled_gromov_wasserstein_coords <- function(
 
   if (epsilon > 0 && use_cpp &&
       exists("cpp_sampled_gromov_wasserstein_coords_entropic_square", mode = "function")) {
-    use_mixed_precision <- identical(Sys.getenv("RFUGW_SAMPLED_MIXED", "0"), "1")
+    use_mixed_precision <- .runtime_env_bool("RFUGW_SAMPLED_MIXED", FALSE)
     out_cpp <- cpp_sampled_gromov_wasserstein_coords_entropic_square(
       X1 = X1,
       X2 = X2,

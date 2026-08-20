@@ -134,6 +134,9 @@ test_that("POT-compatible alias names route to existing fast solvers", {
   )
   expect_equal(out_alias$plan, out_base$plan, tolerance = 1e-12)
   expect_equal(out_alias$fgw_dist, out_base$fgw_dist, tolerance = 1e-12)
+  expect_identical(out_alias$alpha_convention, "structure_share")
+  expect_equal(out_alias$feature_weight, 1 - fx$params$alpha)
+  expect_equal(out_alias$structure_weight, fx$params$alpha)
 
   fxu <- read_fixture("fugw_kl_sinkhorn_fixture.json")
   out_u_alias <- rfugw::fused_unbalanced_gromov_wasserstein(
@@ -166,6 +169,10 @@ test_that("POT-compatible alias names route to existing fast solvers", {
   )
   expect_equal(out_u_alias$pi_samp, out_u_base$pi_samp, tolerance = 1e-12)
   expect_equal(out_u_alias$fugw_cost, out_u_base$fugw_cost, tolerance = 1e-12)
+  expect_identical(
+    out_u_alias$alpha_convention,
+    "feature_coefficient_with_unit_structure"
+  )
 })
 
 test_that("entropic semirelaxed GW keeps row marginals and finite objective", {

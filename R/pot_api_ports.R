@@ -20,8 +20,8 @@
   if (is.null(m)) {
     return(min(sum(p), sum(q)))
   }
-  if (!is.finite(m) || m < 0) {
-    stop("`m` must be finite and >= 0.", call. = FALSE)
+  if (length(m) != 1L || !is.numeric(m) || !is.finite(m) || m < 0) {
+    stop("`m` must be one finite number >= 0.", call. = FALSE)
   }
   mmax <- min(sum(p), sum(q))
   if (m > mmax + 1e-12) {
@@ -77,10 +77,7 @@
       call. = FALSE
     )
   }
-  nb_dummies <- as.integer(nb_dummies)[1]
-  if (!is.finite(nb_dummies) || nb_dummies < 1L) {
-    stop("`nb_dummies` must be an integer >= 1.", call. = FALSE)
-  }
+  nb_dummies <- .validate_count(nb_dummies, "nb_dummies")
 
   ns <- length(a)
   nt <- length(b)
@@ -114,35 +111,7 @@
 }
 
 .gw_square_terms <- function(C1, C2, G, symmetric = TRUE) {
-  if (exists("cpp_gw_square_terms_square", mode = "function")) {
-    return(cpp_gw_square_terms_square(C1, C2, G, symmetric = isTRUE(symmetric)))
-  }
-  ns <- nrow(C1)
-  nt <- nrow(C2)
-  ones_p <- rep(1, ns)
-  ones_q <- rep(1, nt)
-
-  pG <- rowSums(G)
-  qG <- colSums(G)
-
-  constC <- tcrossprod(as.vector((C1^2) %*% pG), ones_q) +
-    tcrossprod(ones_p, as.vector(qG %*% t(C2^2)))
-  tens <- constC - C1 %*% G %*% t(2 * C2)
-  gw_loss <- sum(tens * G)
-  grad <- 2 * tens
-
-  if (!symmetric) {
-    C1t <- t(C1)
-    C2t <- t(C2)
-    constCt <- tcrossprod(as.vector((C1t^2) %*% pG), ones_q) +
-      tcrossprod(ones_p, as.vector(qG %*% (C2^2)))
-    tenst <- constCt - C1t %*% G %*% t(2 * C2t)
-
-    gw_loss <- 0.5 * (gw_loss + sum(tenst * G))
-    grad <- 0.5 * (grad + 2 * tenst)
-  }
-
-  list(loss = gw_loss, grad = grad)
+  cpp_gw_square_terms_square(C1, C2, G, symmetric = isTRUE(symmetric))
 }
 
 .partial_fgw_cg_core <- function(
@@ -432,7 +401,7 @@
     ))
   }
   M_r <- if (length(M) == 0L) matrix(0, nrow(C1), nrow(C2)) else M
-  .partial_fgw_cg_core(
+  out <- .partial_fgw_cg_core(
     M = M_r,
     C1 = C1,
     C2 = C2,
@@ -449,6 +418,14 @@
     nb_dummies = as.integer(nb_dummies),
     verbose = verbose
   )
+  out$lp_ok <- TRUE
+  out$inner_converged <- TRUE
+  out$inner_iterations <- NA_integer_
+  out$inner_residual <- 0
+  out$max_inner_residual <- 0
+  out$inner_status <- "optimal"
+  out$inner_termination_reason <- "optimal"
+  out
 }
 
 .partial_fgw_entropic_dispatch <- function(
@@ -506,6 +483,105 @@
     verbose = verbose,
     check_every = check_every
   )
+}
+
+.partial_log_with_nested_status <- function(
+    out,
+    value_field,
+    tol,
+    max_iter,
+    p,
+    q,
+    mass_target,
+    feasibility_tol,
+    objective_recomputed,
+    objective_components = list(),
+    mass_defaulted = FALSE) {
+  out[[value_field]] <- out$objective
+  out$objective <- NULL
+  outer_converged <- is.finite(out$error) && out$error <= tol
+  ans <- .attach_solver_diagnostics(
+    out,
+    residual = out$error,
+    converged = outer_converged,
+    iterations = out$iterations,
+    max_iter = max_iter,
+    p = p,
+    q = q,
+    plan = out$plan,
+    inner_residual = out$inner_residual %||% NA_real_,
+    max_inner_residual = out$max_inner_residual %||% NA_real_,
+    inner_iterations = out$inner_iterations %||% NA_integer_,
+    inner_converged = out$inner_converged %||% NA,
+    inner_status = out$inner_status,
+    feasibility = "partial",
+    feasibility_tol = feasibility_tol,
+    mass_target = mass_target,
+    objective_recomputed = objective_recomputed,
+    objective_components = objective_components,
+    lp_ok = out$lp_ok %||% TRUE
+  )
+  if (!is.na(ans$inner_converged) && !isTRUE(ans$inner_converged)) {
+    ans$status <- "inner_failure"
+    ans$converged <- FALSE
+    ans$warning_payload <- list(
+      code = "inner_failure",
+      message = "Solver result is not certified: inner_failure."
+    )
+  }
+  ans$transported_mass_target <- mass_target
+  ans$transported_mass_defaulted <- isTRUE(mass_defaulted)
+  ans$termination_reason <- .termination_reason_from_result(ans, max_iter)
+  class(ans) <- setdiff(class(ans), "rfugw_result")
+  ans
+}
+
+.partial_sinkhorn_dispatch <- function(
+    method,
+    reg,
+    C1,
+    C2,
+    M = NULL,
+    alpha = 1) {
+  structure_bound <- 2 * alpha * (max(abs(C1)) + max(abs(C2)))^2
+  feature_bound <- if (is.null(M)) 0 else (1 - alpha) * max(abs(M))
+  proxy <- c(0, structure_bound + feature_bound, -(structure_bound + feature_bound))
+  dispatch <- .select_sinkhorn_method(
+    method,
+    proxy,
+    reg,
+    precision = "double",
+    context = "Entropic partial Sinkhorn"
+  )
+  if (identical(dispatch$effective, "log")) {
+    detail <- if (identical(dispatch$requested, "log")) {
+      "`method = \"log\"` was explicitly requested"
+    } else {
+      sprintf(
+        "auto found metric %.6g above the scaling threshold %.6g",
+        dispatch$metric, dispatch$threshold
+      )
+    }
+    stop(
+      paste0(
+        "Entropic partial Sinkhorn requires a genuine log-domain Dykstra ",
+        "backend because ", detail, "; that backend is not implemented. ",
+        "Rescale the costs or increase `reg`."
+      ),
+      call. = FALSE
+    )
+  }
+  dispatch
+}
+
+.attach_partial_sinkhorn_dispatch <- function(out, dispatch) {
+  out$requested_sinkhorn_method <- dispatch$requested
+  out$effective_sinkhorn_method <- dispatch$effective
+  out$sinkhorn_backend_transition <- dispatch$transition
+  out$sinkhorn_dispatch_reason <- dispatch$reason
+  out$sinkhorn_dynamic_range <- dispatch$metric
+  out$sinkhorn_scaling_threshold <- dispatch$threshold
+  out
 }
 
 .sr_row_min_direction <- function(Mi, p) {
@@ -664,7 +740,7 @@
     .validate_semirelaxed_init(G0, p, ns, nt)
   }
   use_mixed_precision <- (ns * nt >= 4000L) &&
-    identical(Sys.getenv("RFUGW_SEMIRELAXED_MIXED", "1"), "1")
+    .runtime_env_bool("RFUGW_SEMIRELAXED_MIXED", TRUE)
   if (isTRUE(symmetric) && exists("cpp_semirelaxed_fgw_cg_square_fast", mode = "function")) {
     return(cpp_semirelaxed_fgw_cg_square_fast(
       M = M,
@@ -1024,13 +1100,12 @@ partial_gromov_wasserstein <- function(
   if (is.null(q)) q <- rep(1 / nt, nt)
   p <- .assert_prob(p, ns, "p")
   q <- .assert_prob(q, nt, "q")
+  mass_defaulted <- is.null(m)
   m <- .validate_mass(m, p, q)
+  numItermax <- .validate_count(numItermax, "numItermax")
+  nb_dummies <- .validate_count(nb_dummies, "nb_dummies")
 
-  if (is.null(symmetric)) {
-    symmetric <- .is_symmetric_cost(C1) && .is_symmetric_cost(C2)
-  } else {
-    symmetric <- isTRUE(symmetric)
-  }
+  symmetric <- .resolve_symmetric(symmetric, C1, C2)
 
   G0 <- .validate_partial_init(G0, p, q, m, ns, nt)
 
@@ -1043,12 +1118,12 @@ partial_gromov_wasserstein <- function(
     m = m,
     alpha = 1,
     G0 = G0,
-    max_iter = as.integer(numItermax),
+    max_iter = numItermax,
     tol = tol,
     symmetric = symmetric,
     lp_solver = match.arg(lp_solver),
     lp_scale = lp_scale,
-    nb_dummies = as.integer(nb_dummies),
+    nb_dummies = nb_dummies,
     verbose = verbose
   )
 
@@ -1056,12 +1131,12 @@ partial_gromov_wasserstein <- function(
     return(out$plan)
   }
 
-  list(
-    plan = out$plan,
-    partial_gw_dist = out$objective,
-    iterations = out$iterations,
-    error = out$error,
-    loss_trace = out$loss_trace
+  objective_recomputed <- ot_gw_square(C1, C2, out$plan, symmetric = symmetric)
+  .partial_log_with_nested_status(
+    out, "partial_gw_dist", tol, numItermax,
+    p, q, m, 1e-8, objective_recomputed,
+    list(lin_loss = 0, quad_loss = objective_recomputed),
+    mass_defaulted = mass_defaulted
   )
 }
 
@@ -1130,13 +1205,12 @@ partial_fused_gromov_wasserstein <- function(
   if (is.null(q)) q <- rep(1 / nt, nt)
   p <- .assert_prob(p, ns, "p")
   q <- .assert_prob(q, nt, "q")
+  mass_defaulted <- is.null(m)
   m <- .validate_mass(m, p, q)
+  numItermax <- .validate_count(numItermax, "numItermax")
+  nb_dummies <- .validate_count(nb_dummies, "nb_dummies")
 
-  if (is.null(symmetric)) {
-    symmetric <- .is_symmetric_cost(C1) && .is_symmetric_cost(C2)
-  } else {
-    symmetric <- isTRUE(symmetric)
-  }
+  symmetric <- .resolve_symmetric(symmetric, C1, C2)
 
   G0 <- .validate_partial_init(G0, p, q, m, ns, nt)
 
@@ -1149,12 +1223,12 @@ partial_fused_gromov_wasserstein <- function(
     m = m,
     alpha = alpha,
     G0 = G0,
-    max_iter = as.integer(numItermax),
+    max_iter = numItermax,
     tol = tol,
     symmetric = symmetric,
     lp_solver = match.arg(lp_solver),
     lp_scale = lp_scale,
-    nb_dummies = as.integer(nb_dummies),
+    nb_dummies = nb_dummies,
     verbose = verbose
   )
 
@@ -1162,14 +1236,13 @@ partial_fused_gromov_wasserstein <- function(
     return(out$plan)
   }
 
-  list(
-    plan = out$plan,
-    partial_fgw_dist = out$objective,
-    lin_loss = out$lin_loss,
-    quad_loss = out$quad_loss,
-    iterations = out$iterations,
-    error = out$error,
-    loss_trace = out$loss_trace
+  lin_recomputed <- (1 - alpha) * ot_linear_cost(M, out$plan)
+  quad_recomputed <- alpha * ot_gw_square(C1, C2, out$plan, symmetric = symmetric)
+  .partial_log_with_nested_status(
+    out, "partial_fgw_dist", tol, numItermax,
+    p, q, m, 1e-8, lin_recomputed + quad_recomputed,
+    list(lin_loss = lin_recomputed, quad_loss = quad_recomputed),
+    mass_defaulted = mass_defaulted
   )
 }
 
@@ -1194,6 +1267,10 @@ partial_fused_gromov_wasserstein2 <- function(...) {
 #' @param check_every Outer stopping check interval.
 #' @param inner_max_iter Maximum iterations for inner entropic partial OT solve.
 #' @param inner_tol Inner stopping tolerance for partial OT solve.
+#' @param method Scaling-domain inner Dykstra method or `"auto"`. The public
+#'   partial primitive is certified only when its conservative dynamic-range
+#'   proxy is at most 500. `"log"` and unsafe auto requests error until a
+#'   genuine log-domain Dykstra backend exists.
 #' @return If `log = FALSE`, returns a coupling matrix. If `log = TRUE`, returns
 #'   a list with `plan`, `partial_gw_dist`, `iterations`, `error`, and `err_trace`.
 #' @export
@@ -1213,7 +1290,9 @@ entropic_partial_gromov_wasserstein <- function(
     verbose = FALSE,
     check_every = 2L,
     inner_max_iter = 300L,
-    inner_tol = 1e-12) {
+    inner_tol = 1e-12,
+    method = c("scaling", "auto", "log")) {
+  method <- match.arg(method)
   .check_square_loss(loss_fun)
   .assert_matrix(C1, "C1")
   .assert_matrix(C2, "C2")
@@ -1230,13 +1309,14 @@ entropic_partial_gromov_wasserstein <- function(
   if (is.null(q)) q <- rep(1 / nt, nt)
   p <- .assert_prob(p, ns, "p")
   q <- .assert_prob(q, nt, "q")
+  mass_defaulted <- is.null(m)
   m <- .validate_mass(m, p, q)
+  numItermax <- .validate_count(numItermax, "numItermax")
+  inner_max_iter <- .validate_count(inner_max_iter, "inner_max_iter")
+  check_every <- .validate_count(check_every, "check_every")
 
-  if (is.null(symmetric)) {
-    symmetric <- .is_symmetric_cost(C1) && .is_symmetric_cost(C2)
-  } else {
-    symmetric <- isTRUE(symmetric)
-  }
+  symmetric <- .resolve_symmetric(symmetric, C1, C2)
+  dispatch <- .partial_sinkhorn_dispatch(method, reg, C1, C2)
 
   G0 <- .validate_partial_init(G0, p, q, m, ns, nt)
 
@@ -1250,26 +1330,29 @@ entropic_partial_gromov_wasserstein <- function(
     reg = reg,
     alpha = 1,
     G0 = G0,
-    max_iter = as.integer(numItermax),
+    max_iter = numItermax,
     tol = tol,
     symmetric = symmetric,
-    inner_max_iter = as.integer(inner_max_iter),
+    inner_max_iter = inner_max_iter,
     inner_tol = inner_tol,
     verbose = verbose,
-    check_every = as.integer(check_every)
+    check_every = check_every
   )
 
   if (!isTRUE(log)) {
-    return(out$plan)
+    plan <- out$plan
+    attr(plan, "sinkhorn_dispatch") <- dispatch
+    return(plan)
   }
 
-  list(
-    plan = out$plan,
-    partial_gw_dist = out$objective,
-    iterations = out$iterations,
-    error = out$error,
-    err_trace = out$err_trace
+  objective_recomputed <- ot_gw_square(C1, C2, out$plan, symmetric = symmetric)
+  ans <- .partial_log_with_nested_status(
+    out, "partial_gw_dist", tol, numItermax,
+    p, q, m, inner_tol, objective_recomputed,
+    list(lin_loss = 0, quad_loss = objective_recomputed),
+    mass_defaulted = mass_defaulted
   )
+  .attach_partial_sinkhorn_dispatch(ans, dispatch)
 }
 
 #' Entropic Partial Gromov-Wasserstein Objective Value
@@ -1312,7 +1395,9 @@ entropic_partial_fused_gromov_wasserstein <- function(
     verbose = FALSE,
     check_every = 2L,
     inner_max_iter = 300L,
-    inner_tol = 1e-12) {
+    inner_tol = 1e-12,
+    method = c("scaling", "auto", "log")) {
+  method <- match.arg(method)
   .check_square_loss(loss_fun)
   .assert_matrix(M, "M")
   .assert_matrix(C1, "C1")
@@ -1336,13 +1421,16 @@ entropic_partial_fused_gromov_wasserstein <- function(
   if (is.null(q)) q <- rep(1 / nt, nt)
   p <- .assert_prob(p, ns, "p")
   q <- .assert_prob(q, nt, "q")
+  mass_defaulted <- is.null(m)
   m <- .validate_mass(m, p, q)
+  numItermax <- .validate_count(numItermax, "numItermax")
+  inner_max_iter <- .validate_count(inner_max_iter, "inner_max_iter")
+  check_every <- .validate_count(check_every, "check_every")
 
-  if (is.null(symmetric)) {
-    symmetric <- .is_symmetric_cost(C1) && .is_symmetric_cost(C2)
-  } else {
-    symmetric <- isTRUE(symmetric)
-  }
+  symmetric <- .resolve_symmetric(symmetric, C1, C2)
+  dispatch <- .partial_sinkhorn_dispatch(
+    method, reg, C1, C2, M = M, alpha = alpha
+  )
 
   G0 <- .validate_partial_init(G0, p, q, m, ns, nt)
 
@@ -1356,28 +1444,30 @@ entropic_partial_fused_gromov_wasserstein <- function(
     reg = reg,
     alpha = alpha,
     G0 = G0,
-    max_iter = as.integer(numItermax),
+    max_iter = numItermax,
     tol = tol,
     symmetric = symmetric,
-    inner_max_iter = as.integer(inner_max_iter),
+    inner_max_iter = inner_max_iter,
     inner_tol = inner_tol,
     verbose = verbose,
-    check_every = as.integer(check_every)
+    check_every = check_every
   )
 
   if (!isTRUE(log)) {
-    return(out$plan)
+    plan <- out$plan
+    attr(plan, "sinkhorn_dispatch") <- dispatch
+    return(plan)
   }
 
-  list(
-    plan = out$plan,
-    partial_fgw_dist = out$objective,
-    lin_loss = out$lin_loss,
-    quad_loss = out$quad_loss,
-    iterations = out$iterations,
-    error = out$error,
-    err_trace = out$err_trace
+  lin_recomputed <- (1 - alpha) * ot_linear_cost(M, out$plan)
+  quad_recomputed <- alpha * ot_gw_square(C1, C2, out$plan, symmetric = symmetric)
+  ans <- .partial_log_with_nested_status(
+    out, "partial_fgw_dist", tol, numItermax,
+    p, q, m, inner_tol, lin_recomputed + quad_recomputed,
+    list(lin_loss = lin_recomputed, quad_loss = quad_recomputed),
+    mass_defaulted = mass_defaulted
   )
+  .attach_partial_sinkhorn_dispatch(ans, dispatch)
 }
 
 #' Entropic Partial Fused Gromov-Wasserstein Objective Value
@@ -1419,6 +1509,7 @@ semirelaxed_gromov_wasserstein <- function(
     verbose = FALSE,
     ...) {
   .check_square_loss(loss_fun)
+  max_iter <- .validate_count(max_iter, "max_iter")
   .assert_matrix(C1, "C1")
   .assert_matrix(C2, "C2")
   ns <- nrow(C1)
@@ -1444,7 +1535,7 @@ semirelaxed_gromov_wasserstein <- function(
     alpha = 1,
     symmetric = symmetric,
     G0 = G0,
-    max_iter = as.integer(max_iter),
+    max_iter = max_iter,
     tol_rel = tol_rel,
     tol_abs = tol_abs,
     verbose = verbose
@@ -1463,7 +1554,24 @@ semirelaxed_gromov_wasserstein <- function(
   if (isTRUE(log)) {
     res$loss_trace <- out$loss_trace
   }
-  res
+  converged <- (is.finite(out$error) && out$error <= tol_rel) ||
+    (is.finite(out$abs_error) && out$abs_error <= tol_abs)
+  ans <- .attach_solver_diagnostics(
+    res,
+    residual = out$abs_error,
+    converged = converged,
+    iterations = out$iterations,
+    max_iter = max_iter,
+    p = p,
+    plan = out$plan,
+    feasibility = "semirelaxed",
+    feasibility_tol = 1e-8,
+    objective_recomputed = ot_gw_square(
+      C1, C2, out$plan, symmetric = symmetric
+    )
+  )
+  ans$termination_reason <- .termination_reason_from_result(ans, max_iter)
+  ans
 }
 
 #' Semi-Relaxed Gromov-Wasserstein Objective Value
@@ -1507,6 +1615,7 @@ semirelaxed_fused_gromov_wasserstein <- function(
     verbose = FALSE,
     ...) {
   .check_square_loss(loss_fun)
+  max_iter <- .validate_count(max_iter, "max_iter")
   .assert_matrix(M, "M")
   .assert_matrix(C1, "C1")
   .assert_matrix(C2, "C2")
@@ -1539,7 +1648,7 @@ semirelaxed_fused_gromov_wasserstein <- function(
     alpha = alpha,
     symmetric = symmetric,
     G0 = G0,
-    max_iter = as.integer(max_iter),
+    max_iter = max_iter,
     tol_rel = tol_rel,
     tol_abs = tol_abs,
     verbose = verbose
@@ -1560,7 +1669,28 @@ semirelaxed_fused_gromov_wasserstein <- function(
   if (isTRUE(log)) {
     res$loss_trace <- out$loss_trace
   }
-  res
+  converged <- (is.finite(out$error) && out$error <= tol_rel) ||
+    (is.finite(out$abs_error) && out$abs_error <= tol_abs)
+  ans <- .attach_solver_diagnostics(
+    res,
+    residual = out$abs_error,
+    converged = converged,
+    iterations = out$iterations,
+    max_iter = max_iter,
+    p = p,
+    plan = out$plan,
+    feasibility = "semirelaxed",
+    feasibility_tol = 1e-8,
+    objective_recomputed = ot_fgw_square(
+      M, C1, C2, out$plan, alpha = alpha, symmetric = symmetric
+    ),
+    objective_components = list(
+      lin_loss = (1 - alpha) * ot_linear_cost(M, out$plan),
+      quad_loss = alpha * ot_gw_square(C1, C2, out$plan, symmetric = symmetric)
+    )
+  )
+  ans$termination_reason <- .termination_reason_from_result(ans, max_iter)
+  ans
 }
 
 #' Semi-Relaxed Fused Gromov-Wasserstein Objective Value
@@ -1817,6 +1947,8 @@ sampled_gromov_wasserstein <- function(
     lp_solver = c("lp_matrix", "lp_transport"),
     lp_scale = 1e6) {
   .check_square_loss(loss_fun)
+  max_iter <- .validate_count(max_iter, "max_iter")
+  sinkhorn_max_iter <- .validate_count(sinkhorn_max_iter, "sinkhorn_max_iter")
   .assert_matrix(C1, "C1")
   .assert_matrix(C2, "C2")
   ns <- nrow(C1)
@@ -1841,7 +1973,7 @@ sampled_gromov_wasserstein <- function(
   it_last <- 0L
 
   if (epsilon > 0 && exists("cpp_sampled_gromov_wasserstein_entropic_square", mode = "function")) {
-    use_mixed_precision <- identical(Sys.getenv("RFUGW_SAMPLED_MIXED", "0"), "1")
+    use_mixed_precision <- .runtime_env_bool("RFUGW_SAMPLED_MIXED", FALSE)
     out_cpp <- cpp_sampled_gromov_wasserstein_entropic_square(
       C1 = C1,
       C2 = C2,
@@ -1850,8 +1982,8 @@ sampled_gromov_wasserstein <- function(
       nb_p = as.integer(nb_p),
       nb_q = as.integer(nb_q),
       epsilon = epsilon,
-      max_iter = as.integer(max_iter),
-      sinkhorn_max_iter = as.integer(sinkhorn_max_iter),
+      max_iter = max_iter,
+      sinkhorn_max_iter = sinkhorn_max_iter,
       sinkhorn_tol = sinkhorn_tol,
       symmetric = symmetric,
       init_plan = T,
@@ -1865,7 +1997,7 @@ sampled_gromov_wasserstein <- function(
     lp_solver <- match.arg(lp_solver)
     lp_direction <- if (epsilon <= 0) .make_transport_lp_solver(p, q, scale = lp_scale, solver = lp_solver) else NULL
 
-    for (it in seq_len(as.integer(max_iter))) {
+    for (it in seq_len(max_iter)) {
       it_last <- it
       idx0 <- sample.int(ns, size = min(nb_p, ns), prob = p, replace = FALSE)
       Lik <- matrix(0, nrow = ns, ncol = nt)
@@ -1916,7 +2048,7 @@ sampled_gromov_wasserstein <- function(
           b = q,
           M = Lik_eff,
           reg = epsilon,
-          max_iter = as.integer(sinkhorn_max_iter),
+          max_iter = sinkhorn_max_iter,
           tol = sinkhorn_tol
         )
       } else {
@@ -1954,7 +2086,11 @@ sampled_gromov_wasserstein <- function(
   list(
     plan = T,
     gw_dist_estimated = gw_est,
-    iterations = as.integer(it_last)
+    iterations = as.integer(it_last),
+    status = "experimental",
+    converged = FALSE,
+    termination_reason = "experimental_no_convergence_certificate",
+    certification = "experimental_no_convergence_claim"
   )
 }
 
@@ -2013,6 +2149,10 @@ lowrank_gromov_wasserstein_samples <- function(
     warn = TRUE,
     warn_dykstra = FALSE,
     log = FALSE) {
+  numItermax <- .validate_count(numItermax, "numItermax")
+  numItermax_dykstra <- .validate_count(
+    numItermax_dykstra, "numItermax_dykstra"
+  )
   .assert_matrix(X_s, "X_s")
   .assert_matrix(X_t, "X_t")
   ns <- nrow(X_s)
@@ -2040,7 +2180,7 @@ lowrank_gromov_wasserstein_samples <- function(
     p = a,
     q = b,
     epsilon = reg,
-    max_iter = as.integer(numItermax),
+    max_iter = numItermax,
     tol = stopThr,
     precision = "mixed",
     sinkhorn_max_iter = 500L,
@@ -2064,7 +2204,15 @@ lowrank_gromov_wasserstein_samples <- function(
 
   value_quad <- .gw_square_value(C1, C2, T, a, b, symmetric = TRUE)
   value <- value_quad + reg * sum(T * log(pmax(T, 1e-300)))
-  list(Q = Q, R = R, g = g, plan = T, value_quad = value_quad, value = value)
+  list(
+    Q = Q, R = R, g = g, plan = T, value_quad = value_quad, value = value,
+    status = "experimental",
+    converged = FALSE,
+    termination_reason = "experimental_no_convergence_certificate",
+    certification = "experimental_no_convergence_claim",
+    underlying_solver_status = out$status,
+    underlying_solver_converged = out$converged
+  )
 }
 
 #' Fused Unbalanced Across-Spaces Divergence (KL Sinkhorn)
@@ -2083,8 +2231,10 @@ lowrank_gromov_wasserstein_samples <- function(
 #'   positive; default `1e-2`.
 #' @param reg_type Either `"joint"` (FUGW-style) or `"independent"` (UCOOT).
 #' @param divergence Only `"kl"` is supported. `"l2"` is rejected.
-#' @param unbalanced_solver `"sinkhorn"` or `"sinkhorn_log"` (currently the
-#'   same scaling-domain implementation). `"mm"` and `"lbfgsb"` are rejected.
+#' @param unbalanced_solver `"sinkhorn"` is the supported scaling-domain
+#'   implementation. The former `"sinkhorn_log"` scaling alias is deprecated
+#'   and errors because it was not a genuine log-domain solver. `"mm"` and
+#'   `"lbfgsb"` are also rejected.
 #' @param alpha Linear-term coefficient(s), scalar or length 2.
 #' @param M_samp Optional sample linear cost matrix.
 #' @param M_feat Optional feature linear cost matrix.
@@ -2127,11 +2277,15 @@ fused_unbalanced_across_spaces_divergence <- function(
     verbose = FALSE,
     ...) {
   .reject_unused_dots(...)
-  .assert_matrix(X, "X")
-  .assert_matrix(Y, "Y")
+  X <- .validate_finite_matrix(X, "X")
+  Y <- .validate_finite_matrix(Y, "Y")
+  max_iter <- .validate_count(max_iter, "max_iter")
+  max_iter_ot <- .validate_count(max_iter_ot, "max_iter_ot")
+  tol <- .validate_nonneg_scalar(tol, "tol")
+  tol_ot <- .validate_positive_scalar(tol_ot, "tol_ot")
   reg_type <- match.arg(reg_type)
-  divergence <- match.arg(divergence)
-  unbalanced_solver <- match.arg(unbalanced_solver)
+  divergence <- as.character(divergence)[1]
+  unbalanced_solver <- as.character(unbalanced_solver)[1]
   if (!identical(divergence, "kl")) {
     stop(
       "`divergence = \"l2\"` is unsupported. Use `divergence = \"kl\"`.",
@@ -2144,6 +2298,16 @@ fused_unbalanced_across_spaces_divergence <- function(
         "Unsupported `unbalanced_solver`.",
         "Supported choices: \"sinkhorn\", \"sinkhorn_log\".",
         "\"mm\" and \"lbfgsb\" are not implemented."
+      ),
+      call. = FALSE
+    )
+  }
+  if (identical(unbalanced_solver, "sinkhorn_log")) {
+    stop(
+      paste(
+        "`unbalanced_solver = \"sinkhorn_log\"` is deprecated and unsupported:",
+        "the previous implementation was a scaling-domain alias.",
+        "Use `unbalanced_solver = \"sinkhorn\"` within its documented regime."
       ),
       call. = FALSE
     )
@@ -2166,6 +2330,9 @@ fused_unbalanced_across_spaces_divergence <- function(
   reg_marginals <- .parse_pair(reg_marginals, "reg_marginals")
   epsilon <- .parse_pair(epsilon, "epsilon")
   alpha <- .parse_pair(alpha, "alpha")
+  if (any(reg_marginals <= 0)) {
+    stop("`reg_marginals` must contain positive values.", call. = FALSE)
+  }
 
   rho_x <- reg_marginals[[1]]
   rho_y <- reg_marginals[[2]]
@@ -2180,7 +2347,7 @@ fused_unbalanced_across_spaces_divergence <- function(
   }
 
   if (!is.null(M_samp)) {
-    .assert_matrix(M_samp, "M_samp")
+    M_samp <- .validate_finite_matrix(M_samp, "M_samp")
     if (nrow(M_samp) != nx_samp || ncol(M_samp) != ny_samp) {
       stop("`M_samp` has incompatible shape.", call. = FALSE)
     }
@@ -2188,7 +2355,7 @@ fused_unbalanced_across_spaces_divergence <- function(
   }
 
   if (!is.null(M_feat)) {
-    .assert_matrix(M_feat, "M_feat")
+    M_feat <- .validate_finite_matrix(M_feat, "M_feat")
     if (nrow(M_feat) != nx_feat || ncol(M_feat) != ny_feat) {
       stop("`M_feat` has incompatible shape.", call. = FALSE)
     }
@@ -2240,27 +2407,48 @@ fused_unbalanced_across_spaces_divergence <- function(
       use_warm_start = TRUE
     )
     residual <- if (length(out$err_trace)) out$err_trace[length(out$err_trace)] else out$error
-    if (!isTRUE(log)) {
-      out$linear_cost <- NULL
-      out$ucoot_cost <- NULL
-      out$error <- NULL
-      out$err_trace <- NULL
-    } else {
+    ucoot_recomputed <- .fused_unbalanced_across_spaces_cost_kl(
+      M_linear = list(M_samp, M_feat),
+      data = list(X^2, Y^2, X, Y),
+      tuple_pxy_samp = list(wx_samp, wy_samp, wxy_samp),
+      tuple_pxy_feat = list(wx_feat, wy_feat, wxy_feat),
+      pi_samp = out$pi_samp,
+      pi_feat = out$pi_feat,
+      hyperparams = c(rho_x, rho_y, eps_samp, eps_feat),
+      reg_type = reg_type
+    )
+    if (isTRUE(log)) {
       out$error <- out$err_trace
     }
-    return(.attach_solver_diagnostics(
+    ans <- .attach_solver_diagnostics(
       out,
       residual = residual,
       converged = is.finite(residual) && residual < tol,
       iterations = out$iterations,
       max_iter = as.integer(max_iter),
       plan = out$pi_samp,
+      inner_residual = out$inner_residual,
+      max_inner_residual = out$max_inner_residual,
       inner_iterations = if (!is.null(out$inner_iters_total)) {
         as.integer(out$inner_iters_total)
       } else {
         NA_integer_
-      }
-    ))
+      },
+      inner_converged = out$inner_converged,
+      inner_status = out$inner_status,
+      feasibility = "unbalanced",
+      feasibility_tol = tol_ot,
+      objective_recomputed = ucoot_recomputed$ucoot_cost,
+      objective_components = list(linear_cost = ucoot_recomputed$linear_cost)
+    )
+    ans$termination_reason <- .termination_reason_from_result(ans, as.integer(max_iter))
+    if (!isTRUE(log)) {
+      ans$linear_cost <- NULL
+      ans$ucoot_cost <- NULL
+      ans$error <- NULL
+      ans$err_trace <- NULL
+    }
+    return(ans)
   }
 
   out <- .ucoot_kl_r_core(

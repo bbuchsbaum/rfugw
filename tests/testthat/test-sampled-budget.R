@@ -109,7 +109,7 @@ test_that("sampled GW quality generally improves with budget", {
     max_iter = 80L,
     tol = 1e-7
   )
-  gw_ref <- ot_gw_square(dense$plan, d$C1, d$C2)
+  gw_ref <- ot_gw_square(d$C1, d$C2, dense$plan)
 
   seeds <- 20260816L + seq_len(6L)
   gap_low <- numeric(length(seeds))
@@ -123,7 +123,7 @@ test_that("sampled GW quality generally improves with budget", {
       random_state = seeds[[i]],
       log = TRUE
     )
-    gap_low[[i]] <- abs(ot_gw_square(low$plan, d$C1, d$C2) - gw_ref)
+    gap_low[[i]] <- abs(ot_gw_square(d$C1, d$C2, low$plan) - gw_ref)
     frob_low[[i]] <- sqrt(sum((low$plan - dense$plan)^2))
   }
   high <- sampled_gromov_wasserstein(
@@ -134,7 +134,7 @@ test_that("sampled GW quality generally improves with budget", {
     random_state = seeds[[1]],
     log = TRUE
   )
-  gap_high <- abs(ot_gw_square(high$plan, d$C1, d$C2) - gw_ref)
+  gap_high <- abs(ot_gw_square(d$C1, d$C2, high$plan) - gw_ref)
   frob_high <- sqrt(sum((high$plan - dense$plan)^2))
 
   expect_lt(gap_high, stats::median(gap_low))

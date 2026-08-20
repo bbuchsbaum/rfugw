@@ -1,4 +1,10 @@
 {
+  "_policy": {
+    "schema_version": 2,
+    "certified_status": "converged",
+    "fixed_budget_is_not_certification": true,
+    "history": "inst/bench/threshold-history.json"
+  },
   "ot_sinkhorn": {
     "stop": { "epsilon": 0.08, "max_iter": 400, "tol": 1e-9 },
     "quality": {
@@ -20,11 +26,19 @@
   "ot_sinkhorn_unbalanced": {
     "stop": { "epsilon": 0.08, "rho": 2, "max_iter": 400, "tol": 1e-7 },
     "quality": {
-      "status": ["converged", "max_iter"],
+      "status": ["converged"],
       "residual_max": 1e-5,
       "mass_max": 1,
       "objective_atol": 1e-6,
       "objective_rtol": 1e-5
+    },
+    "performance_regression": {
+      "status": ["max_iter"],
+      "residual_max": 1e-5,
+      "mass_max": 1,
+      "objective_atol": 1e-6,
+      "objective_rtol": 1e-5,
+      "claim": "fixed-budget runtime sentinel; no convergence claim"
     }
   },
   "fgw_entropic": {
@@ -39,22 +53,38 @@
   "fugw_kl": {
     "stop": { "alpha": 0.5, "epsilon": 0.05, "reg_marginals": [10, 10], "max_iter": 40, "tol": 1e-6, "max_iter_ot": 200, "tol_ot": 1e-7 },
     "quality": {
-      "status": ["converged", "max_iter"],
+      "status": ["converged"],
       "residual_max": 1e-3,
       "objective_atol": 1e-4,
       "objective_rtol": 1e-3
+    },
+    "performance_stop": { "alpha": 0.5, "epsilon": 0.05, "reg_marginals": [10, 10], "max_iter": 10, "tol": 1e-6, "max_iter_ot": 120, "tol_ot": 1e-6 },
+    "performance_regression": {
+      "status": ["max_iter"],
+      "residual_max": 1e-2,
+      "objective_atol": 1e-4,
+      "objective_rtol": 1e-3,
+      "claim": "fixed-budget runtime sentinel; no convergence claim"
     }
   },
   "sampled_gromov_wasserstein": {
     "stop": { "epsilon": 0.1, "max_iter": 40, "nb_p": 4, "nb_q": 2 },
     "quality": {
+      "status": ["converged"],
       "objective_atol": 1,
       "objective_rtol": 1
+    },
+    "performance_regression": {
+      "status": ["experimental"],
+      "objective_atol": 1,
+      "objective_rtol": 1,
+      "claim": "experimental approximation budget curve; no convergence claim"
     }
   },
   "semirelaxed_gromov_wasserstein": {
     "stop": { "max_iter": 200, "tol_rel": 1e-6, "tol_abs": 1e-6 },
     "quality": {
+      "status": ["converged"],
       "residual_max": 1e-5,
       "objective_atol": 1e-7,
       "objective_rtol": 1e-6
@@ -63,6 +93,7 @@
   "semirelaxed_fused_gromov_wasserstein": {
     "stop": { "alpha": 0.5, "max_iter": 200, "tol_rel": 1e-6, "tol_abs": 1e-6 },
     "quality": {
+      "status": ["converged"],
       "alpha": 0.5,
       "residual_max": 1e-5,
       "objective_atol": 1e-7,
@@ -72,6 +103,7 @@
   "partial_gromov_wasserstein": {
     "stop": { "m": 0.7, "max_iter": 80, "tol": 1e-6 },
     "quality": {
+      "status": ["converged"],
       "mass": 0.7,
       "residual_max": 1e-5,
       "objective_atol": 1e-6,
@@ -81,6 +113,7 @@
   "partial_fused_gromov_wasserstein": {
     "stop": { "m": 0.7, "alpha": 0.5, "max_iter": 80, "tol": 1e-6 },
     "quality": {
+      "status": ["converged"],
       "mass": 0.7,
       "alpha": 0.5,
       "residual_max": 1e-5,
@@ -91,6 +124,7 @@
   "entropic_partial_gromov_wasserstein": {
     "stop": { "m": 0.7, "reg": 0.2, "max_iter": 80, "tol": 1e-6 },
     "quality": {
+      "status": ["converged"],
       "mass": 0.7,
       "residual_max": 1e-3,
       "objective_atol": 1e-5,
@@ -100,6 +134,7 @@
   "entropic_semirelaxed_gromov_wasserstein": {
     "stop": { "epsilon": 0.1, "max_iter": 400, "tol": 1e-6, "check_every": 5 },
     "quality": {
+      "status": ["converged"],
       "residual_max": 1e-3,
       "objective_atol": 1e-6,
       "objective_rtol": 1e-5
@@ -108,6 +143,7 @@
   "unbalanced_co_optimal_transport": {
     "stop": { "reg_marginals": [10, 8], "epsilon": [0.05, 0.03], "max_iter": 40, "tol": 1e-6, "max_iter_ot": 120, "tol_ot": 1e-7 },
     "quality": {
+      "status": ["converged"],
       "residual_max": 1e-3,
       "objective_atol": 1e-4,
       "objective_rtol": 1e-3
@@ -116,6 +152,7 @@
   "fused_unbalanced_across_spaces_divergence": {
     "stop": { "reg_marginals": [10, 8], "epsilon": [0.05, 0.03], "max_iter": 40, "tol": 1e-6, "max_iter_ot": 120, "tol_ot": 1e-7 },
     "quality": {
+      "status": ["converged"],
       "residual_max": 1e-3,
       "objective_atol": 1e-4,
       "objective_rtol": 1e-3

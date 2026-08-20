@@ -30,6 +30,10 @@
 #' @param p Source weights (default uniform). Renormalized to sum 1.
 #' @param q Target weights (default uniform). Renormalized to sum 1.
 #' @param alpha Trade-off between feature and structure terms, in `[0, 1]`.
+#'   It is the structure share, so the feature share is `1 - alpha`.
+#' @param feature_weight,structure_weight Explicit nonnegative aliases for the
+#'   feature and structure shares. Supply both instead of `alpha`; they are
+#'   normalized to sum to one and the interpreted weights are returned.
 #' @param epsilon Entropic regularization (must be positive).
 #' @param max_iter Max outer FGW iterations.
 #' @param tol Outer stopping tolerance on Frobenius norm of plan updates.
@@ -38,11 +42,16 @@
 #' @param init_plan Optional initial coupling (`ns x nt`) used as a warm start.
 #' @param structure_rank Optional low-rank approximation rank for structure
 #'   matrices in the FGW tensor product (`0` disables approximation).
-#' @param sinkhorn_method Sinkhorn variant: `"scaling"` or `"log"`.
-#' @param precision Numeric precision mode: `"mixed"` (default) or `"double"`
+#' @param sinkhorn_method Sinkhorn variant: `"scaling"`, `"log"`, or
+#'   `"auto"`. Auto evaluates a conservative initial-gradient/bound proxy and
+#'   selects scaling only inside the precision-specific certified regime.
+#' @param precision Numeric precision mode: `"mixed"` (default), `"double"`,
+#'   or `"strict_double"`
 #'   (`"mixed"` uses float inner iterations with double final objective
-#'   evaluation). For larger problems, `"double"` uses a mixed-precision
-#'   accelerated inner Sinkhorn path while returning double outputs.
+#'   evaluation). A mixed request tighter than `1e-6` is promoted and reported
+#'   as `"strict_double"`. For larger problems, `"double"` may use a reported
+#'   mixed-precision accelerated path; `"strict_double"` never dispatches to
+#'   float arithmetic.
 #' @param symmetric `NULL` auto-detects symmetry of `C1` and `C2`. `TRUE`
 #'   requires both costs to be symmetric within `1e-10`. `FALSE` uses the
 #'   two-sided tensor.
@@ -74,11 +83,21 @@ fgw_entropic <- function(
     sinkhorn_tol = 1e-9,
     init_plan = NULL,
     structure_rank = 0L,
-    sinkhorn_method = c("scaling", "log"),
-    precision = c("mixed", "double"),
+    sinkhorn_method = c("auto", "scaling", "log"),
+    precision = c("mixed", "double", "strict_double"),
     symmetric = NULL,
     solver = c("PGD", "PPA"),
-    check_every = 1L) {
+    check_every = 1L,
+    feature_weight = NULL,
+    structure_weight = NULL) {
+  alpha_was_missing <- missing(alpha)
+  control_sources <- list(
+    precision = if (missing(precision)) "default" else "user_argument",
+    outer_tolerance = if (missing(tol)) "default" else "user_argument",
+    inner_tolerance = if (missing(sinkhorn_tol)) "default" else "user_argument",
+    sinkhorn_method = if (missing(sinkhorn_method)) "default" else "user_argument",
+    structure_rank = if (missing(structure_rank)) "default" else "user_argument"
+  )
   M <- .validate_finite_matrix(M, "M")
   C1 <- .validate_finite_matrix(C1, "C1", square = TRUE)
   C2 <- .validate_finite_matrix(C2, "C2", square = TRUE)
@@ -89,7 +108,14 @@ fgw_entropic <- function(
     stop("`M` must have shape nrow(C1) x nrow(C2).", call. = FALSE)
   }
 
-  alpha <- .validate_alpha(alpha)
+  weights <- .resolve_objective_weights(
+    alpha = alpha,
+    alpha_was_missing = alpha_was_missing,
+    feature_weight = feature_weight,
+    structure_weight = structure_weight,
+    convention = "fgw_share"
+  )
+  alpha <- weights$solver_alpha
   epsilon <- .validate_positive_scalar(epsilon, "epsilon")
   tol <- .validate_positive_scalar(tol, "tol")
   sinkhorn_tol <- .validate_positive_scalar(sinkhorn_tol, "sinkhorn_tol")
@@ -106,11 +132,38 @@ fgw_entropic <- function(
   init_plan <- .validate_optional_init_plan(init_plan, ns, nt, "init_plan")
 
   solver <- match.arg(solver)
-  sinkhorn_method <- match.arg(sinkhorn_method)
+  requested_sinkhorn_method <- match.arg(sinkhorn_method)
   precision <- match.arg(precision)
+  initial_gw <- cpp_gw_square_terms_square(
+    C1, C2, tcrossprod(p, q), symmetric = symmetric
+  )$grad
+  initial_sinkhorn_cost <- (1 - alpha) * M + alpha * initial_gw
+  structure_bound <- 2 * alpha * (max(abs(C1)) + max(abs(C2)))^2
+  sinkhorn_proxy <- c(initial_sinkhorn_cost, structure_bound, -structure_bound)
+  dispatch <- .select_sinkhorn_method(
+    requested_sinkhorn_method,
+    sinkhorn_proxy,
+    epsilon,
+    precision = precision,
+    context = "FGW Sinkhorn"
+  )
+  sinkhorn_method <- dispatch$effective
+  precision_policy <- .resolve_fgw_precision_policy(
+    requested_precision = precision,
+    requested_tol = tol,
+    requested_inner_tol = sinkhorn_tol,
+    ns = ns,
+    nt = nt,
+    sinkhorn_method = sinkhorn_method,
+    solver = solver
+  )
   use_ppa <- identical(solver, "PPA")
   use_log_sinkhorn <- identical(sinkhorn_method, "log")
-  use_mixed_precision <- identical(precision, "mixed")
+  use_mixed_precision <- identical(precision_policy$effective_precision, "mixed")
+  allow_double_mixed_accel <- identical(
+    precision_policy$effective_precision,
+    "mixed_accelerated"
+  )
 
   out <- cpp_fgw_entropic_square(
     M = unname(M),
@@ -121,27 +174,63 @@ fgw_entropic <- function(
     alpha = alpha,
     epsilon = epsilon,
     max_iter = max_iter,
-    tol = tol,
+    tol = precision_policy$effective_tol,
     sinkhorn_max_iter = sinkhorn_max_iter,
-    sinkhorn_tol = sinkhorn_tol,
+    sinkhorn_tol = precision_policy$effective_inner_tol,
     init_plan = unname(init_plan),
     symmetric = symmetric,
     use_ppa = use_ppa,
     use_log_sinkhorn = use_log_sinkhorn,
     use_mixed_precision = use_mixed_precision,
     check_every = check_every,
-    approx_rank = structure_rank
+    approx_rank = structure_rank,
+    allow_double_mixed_accel = allow_double_mixed_accel
+  )
+  out[names(precision_policy)] <- precision_policy
+  out$control_sources <- control_sources
+  out$structure_rank_requested <- structure_rank
+  out$structure_rank <- out$lowrank_rank %||% structure_rank
+  out$requested_sinkhorn_method <- requested_sinkhorn_method
+  out$effective_sinkhorn_method <- sinkhorn_method
+  out$sinkhorn_backend_transition <- dispatch$transition
+  out$sinkhorn_dispatch_reason <- dispatch$reason
+  out$sinkhorn_dynamic_range <- dispatch$metric
+  out$sinkhorn_scaling_threshold <- dispatch$threshold
+  out$backend <- switch(
+    precision_policy$effective_precision,
+    mixed = "cpp_mixed",
+    mixed_accelerated = "cpp_mixed_accelerated",
+    double = "cpp_double",
+    strict_double = "cpp_strict_double"
   )
   residual <- if (!is.null(out$error)) out$error else Inf
-  .attach_solver_diagnostics(
+  ans <- .attach_solver_diagnostics(
     out,
     residual = residual,
-    converged = is.finite(residual) && residual <= tol,
+    converged = is.finite(residual) && residual <= precision_policy$effective_tol,
     iterations = out$iterations,
     max_iter = max_iter,
     p = p,
     q = q,
-    plan = out$plan
+    plan = out$plan,
+    inner_residual = out$inner_residual,
+    max_inner_residual = out$max_inner_residual,
+    inner_iterations = out$inner_iterations,
+    inner_converged = out$inner_converged,
+    feasibility = "balanced",
+    feasibility_tol = precision_policy$effective_inner_tol,
+    objective_recomputed = ot_fgw_square(
+      M, C1, C2, out$plan, alpha = alpha, symmetric = symmetric
+    )
+  )
+  ans$termination_reason <- .termination_reason_from_result(ans, max_iter)
+  .attach_objective_weight_contract(
+    ans,
+    weights,
+    feature_unweighted = ot_linear_cost(M, ans$plan),
+    structure_unweighted = ot_gw_square(
+      C1, C2, ans$plan, symmetric = symmetric
+    )
   )
 }
 
@@ -166,7 +255,12 @@ fgw_entropic2 <- function(...) {
 #' @param wy Target weights (default uniform). Renormalized to sum 1.
 #' @param reg_marginals Length-1 or length-2 marginal relaxation parameters.
 #' @param epsilon Joint KL regularization parameter (entropic term).
-#' @param alpha Linear FGW term coefficient, in `[0, 1]`.
+#' @param alpha Legacy feature-cost coefficient, in `[0, 1]`; the structure
+#'   coefficient is one. This convention differs from `fgw_entropic()`.
+#' @param feature_weight,structure_weight Explicit nonnegative feature and
+#'   structure coefficients. Supply both instead of `alpha`. Unlike FGW share
+#'   aliases, FUGW coefficients are not normalized because their scale is
+#'   meaningful relative to the KL penalties.
 #' @param M Linear sample cost matrix (default `NULL`).
 #' @param init_pi Optional initial sample coupling (`nx x ny`).
 #' @param max_iter Max BCD iterations.
@@ -175,8 +269,9 @@ fgw_entropic2 <- function(...) {
 #' @param tol_ot Inner Sinkhorn tolerance.
 #' @param rescale_plan Whether to rescale successive plans to equal mass.
 #' @param check_every Evaluate BCD stopping criterion every `check_every` iterations.
-#' @param precision Numeric precision mode for the C++ solver (`"double"` or
-#'   `"mixed"`).
+#' @param precision Numeric precision mode for the C++ solver (`"double"`,
+#'   `"mixed"`, or `"strict_double"`). Tight mixed requests are promoted to
+#'   reported strict double rather than silently floored.
 #' @return A list with `pi_samp`, `pi_feat`, `fugw_cost`, `linear_cost`,
 #'   `iterations`, `error`, `status`, and `converged`.
 #' @examples
@@ -202,19 +297,43 @@ fugw_kl <- function(
     tol_ot = 1e-7,
     rescale_plan = TRUE,
     check_every = 1L,
-    precision = c("double", "mixed")) {
+    precision = c("double", "mixed", "strict_double"),
+    feature_weight = NULL,
+    structure_weight = NULL) {
+  alpha_was_missing <- missing(alpha)
+  control_sources <- list(
+    precision = if (missing(precision)) "default" else "user_argument",
+    outer_tolerance = if (missing(tol)) "default" else "user_argument",
+    inner_tolerance = if (missing(tol_ot)) "default" else "user_argument"
+  )
   precision <- match.arg(precision)
   Cx <- .validate_finite_matrix(Cx, "Cx", square = TRUE)
   Cy <- .validate_finite_matrix(Cy, "Cy", square = TRUE)
   nx <- nrow(Cx)
   ny <- nrow(Cy)
-  alpha <- .validate_alpha(alpha)
+  weights <- .resolve_objective_weights(
+    alpha = alpha,
+    alpha_was_missing = alpha_was_missing,
+    feature_weight = feature_weight,
+    structure_weight = structure_weight,
+    convention = "fugw_coefficients"
+  )
+  alpha <- weights$solver_alpha
   epsilon <- .validate_positive_scalar(epsilon, "epsilon")
   tol <- .validate_positive_scalar(tol, "tol")
   tol_ot <- .validate_positive_scalar(tol_ot, "tol_ot")
   max_iter <- .validate_count(max_iter, "max_iter")
   max_iter_ot <- .validate_count(max_iter_ot, "max_iter_ot")
   check_every <- .validate_count(check_every, "check_every")
+  precision_policy <- .resolve_fgw_precision_policy(
+    requested_precision = precision,
+    requested_tol = tol,
+    requested_inner_tol = tol_ot,
+    ns = nx,
+    nt = ny,
+    sinkhorn_method = "log",
+    solver = "PGD"
+  )
 
   if (is.null(wx)) wx <- rep(1 / nx, nx)
   if (is.null(wy)) wy <- rep(1 / ny, ny)
@@ -246,9 +365,11 @@ fugw_kl <- function(
     }
   }
 
+  Cx_effective <- sqrt(weights$structure_weight) * Cx
+  Cy_effective <- sqrt(weights$structure_weight) * Cy
   out <- cpp_fugw_kl_square(
-    Cx = unname(Cx),
-    Cy = unname(Cy),
+    Cx = unname(Cx_effective),
+    Cy = unname(Cy_effective),
     wx = unname(wx),
     wy = unname(wy),
     reg_marginals = as.numeric(reg_marginals),
@@ -257,27 +378,85 @@ fugw_kl <- function(
     M = unname(M),
     init_pi = unname(init_pi),
     max_iter = max_iter,
-    tol = tol,
+    tol = precision_policy$effective_tol,
     max_iter_ot = max_iter_ot,
-    tol_ot = tol_ot,
+    tol_ot = precision_policy$effective_inner_tol,
     rescale_plan = isTRUE(rescale_plan),
     check_every = check_every,
-    use_mixed_precision = identical(precision, "mixed")
+    use_mixed_precision = identical(precision_policy$effective_precision, "mixed")
   )
+  out[names(precision_policy)] <- precision_policy
+  out$control_sources <- control_sources
+  out$backend <- if (precision_policy$effective_precision == "mixed") {
+    "cpp_mixed"
+  } else if (precision_policy$effective_precision == "strict_double") {
+    "cpp_strict_double"
+  } else {
+    "cpp_double"
+  }
   residual <- if (!is.null(out$error)) out$error else Inf
   inner_iters <- if (!is.null(out$inner_iters_total)) {
     as.integer(out$inner_iters_total)
   } else {
     NA_integer_
   }
-  .attach_solver_diagnostics(
+  fugw_recomputed <- .fused_unbalanced_across_spaces_cost_kl(
+    M_linear = list((alpha / 2) * M, (alpha / 2) * M),
+    data = list(
+      Cx_effective^2, Cy_effective^2, Cx_effective, Cy_effective
+    ),
+    tuple_pxy_samp = list(wx, wy, wx %o% wy),
+    tuple_pxy_feat = list(wx, wy, wx %o% wy),
+    pi_samp = out$pi_samp,
+    pi_feat = out$pi_feat,
+    hyperparams = c(reg_marginals, epsilon, epsilon),
+    reg_type = "joint"
+  )
+  structure_unweighted <- if (weights$structure_weight > 0) {
+    fugw_recomputed$linear_cost / weights$structure_weight
+  } else {
+    raw_structure <- .fused_unbalanced_across_spaces_cost_kl(
+      M_linear = list(NULL, NULL),
+      data = list(Cx^2, Cy^2, Cx, Cy),
+      tuple_pxy_samp = list(wx, wy, wx %o% wy),
+      tuple_pxy_feat = list(wx, wy, wx %o% wy),
+      pi_samp = out$pi_samp,
+      pi_feat = out$pi_feat,
+      hyperparams = c(0, 0, 0, 0),
+      reg_type = "joint"
+    )
+    raw_structure$linear_cost
+  }
+  feature_unweighted <- 0.5 * (
+    sum(M * out$pi_samp) + sum(M * out$pi_feat)
+  )
+  regularization <- fugw_recomputed$ucoot_cost -
+    weights$feature_weight * feature_unweighted -
+    weights$structure_weight * structure_unweighted
+  ans <- .attach_solver_diagnostics(
     out,
     residual = residual,
-    converged = is.finite(residual) && residual <= tol,
+    converged = is.finite(residual) && residual <= precision_policy$effective_tol,
     iterations = out$iterations,
     max_iter = max_iter,
     plan = out$pi_samp,
-    inner_iterations = inner_iters
+    inner_residual = out$inner_residual,
+    max_inner_residual = out$max_inner_residual,
+    inner_iterations = inner_iters,
+    inner_converged = out$inner_converged,
+    inner_status = out$inner_status,
+    feasibility = "unbalanced",
+    feasibility_tol = precision_policy$effective_inner_tol,
+    objective_recomputed = fugw_recomputed$ucoot_cost,
+    objective_components = list(linear_cost = fugw_recomputed$linear_cost)
+  )
+  ans$termination_reason <- .termination_reason_from_result(ans, max_iter)
+  .attach_objective_weight_contract(
+    ans,
+    weights,
+    feature_unweighted = feature_unweighted,
+    structure_unweighted = structure_unweighted,
+    regularization = regularization
   )
 }
 
@@ -421,6 +600,9 @@ fugw_kl2 <- function(...) {
 #'   (cached dense lpSolve constraints).
 #' @param lp_max_iter Maximum iterations for the C++ transport-simplex LP backend.
 #' @param lp_tol Optimality tolerance for the C++ transport-simplex LP backend.
+#' @param feature_weight,structure_weight Explicit nonnegative aliases for the
+#'   feature and structure shares. Supply both instead of `alpha`; they are
+#'   normalized to sum to one.
 #' @return A list with `plan`, `fgw_dist`, `iterations`, `error`, `rel_error`,
 #'   `loss_trace`, `status`, and `converged`.
 #' @examples
@@ -446,7 +628,10 @@ fgw_exact_cg <- function(
     lp_scale = 1e6,
     lp_solver = c("cpp_transport", "lp_transport", "lp_matrix"),
     lp_max_iter = 20000L,
-    lp_tol = 1e-12) {
+    lp_tol = 1e-12,
+    feature_weight = NULL,
+    structure_weight = NULL) {
+  alpha_was_missing <- missing(alpha)
   M <- .validate_finite_matrix(M, "M")
   C1 <- .validate_finite_matrix(C1, "C1", square = TRUE)
   C2 <- .validate_finite_matrix(C2, "C2", square = TRUE)
@@ -457,7 +642,14 @@ fgw_exact_cg <- function(
     stop("`M` must have shape nrow(C1) x nrow(C2).", call. = FALSE)
   }
 
-  alpha <- .validate_alpha(alpha)
+  weights <- .resolve_objective_weights(
+    alpha = alpha,
+    alpha_was_missing = alpha_was_missing,
+    feature_weight = feature_weight,
+    structure_weight = structure_weight,
+    convention = "fgw_share"
+  )
+  alpha <- weights$solver_alpha
   tol_rel <- .validate_positive_scalar(tol_rel, "tol_rel")
   tol_abs <- .validate_positive_scalar(tol_abs, "tol_abs")
   lp_tol <- .validate_positive_scalar(lp_tol, "lp_tol")
@@ -500,7 +692,7 @@ fgw_exact_cg <- function(
     rel_error <- if (!is.null(out$rel_error)) out$rel_error else Inf
     converged <- (is.finite(rel_error) && rel_error < tol_rel) ||
       (is.finite(residual) && residual < tol_abs)
-    return(.attach_solver_diagnostics(
+    ans <- .attach_solver_diagnostics(
       out,
       residual = residual,
       converged = converged,
@@ -509,8 +701,36 @@ fgw_exact_cg <- function(
       p = p,
       q = q,
       plan = out$plan,
+      inner_residual = if (!is.null(out$inner_residual)) out$inner_residual else Inf,
+      max_inner_residual = if (!is.null(out$max_inner_residual)) out$max_inner_residual else Inf,
       inner_iterations = if (!is.null(out$inner_iterations)) out$inner_iterations else NA_integer_,
+      inner_converged = if (!is.null(out$inner_converged)) {
+        out$inner_converged
+      } else {
+        isTRUE(out$lp_ok)
+      },
+      inner_status = if (!is.null(out$inner_termination_reason)) {
+        out$inner_termination_reason
+      } else if (isTRUE(out$lp_ok)) {
+        "optimal"
+      } else {
+        "failed"
+      },
+      feasibility = "balanced",
+      feasibility_tol = lp_tol,
+      objective_recomputed = ot_fgw_square(
+        M, C1, C2, out$plan, alpha = alpha, symmetric = symmetric
+      ),
       lp_ok = isTRUE(out$lp_ok)
+    )
+    ans$termination_reason <- .termination_reason_from_result(ans, max_iter)
+    return(.attach_objective_weight_contract(
+      ans,
+      weights,
+      feature_unweighted = ot_linear_cost(M, ans$plan),
+      structure_unweighted = ot_gw_square(
+        C1, C2, ans$plan, symmetric = symmetric
+      )
     ))
   }
 
@@ -607,7 +827,7 @@ fgw_exact_cg <- function(
   )
   converged <- (is.finite(rel_delta) && rel_delta < tol_rel) ||
     (is.finite(abs_delta) && abs_delta < tol_abs)
-  .attach_solver_diagnostics(
+  ans <- .attach_solver_diagnostics(
     out,
     residual = abs_delta,
     converged = converged,
@@ -615,6 +835,20 @@ fgw_exact_cg <- function(
     max_iter = max_iter,
     p = p,
     q = q,
-    plan = G
+    plan = G,
+    feasibility = "balanced",
+    feasibility_tol = 1e-8,
+    objective_recomputed = ot_fgw_square(
+      M, C1, C2, G, alpha = alpha, symmetric = symmetric
+    )
+  )
+  ans$termination_reason <- .termination_reason_from_result(ans, max_iter)
+  .attach_objective_weight_contract(
+    ans,
+    weights,
+    feature_unweighted = ot_linear_cost(M, ans$plan),
+    structure_unweighted = ot_gw_square(
+      C1, C2, ans$plan, symmetric = symmetric
+    )
   )
 }

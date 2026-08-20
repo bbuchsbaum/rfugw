@@ -120,6 +120,11 @@ The `m` parameter controls how much mass to transport. Unregularized partial
 solvers need the Suggests package `lpSolve`
 (`install.packages("lpSolve")`). Entropic partial solvers do not.
 
+Both symmetric and asymmetric structure costs are supported. The general path
+uses the same canonical square-loss tensor as the symmetric path and is checked
+against independent gradient, exact-LP, and entropic-projection oracles. Do not
+force `symmetric = TRUE` on asymmetric inputs.
+
 ```{r partial-gw, eval = requireNamespace("lpSolve", quietly = TRUE)}
 out_pgw <- partial_gromov_wasserstein(C1, C2, m = 0.5, log = TRUE)
 out_pgw$partial_gw_dist

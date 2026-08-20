@@ -1,0 +1,56 @@
+name: Numerical trust (PR)
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  numerical-trust-pr:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    env:
+      GITHUB_PAT: ${{ secrets.GITHUB_TOKEN }}
+      RFUGW_TRUST_SCOPE: pr
+      OMP_NUM_THREADS: "1"
+      OPENBLAS_NUM_THREADS: "1"
+      MKL_NUM_THREADS: "1"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: r-lib/actions/setup-r@v2
+        with:
+          use-public-rspm: true
+      - uses: r-lib/actions/setup-r-dependencies@v2
+        with:
+          extra-packages: |
+            local::.
+            any::devtools
+            any::jsonlite
+            any::lpSolve
+            any::testthat
+          needs: check
+      - name: Critical regressions, contracts, and deterministic oracles
+        run: Rscript tools/numerical-trust/run-laws.R --family=pr --scope=pr
+      - name: Controlled mutation sentinels
+        run: Rscript tools/numerical-trust/run-mutation-proof.R .gate/numerical-trust
+      - name: Clean source tarball and installed-package check
+        shell: Rscript {0}
+        run: |
+          status <- system2(file.path(R.home("bin"), "R"), c("CMD", "build", ".", "--md5"))
+          stopifnot(status == 0L)
+          tarball <- list.files(pattern = "^rfugw_[^/]+\\.tar\\.gz$", full.names = TRUE)
+          stopifnot(length(tarball) == 1L)
+          status <- system2(file.path(R.home("bin"), "R"), c("CMD", "check", "--no-manual", tarball))
+          stopifnot(status == 0L)
+      - name: Collect hosted evidence ledger
+        run: Rscript tools/numerical-trust/collect-evidence.R --output=.gate/numerical-trust --scope=pr --channel=hosted
+      - name: Upload numerical trust evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: numerical-trust-pr
+          if-no-files-found: warn
+          path: |
+            .gate/numerical-trust
+            rfugw.Rcheck/00check.log

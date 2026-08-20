@@ -18,10 +18,15 @@ ot_emd(M, p = NULL, q = NULL, max_iter = 20000L, tol = 1e-12)
 \item{tol}{Optimality tolerance.}
 }
 \value{
-An \code{rfugw_result} with \code{plan}, \code{ot_dist}, \code{status}, and residuals.
+An \code{rfugw_result} with \code{plan}, \code{ot_dist}, \code{status}, exact termination
+reason, source and target dual potentials, and optimality-certificate
+diagnostics.
 }
 \description{
 Network-simplex / assignment backend. Reported \code{ot_dist} is \verb{<M, plan>}.
+An optimal result is accepted only when marginal feasibility, nonbasic
+reduced costs, and the primal-dual gap pass the reported certificate
+tolerances. Dual potentials and all certificate components are returned.
 }
 \examples{
 M <- matrix(c(0, 2, 2, 0), 2, 2)

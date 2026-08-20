@@ -18,11 +18,13 @@ fgw_entropic(
   sinkhorn_tol = 1e-09,
   init_plan = NULL,
   structure_rank = 0L,
-  sinkhorn_method = c("scaling", "log"),
-  precision = c("mixed", "double"),
+  sinkhorn_method = c("auto", "scaling", "log"),
+  precision = c("mixed", "double", "strict_double"),
   symmetric = NULL,
   solver = c("PGD", "PPA"),
-  check_every = 1L
+  check_every = 1L,
+  feature_weight = NULL,
+  structure_weight = NULL
 )
 }
 \arguments{
@@ -36,7 +38,8 @@ fgw_entropic(
 
 \item{q}{Target weights (default uniform). Renormalized to sum 1.}
 
-\item{alpha}{Trade-off between feature and structure terms, in \verb{[0, 1]}.}
+\item{alpha}{Trade-off between feature and structure terms, in \verb{[0, 1]}.
+It is the structure share, so the feature share is \code{1 - alpha}.}
 
 \item{epsilon}{Entropic regularization (must be positive).}
 
@@ -53,12 +56,17 @@ fgw_entropic(
 \item{structure_rank}{Optional low-rank approximation rank for structure
 matrices in the FGW tensor product (\code{0} disables approximation).}
 
-\item{sinkhorn_method}{Sinkhorn variant: \code{"scaling"} or \code{"log"}.}
+\item{sinkhorn_method}{Sinkhorn variant: \code{"scaling"}, \code{"log"}, or
+\code{"auto"}. Auto evaluates a conservative initial-gradient/bound proxy and
+selects scaling only inside the precision-specific certified regime.}
 
-\item{precision}{Numeric precision mode: \code{"mixed"} (default) or \code{"double"}
+\item{precision}{Numeric precision mode: \code{"mixed"} (default), \code{"double"},
+or \code{"strict_double"}
 (\code{"mixed"} uses float inner iterations with double final objective
-evaluation). For larger problems, \code{"double"} uses a mixed-precision
-accelerated inner Sinkhorn path while returning double outputs.}
+evaluation). A mixed request tighter than \code{1e-6} is promoted and reported
+as \code{"strict_double"}. For larger problems, \code{"double"} may use a reported
+mixed-precision accelerated path; \code{"strict_double"} never dispatches to
+float arithmetic.}
 
 \item{symmetric}{\code{NULL} auto-detects symmetry of \code{C1} and \code{C2}. \code{TRUE}
 requires both costs to be symmetric within \code{1e-10}. \code{FALSE} uses the
@@ -67,6 +75,10 @@ two-sided tensor.}
 \item{solver}{Either \code{"PGD"} or \code{"PPA"}.}
 
 \item{check_every}{Evaluate outer stopping error every \code{check_every} iterations.}
+
+\item{feature_weight, structure_weight}{Explicit nonnegative aliases for the
+feature and structure shares. Supply both instead of \code{alpha}; they are
+normalized to sum to one and the interpreted weights are returned.}
 }
 \value{
 A list with \code{plan}, \code{fgw_dist}, \code{iterations}, \code{error}, \code{residual},

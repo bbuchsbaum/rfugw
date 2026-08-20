@@ -22,7 +22,8 @@ entropic_partial_fused_gromov_wasserstein(
   verbose = FALSE,
   check_every = 2L,
   inner_max_iter = 300L,
-  inner_tol = 1e-12
+  inner_tol = 1e-12,
+  method = c("scaling", "auto", "log")
 )
 }
 \arguments{
@@ -61,6 +62,11 @@ entropic_partial_fused_gromov_wasserstein(
 \item{inner_max_iter}{Maximum iterations for inner entropic partial OT solve.}
 
 \item{inner_tol}{Inner stopping tolerance for partial OT solve.}
+
+\item{method}{Scaling-domain inner Dykstra method or \code{"auto"}. The public
+partial primitive is certified only when its conservative dynamic-range
+proxy is at most 500. \code{"log"} and unsafe auto requests error until a
+genuine log-domain Dykstra backend exists.}
 }
 \value{
 If \code{log = FALSE}, returns a coupling matrix. If \code{log = TRUE}, returns

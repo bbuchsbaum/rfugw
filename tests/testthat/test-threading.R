@@ -30,7 +30,7 @@ test_that("flagship single-subject solvers ignore OMP_NUM_THREADS", {
   expect_equal(a$plan, b$plan, tolerance = 1e-12)
 })
 
-test_that("batched multialign 1-thread and 2-thread plans match", {
+test_that("batched multialign 1-, 2-, and 4-thread plans match", {
   s1 <- c(make_thread_set(12L, 301L), list(id = "s1"))
   s2 <- c(make_thread_set(11L, 302L), list(id = "s2"))
   s3 <- c(make_thread_set(10L, 303L), list(id = "s3"))
@@ -49,14 +49,21 @@ test_that("batched multialign 1-thread and 2-thread plans match", {
   )
   one <- do.call(multialign_fit, c(ctrl, list(n_threads = 1L)))
   two <- do.call(multialign_fit, c(ctrl, list(n_threads = 2L)))
+  four <- do.call(multialign_fit, c(ctrl, list(n_threads = 4L)))
   expect_true(isTRUE(one$used_cpp_batch))
   expect_true(isTRUE(two$used_cpp_batch))
+  expect_true(isTRUE(four$used_cpp_batch))
   expect_equal(one$used_threads, 1L)
   expect_gte(two$used_threads, 1L)
+  expect_gte(four$used_threads, 1L)
   expect_equal(one$objective_total, two$objective_total, tolerance = 1e-10)
+  expect_equal(one$objective_total, four$objective_total, tolerance = 1e-10)
   expect_equal(one$couplings$s1, two$couplings$s1, tolerance = 1e-10)
   expect_equal(one$couplings$s2, two$couplings$s2, tolerance = 1e-10)
   expect_equal(one$couplings$s3, two$couplings$s3, tolerance = 1e-10)
+  expect_equal(one$couplings$s1, four$couplings$s1, tolerance = 1e-10)
+  expect_equal(one$couplings$s2, four$couplings$s2, tolerance = 1e-10)
+  expect_equal(one$couplings$s3, four$couplings$s3, tolerance = 1e-10)
 })
 
 test_that("sampled GW random_state is reproducible and deterministic sampling matches", {

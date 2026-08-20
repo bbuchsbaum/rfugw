@@ -43,7 +43,8 @@ rfugw_status <- function(x) {
 #' Extract residual diagnostics
 #'
 #' @param x An `rfugw_result`.
-#' @return A list with `residual`, `row_residual`, `col_residual`, and `mass`.
+#' @return A list with stopping, marginal, feasibility, objective, and nested
+#'   solver certificate fields.
 #' @export
 rfugw_residuals <- function(x) {
   list(
@@ -51,7 +52,24 @@ rfugw_residuals <- function(x) {
     row_residual = x$row_residual,
     col_residual = x$col_residual,
     mass = x$mass,
-    inner_residual = x$inner_residual
+    mass_residual = x$mass_residual,
+    mass_target = x$mass_target,
+    mass_certified = x$mass_certified,
+    mass_certification = x$mass_certification,
+    feasibility = x$feasibility,
+    feasibility_residual = x$feasibility_residual,
+    feasibility_tolerance = x$feasibility_tolerance,
+    feasible = x$feasible,
+    inner_residual = x$inner_residual,
+    max_inner_residual = x$max_inner_residual,
+    inner_converged = x$inner_converged,
+    inner_status = x$inner_status,
+    objective_recomputed = x$objective_recomputed,
+    objective_residual = x$objective_residual,
+    objective_tolerance = x$objective_tolerance,
+    objective_consistent = x$objective_consistent,
+    objective_components_consistent = x$objective_components_consistent,
+    runtime_provenance = x$runtime_provenance
   )
 }
 

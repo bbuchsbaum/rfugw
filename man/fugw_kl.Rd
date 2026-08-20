@@ -20,7 +20,9 @@ fugw_kl(
   tol_ot = 1e-07,
   rescale_plan = TRUE,
   check_every = 1L,
-  precision = c("double", "mixed")
+  precision = c("double", "mixed", "strict_double"),
+  feature_weight = NULL,
+  structure_weight = NULL
 )
 }
 \arguments{
@@ -36,7 +38,8 @@ fugw_kl(
 
 \item{epsilon}{Joint KL regularization parameter (entropic term).}
 
-\item{alpha}{Linear FGW term coefficient, in \verb{[0, 1]}.}
+\item{alpha}{Legacy feature-cost coefficient, in \verb{[0, 1]}; the structure
+coefficient is one. This convention differs from \code{fgw_entropic()}.}
 
 \item{M}{Linear sample cost matrix (default \code{NULL}).}
 
@@ -54,8 +57,14 @@ fugw_kl(
 
 \item{check_every}{Evaluate BCD stopping criterion every \code{check_every} iterations.}
 
-\item{precision}{Numeric precision mode for the C++ solver (\code{"double"} or
-\code{"mixed"}).}
+\item{precision}{Numeric precision mode for the C++ solver (\code{"double"},
+\code{"mixed"}, or \code{"strict_double"}). Tight mixed requests are promoted to
+reported strict double rather than silently floored.}
+
+\item{feature_weight, structure_weight}{Explicit nonnegative feature and
+structure coefficients. Supply both instead of \code{alpha}. Unlike FGW share
+aliases, FUGW coefficients are not normalized because their scale is
+meaningful relative to the KL penalties.}
 }
 \value{
 A list with \code{pi_samp}, \code{pi_feat}, \code{fugw_cost}, \code{linear_cost},
