@@ -11,6 +11,7 @@
 ^rfugw$
 ^inst/bench/results
 ^\.gate$
+^\.tmp-lib$
 ^inst/bench/__pycache__
 ^\.gitignore$
 ^\.cursor

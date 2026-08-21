@@ -2,20 +2,22 @@
 % Please edit documentation in R/ot_utils.R
 \name{ot_kl}
 \alias{ot_kl}
-\title{KL divergence of a plan from a product reference}
+\title{Generalized KL divergence of a plan from a product reference}
 \usage{
 ot_kl(plan, p, q)
 }
 \arguments{
 \item{plan}{Coupling or \code{rfugw_result}.}
 
-\item{p}{Source reference weights.}
+\item{p}{Finite nonnegative source reference weights.}
 
-\item{q}{Target reference weights.}
+\item{q}{Finite nonnegative target reference weights.}
 }
 \value{
-\code{KL(plan || p \%o\% q)}.
+Generalized \code{KL(plan || p \%o\% q)}, including the mass correction
+\code{-sum(plan) + sum(p \%o\% q)}. Positive plan mass outside zero reference
+support returns \code{Inf}; zero-over-zero contributes zero.
 }
 \description{
-KL divergence of a plan from a product reference
+Generalized KL divergence of a plan from a product reference
 }

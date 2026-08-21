@@ -1,138 +1,272 @@
 ---
-title: "Linear optimal transport in rfugw"
-output: rmarkdown::html_vignette
-vignette: >
+title: Linear optimal transport in rfugw
+output:
+  rmarkdown::html_vignette:
+    toc: yes
+    toc_depth: 2.0
+    css: albers.css
+    includes:
+      in_header: albers-header.html
+params:
+  family: red
+  preset: homage
+resource_files:
+- albers.css
+- albers.js
+- albers-header.html
+- fonts
+
+vignette: |
   %\VignetteIndexEntry{Linear optimal transport in rfugw}
   %\VignetteEngine{knitr::rmarkdown}
   %\VignetteEncoding{UTF-8}
 ---
 
 ```{r setup, include = FALSE}
+if (requireNamespace("ragg", quietly = TRUE)) knitr::opts_chunk$set(dev = "ragg_png")
+if (requireNamespace("systemfonts", quietly = TRUE) && requireNamespace("albersdown", quietly = TRUE)) albersdown::albers_register_fonts()
+if (requireNamespace("ggplot2", quietly = TRUE) && requireNamespace("albersdown", quietly = TRUE)) ggplot2::theme_set(albersdown::theme_albers(family = params$family, preset = params$preset))
 knitr::opts_chunk$set(
-  collapse = TRUE,
-  comment = "#>",
-  message = FALSE,
-  warning = FALSE,
-  fig.width = 5,
-  fig.height = 4
+  collapse = TRUE, comment = "#>", message = FALSE, warning = FALSE,
+  fig.width = 5, fig.height = 4
 )
 ```
 
-You have two point clouds in the same feature space and a cost for moving
-mass from one support to the other. `rfugw` returns a coupling, an
-unregularized transport cost, and diagnostics you can inspect before you
-project points or feed the plan into a Gromov-Wasserstein solve.
+```{r albers-classes, echo=FALSE, results='asis'}
+cat(sprintf(
+  paste0(
+    '<script>document.addEventListener("DOMContentLoaded",function(){',
+    'document.body.classList.remove("palette-red","palette-lapis","palette-ochre","palette-teal","palette-green","palette-violet","preset-homage","preset-interaction","preset-study","preset-structural","preset-adobe","preset-midnight");',
+    'document.body.classList.add("palette-%s","preset-%s");',
+    '});</script>'
+  ),
+  params$family,
+  params$preset
+))
+```
+
+Linear optimal transport matches two weighted collections when the cost of
+every source-to-target match is known. You supply a cost matrix and, optionally,
+weights for the two collections. `rfugw` returns a coupling: a nonnegative
+matrix whose entries say how much mass moves between each pair.
+
+This vignette builds one coupling, checks that it is trustworthy, and uses it
+to map target coordinates back to the source. It then shows when to choose an
+exact, entropic, or unbalanced solver.
 
 ```{r load}
 library(rfugw)
 ```
 
-## What do you have?
+## What are the inputs?
 
-This guide uses two 2-d clouds. The cost `M` is pairwise Euclidean
-distance. Weights `p` and `q` are the mass on each support.
+We will align two small point clouds in the same two-dimensional space. Rows
+are points; `M[i, j]` is the Euclidean cost of matching source point `i` to
+target point `j`. The weights `p` and `q` each sum to one.
 
-```{r data}
+```{r make-clouds}
 set.seed(16)
-X <- matrix(rnorm(16), 8, 2)
-Y <- matrix(rnorm(20), 10, 2) + 0.4
+X <- matrix(rnorm(16), ncol = 2)
+Y <- matrix(rnorm(20), ncol = 2) + 0.4
 M <- as.matrix(dist(rbind(X, Y)))[1:8, 9:18]
 M <- M / max(M)
-p <- rep(1 / 8, 8)
-q <- rep(1 / 10, 10)
+p <- rep(1 / nrow(X), nrow(X))
+q <- rep(1 / nrow(Y), nrow(Y))
 ```
 
-## Quick win: a balanced Sinkhorn plan
+Linear OT requires a meaningful cross-domain cost. If your two supports live
+in different metric spaces and such a cost is unavailable, use GW or FGW
+instead; those methods compare within-domain structure.
 
-When both measures have the same total mass and you want a fast, dense
-coupling, use `ot_sinkhorn()`. Reported `ot_dist` is `<M, plan>` and does
-not add the entropic term.
+## How do you compute a balanced plan?
 
-```{r sinkhorn}
-sink <- ot_sinkhorn(M, p, q, epsilon = 0.08)
-sink$status
-sink$residual
-rfugw_value(sink)
+`ot_sinkhorn()` is the usual starting point for a fast, dense coupling. Its
+`epsilon` argument controls entropic regularization: larger values spread mass
+more diffusely. The reported value is the unregularized transport cost
+`sum(M * plan)`; it does not include the entropy penalty.
+
+```{r fit-sinkhorn}
+sink <- ot_sinkhorn(M, p, q, epsilon = 0.08, method = "auto")
+data.frame(
+  status = sink$status,
+  cost = rfugw_value(sink),
+  marginal_residual = sink$residual
+)
 ```
 
-```{r sinkhorn-check, include = FALSE}
-stopifnot(is.finite(sink$ot_dist), sink$residual < 1e-6)
-ot_validate_plan(sink, p, q)
+```{r check-sinkhorn, include = FALSE}
+P <- rfugw_plan(sink)
+stopifnot(
+  all(is.finite(P)), all(P >= 0),
+  is.finite(rfugw_value(sink)), diff(range(P)) > 0,
+  sink$residual < 1e-6
+)
+ot_validate_plan(sink, p, q, tol = 1e-6)
 ```
 
-`print(sink)` shows status and residuals without dumping the plan.
-`ot_validate_plan()` checks nonnegativity and the balanced marginals.
+The marginal residual measures how closely the row and column sums reproduce
+`p` and `q`. `ot_validate_plan()` provides an explicit feasibility check;
+`print(sink)` and `summary(sink)` offer compact diagnostics without printing
+the full coupling.
 
-## Which formulation should you use?
+## How do you use the coupling?
 
-| If your data looks like this | Use | Why |
+A barycentric projection replaces each source point by the weighted average of
+the target points to which it sends mass.
+
+```{r project-points}
+projected <- ot_barycentric_project(sink, Y)
+head(round(projected, 3), 4)
+```
+
+```{r check-projection, include = FALSE}
+stopifnot(
+  identical(dim(projected), dim(X)),
+  all(is.finite(projected)),
+  sum(apply(projected, 2, stats::var)) > 0
+)
+```
+
+```{r projection-distance}
+mean_nearest_distance <- function(A, B) {
+  D <- as.matrix(dist(rbind(A, B)))[
+    seq_len(nrow(A)), nrow(A) + seq_len(nrow(B)), drop = FALSE
+  ]
+  mean(apply(D, 1, min))
+}
+projection_distance <- c(
+  before = mean_nearest_distance(X, Y),
+  after = mean_nearest_distance(projected, Y)
+)
+```
+
+```{r summarize-projection}
+data.frame(
+  coordinates = names(projection_distance),
+  mean_distance_to_nearest_target = unname(projection_distance)
+)
+```
+
+```{r check-projection-distance, include = FALSE}
+stopifnot(
+  all(is.finite(projection_distance)),
+  projection_distance[["after"]] < projection_distance[["before"]]
+)
+```
+
+The result has one row per source point and the same coordinate columns as
+`Y`. A source row with no transported mass cannot have a weighted average and
+is returned as `NaN`; use `zero_mass = "zero"` if zeros are preferable. In
+this example, the projected coordinates are closer to the target support on
+average. That is an interpreted example result, not a general guarantee for
+every cost or geometry.
+
+## Which solver should you choose?
+
+| Task | Function | Main trade-off |
 |---|---|---|
-| Same total mass, both marginals known | `ot_emd()` | Exact simplex plan; small/medium problems |
-| Same total mass, you want speed or a dense plan | `ot_sinkhorn()` | Entropic Sinkhorn; `method = "log"` for tiny `epsilon` |
-| Mass should be created or destroyed | `ot_sinkhorn_unbalanced()` | KL penalties `rho` relax the marginals |
-| Supports live in *different* metric spaces | `fgw_entropic()` / `gromov_wasserstein()` | Linear OT needs a cross-domain cost `M` |
+| Balanced, exact linear OT | `ot_emd()` | Sparse exact plan, best suited to small or moderate problems |
+| Balanced, entropic linear OT | `ot_sinkhorn()` | Faster dense plan; `epsilon` changes the solution |
+| Exact transport of a specified fraction | `ot_partial_emd()` | Enforces a transported mass in `[0, 1]` |
+| Marginals may change softly | `ot_sinkhorn_unbalanced()` | KL penalties control the cost of creating or removing mass |
 
-Unregularized GW/FGW still call an exact linear-OT subproblem at each
-conditional-gradient step. Entropic GW/FGW call Sinkhorn. The primitives
-in this vignette are that substrate.
+For example, the exact solver satisfies the same marginals without entropic
+regularization.
 
-## Inspect convergence, then project
-
-```{r emd-and-project}
-emd <- ot_emd(M, p, q)
-emd$converged
-proj <- ot_barycentric_project(emd, Y)
-dim(proj)
+```{r fit-exact}
+exact <- ot_emd(M, p, q)
+data.frame(
+  converged = exact$converged,
+  cost = rfugw_value(exact),
+  nonzero_entries = sum(rfugw_plan(exact) > 1e-12)
+)
 ```
 
-```{r project-check, include = FALSE}
-stopifnot(isTRUE(emd$converged), nrow(proj) == nrow(X), all(is.finite(proj)))
+```{r check-exact, include = FALSE}
+stopifnot(isTRUE(exact$converged), is.finite(rfugw_value(exact)))
+ot_validate_plan(exact, p, q)
 ```
 
-Each source point maps to a weighted average of the target support.
-Rows with zero transported mass become `NaN` unless you set
-`zero_mass = "zero"`.
+The exact and entropic costs are useful summaries of their respective plans,
+but comparing them alone is not a convergence test. Inspect the solver status
+and validate the returned marginals.
 
-## When the masses should not match
+## What if the marginals should change?
 
-If one cloud is contaminated or only partly overlapping, relax the
-marginals with `ot_sinkhorn_unbalanced()`. Total mass can drop below 1.
+Contamination, missing support, or partial overlap can make fixed marginals a
+poor model. `ot_sinkhorn_unbalanced()` replaces equality constraints with KL
+penalties. Smaller `rho` permits more marginal deviation; larger `rho`
+approaches the balanced problem.
 
-```{r unbalanced}
-unb <- ot_sinkhorn_unbalanced(M, p, q, epsilon = 0.08, rho = 1)
-unb$status
-unb$mass
+```{r fit-unbalanced}
+unbalanced <- ot_sinkhorn_unbalanced(
+  M, p, q, epsilon = 0.08, rho = 0.2, method = "auto",
+  max_iter = 1000L, tol = 1e-7
+)
+data.frame(
+  status = unbalanced$status,
+  cost = rfugw_value(unbalanced),
+  transported_mass = unbalanced$mass
+)
 ```
 
-```{r unbalanced-check, include = FALSE}
-stopifnot(is.finite(unb$ot_dist), unb$mass < 1, unb$mass > 0)
+```{r check-unbalanced, include = FALSE}
+Pu <- rfugw_plan(unbalanced)
+stopifnot(
+  all(is.finite(Pu)), all(Pu >= 0),
+  is.finite(rfugw_value(unbalanced)),
+  is.finite(unbalanced$mass), unbalanced$mass > 0,
+  identical(unbalanced$status, "converged"),
+  isTRUE(unbalanced$converged), unbalanced$residual <= 1e-7,
+  diff(range(Pu)) > 0
+)
 ```
 
-## How this shows up in GW
+An unbalanced plan is not expected to reproduce `p` and `q` exactly. Its total
+mass and relaxed marginal residuals are part of the result and should be
+interpreted alongside the application-specific choice of `rho`.
 
-Gromov-Wasserstein compares *structure* matrices `C1` and `C2` when you
-do not have a shared feature cost. Fused GW mixes that structure term
-with a linear cost `M` through `alpha`. The inner plan updates are the
-same linear-OT primitives:
+## How does linear OT connect to FGW?
 
-```{r gw-uses-ot}
+FGW combines a cross-domain feature cost `M` with structure matrices `C1` and
+`C2`. `alpha = 0` uses only the linear feature term, while `alpha = 1` uses
+only structure. Intermediate values blend the two.
+
+```{r fit-fgw}
 C1 <- as.matrix(dist(X)); C1 <- C1 / max(C1)
 C2 <- as.matrix(dist(Y)); C2 <- C2 / max(C2)
-fgw <- fgw_entropic(M, C1, C2, alpha = 0.5, epsilon = 0.08, max_iter = 40L)
-fgw$status
-ot_fgw_square(M, C1, C2, fgw, alpha = 0.5)
+fgw <- fgw_entropic(
+  M, C1, C2, alpha = 0.5, epsilon = 0.08, max_iter = 40L
+)
+data.frame(
+  status = fgw$status,
+  converged = fgw$converged,
+  inner_status = fgw$inner_status,
+  objective = fgw$fgw_dist
+)
 ```
 
-```{r gw-check, include = FALSE}
-stopifnot(is.finite(fgw$fgw_dist), abs(ot_fgw_square(M, C1, C2, fgw, alpha = 0.5) - fgw$fgw_dist) < 1e-6)
+```{r check-fgw, include = FALSE}
+fgw_value <- ot_fgw_square(M, C1, C2, fgw, alpha = 0.5)
+stopifnot(
+  all(is.finite(rfugw_plan(fgw))), diff(range(rfugw_plan(fgw))) > 0,
+  is.finite(fgw_value), abs(fgw_value - fgw$fgw_dist) < 1e-6,
+  identical(fgw$status, "converged"), isTRUE(fgw$converged),
+  identical(fgw$inner_status, "converged"), isTRUE(fgw$inner_converged),
+  is.finite(fgw$residual), is.finite(fgw$max_inner_residual)
+)
+ot_validate_plan(fgw, p, q, tol = 1e-6)
 ```
 
-`ot_fgw_square()` recomputes the unregularized FGW objective from the
-returned plan. It should match `fgw$fgw_dist`.
+`ot_fgw_square()` recomputes the unregularized FGW objective from a plan. Its
+agreement with the reported value checks the objective calculation; solver
+status and marginal feasibility remain separate diagnostics.
 
-## Next steps
+## Where should you go next?
 
-- `vignette("solver-guide")`: choose among GW, partial, semirelaxed, and FUGW
-- `vignette("barycenters")`: average several metric-measure spaces
-- `?ot_sinkhorn`, `?ot_emd`, `?ot_validate_plan`
-- `inst/solver-contract.md`: supported names and diagnostic meanings
+- `vignette("solver-guide")` explains how to choose among GW, partial,
+  semirelaxed, and FUGW formulations.
+- `vignette("barycenters")` constructs a representative metric-measure space
+  from several inputs.
+- See `?ot_sinkhorn`, `?ot_emd`, and `?ot_validate_plan` for full argument and
+  diagnostic contracts.

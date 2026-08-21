@@ -1,0 +1,62 @@
+name: Numerical trust (Nightly)
+
+on:
+  schedule:
+    - cron: "15 6 * * *"
+  workflow_dispatch:
+
+jobs:
+  native-thread-safety:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build pure-C++ OpenMP harness with ThreadSanitizer
+        run: >-
+          g++ -std=c++17 -O1 -g -fopenmp -fsanitize=thread
+          tools/numerical-trust/thread_kernel_harness.cpp
+          -o /tmp/rfugw-thread-kernel-harness
+      - name: Exercise shared caches, exception capture, and nested suppression
+        env:
+          OMP_NUM_THREADS: "4"
+          OMP_DYNAMIC: "FALSE"
+          TSAN_OPTIONS: halt_on_error=1
+        run: /tmp/rfugw-thread-kernel-harness
+
+  numerical-trust-nightly:
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    env:
+      GITHUB_PAT: ${{ secrets.GITHUB_TOKEN }}
+      RFUGW_TRUST_SCOPE: nightly
+      OMP_NUM_THREADS: "2"
+      OPENBLAS_NUM_THREADS: "1"
+      MKL_NUM_THREADS: "1"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: r-lib/actions/setup-r@v2
+        with:
+          use-public-rspm: true
+      - uses: r-lib/actions/setup-r-dependencies@v2
+        with:
+          extra-packages: |
+            local::.
+            any::devtools
+            any::jsonlite
+            any::lpSolve
+            any::Matrix
+            any::testthat
+          needs: check
+      - name: Extended fuzz, differential, scale, approximation, and threading matrix
+        run: Rscript tools/numerical-trust/run-laws.R --family=all --scope=nightly
+      - name: Controlled mutation sentinels
+        run: Rscript tools/numerical-trust/run-mutation-proof.R .gate/numerical-trust
+      - name: Collect hosted evidence ledger
+        run: Rscript tools/numerical-trust/collect-evidence.R --output=.gate/numerical-trust --scope=nightly --channel=hosted
+      - name: Upload nightly numerical evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: numerical-trust-nightly
+          if-no-files-found: error
+          path: .gate/numerical-trust

@@ -6,11 +6,12 @@
   invisible(TRUE)
 }
 
-.is_symmetric_cost <- function(C, tol = 1e-10) {
+.is_symmetric_cost <- function(C, atol = 1e-10, rtol = 1e-12) {
   if (!is.matrix(C) || length(C) == 0L) {
     return(FALSE)
   }
-  max(abs(C - t(C))) <= tol
+  scale <- max(abs(C), abs(t(C)), 1)
+  max(abs(C - t(C))) <= atol + rtol * scale
 }
 
 .init_semirelaxed_square <- function(C1, C2, p) {
@@ -191,7 +192,8 @@
 #' @param sinkhorn_max_iter Max Sinkhorn iterations per outer step.
 #' @param sinkhorn_tol Sinkhorn stopping tolerance.
 #' @param sinkhorn_method Sinkhorn variant (`"scaling"` or `"log"`).
-#' @param precision Numeric precision mode (`"mixed"` or `"double"`).
+#' @param precision Numeric precision mode (`"mixed"`, `"double"`, or
+#'   `"strict_double"`).
 #' @param check_every Evaluate stopping criterion every `check_every` iterations.
 #' @param structure_rank Optional low-rank rank for structure tensor product.
 #' @return A list with `plan`, `gw_dist`, `iterations`, `error`.
@@ -210,11 +212,13 @@ entropic_gromov_wasserstein <- function(
     solver = c("PGD", "PPA"),
     sinkhorn_max_iter = 1000L,
     sinkhorn_tol = 1e-9,
-    sinkhorn_method = c("scaling", "log"),
-    precision = c("mixed", "double"),
+    sinkhorn_method = c("auto", "scaling", "log"),
+    precision = c("mixed", "double", "strict_double"),
     check_every = 1L,
     structure_rank = 0L) {
   .check_square_loss(loss_fun)
+  precision <- match.arg(precision)
+  sinkhorn_method <- match.arg(sinkhorn_method)
   .assert_matrix(C1, "C1")
   .assert_matrix(C2, "C2")
   ns <- nrow(C1)
@@ -420,6 +424,8 @@ entropic_semirelaxed_gromov_wasserstein <- function(
   .check_square_loss(loss_fun)
   precision <- match.arg(precision)
   backend <- match.arg(backend)
+  max_iter <- .validate_count(max_iter, "max_iter")
+  check_every <- .validate_count(check_every, "check_every")
   .assert_matrix(C1, "C1")
   .assert_matrix(C2, "C2")
   if (is.null(symmetric)) {
@@ -429,9 +435,9 @@ entropic_semirelaxed_gromov_wasserstein <- function(
   }
   ns <- nrow(C1)
   nt <- nrow(C2)
+  if (is.null(p)) p <- rep(1 / ns, ns)
+  p <- .assert_prob(p, ns, "p")
   out <- if (backend == "cpp") {
-    if (is.null(p)) p <- rep(1 / ns, ns)
-    p <- .assert_prob(p, ns, "p")
     if (is.null(G0)) {
       G0 <- .empty_feature_cost()
     } else {
@@ -446,9 +452,9 @@ entropic_semirelaxed_gromov_wasserstein <- function(
       alpha = 1,
       symmetric = symmetric,
       use_mixed_precision = identical(precision, "mixed"),
-      max_iter = as.integer(max_iter),
+      max_iter = max_iter,
       tol = tol,
-      check_every = as.integer(check_every),
+      check_every = check_every,
       init_plan = G0
     )
   } else {
@@ -467,7 +473,7 @@ entropic_semirelaxed_gromov_wasserstein <- function(
       verbose = verbose
     )
   }
-  list(
+  res <- list(
     plan = out$plan,
     q = out$q,
     srgw_dist = out$srgw_dist,
@@ -475,6 +481,22 @@ entropic_semirelaxed_gromov_wasserstein <- function(
     error = out$error,
     symmetric = out$symmetric
   )
+  ans <- .attach_solver_diagnostics(
+    res,
+    residual = out$error,
+    converged = is.finite(out$error) && out$error <= tol,
+    iterations = out$iterations,
+    max_iter = max_iter,
+    p = p,
+    plan = out$plan,
+    feasibility = "semirelaxed",
+    feasibility_tol = max(tol, 1e-10),
+    objective_recomputed = ot_gw_square(
+      C1, C2, out$plan, symmetric = symmetric
+    )
+  )
+  ans$termination_reason <- .termination_reason_from_result(ans, max_iter)
+  ans
 }
 
 #' Entropic Semirelaxed Gromov-Wasserstein Objective Value
@@ -530,6 +552,8 @@ entropic_semirelaxed_fused_gromov_wasserstein <- function(
   .check_square_loss(loss_fun)
   precision <- match.arg(precision)
   backend <- match.arg(backend)
+  max_iter <- .validate_count(max_iter, "max_iter")
+  check_every <- .validate_count(check_every, "check_every")
   .assert_matrix(M, "M")
   .assert_matrix(C1, "C1")
   .assert_matrix(C2, "C2")
@@ -539,9 +563,9 @@ entropic_semirelaxed_fused_gromov_wasserstein <- function(
     symmetric <- isTRUE(symmetric)
   }
   ns <- nrow(C1)
+  if (is.null(p)) p <- rep(1 / ns, ns)
+  p <- .assert_prob(p, ns, "p")
   out <- if (backend == "cpp") {
-    if (is.null(p)) p <- rep(1 / ns, ns)
-    p <- .assert_prob(p, ns, "p")
     if (is.null(G0)) {
       G0 <- matrix(numeric(0), nrow = 0, ncol = 0)
     } else {
@@ -556,9 +580,9 @@ entropic_semirelaxed_fused_gromov_wasserstein <- function(
       alpha = alpha,
       symmetric = symmetric,
       use_mixed_precision = identical(precision, "mixed"),
-      max_iter = as.integer(max_iter),
+      max_iter = max_iter,
       tol = tol,
-      check_every = as.integer(check_every),
+      check_every = check_every,
       init_plan = G0
     )
   } else {
@@ -577,7 +601,29 @@ entropic_semirelaxed_fused_gromov_wasserstein <- function(
       verbose = verbose
     )
   }
-  out
+  # The native core also reports the structural-only `srgw_dist`; the public
+  # fused objective is `srfgw_dist` and is the field certified below.
+  out$srgw_dist <- NULL
+  ans <- .attach_solver_diagnostics(
+    out,
+    residual = out$error,
+    converged = is.finite(out$error) && out$error <= tol,
+    iterations = out$iterations,
+    max_iter = max_iter,
+    p = p,
+    plan = out$plan,
+    feasibility = "semirelaxed",
+    feasibility_tol = max(tol, 1e-10),
+    objective_recomputed = ot_fgw_square(
+      M, C1, C2, out$plan, alpha = alpha, symmetric = symmetric
+    ),
+    objective_components = list(
+      lin_loss = (1 - alpha) * ot_linear_cost(M, out$plan),
+      quad_loss = alpha * ot_gw_square(C1, C2, out$plan, symmetric = symmetric)
+    )
+  )
+  ans$termination_reason <- .termination_reason_from_result(ans, max_iter)
+  ans
 }
 
 #' Entropic Semirelaxed Fused Gromov-Wasserstein Objective Value
@@ -589,6 +635,33 @@ entropic_semirelaxed_fused_gromov_wasserstein <- function(
 entropic_semirelaxed_fused_gromov_wasserstein2 <- function(...) {
   out <- entropic_semirelaxed_fused_gromov_wasserstein(...)
   out$srfgw_dist
+}
+
+.compact_nested_solver_diagnostics <- function(out) {
+  scalar_character <- function(x, default = NA_character_) {
+    if (is.null(x) || length(x) == 0L) default else as.character(x[[1]])
+  }
+  scalar_logical <- function(x, default = NA) {
+    if (is.null(x) || length(x) == 0L) default else as.logical(x[[1]])
+  }
+  scalar_numeric <- function(x, default = NA_real_) {
+    if (is.null(x) || length(x) == 0L) default else as.numeric(x[[1]])
+  }
+  scalar_integer <- function(x, default = NA_integer_) {
+    if (is.null(x) || length(x) == 0L) default else as.integer(x[[1]])
+  }
+
+  list(
+    status = scalar_character(out$status),
+    converged = scalar_logical(out$converged),
+    residual = scalar_numeric(out$residual),
+    iterations = scalar_integer(out$iterations),
+    inner_status = scalar_character(out$inner_status),
+    inner_converged = scalar_logical(out$inner_converged),
+    inner_residual = scalar_numeric(out$inner_residual),
+    max_inner_residual = scalar_numeric(out$max_inner_residual),
+    inner_iterations = scalar_integer(out$inner_iterations)
+  )
 }
 
 #' Fixed-Support FGW Barycenters
@@ -626,7 +699,9 @@ entropic_semirelaxed_fused_gromov_wasserstein2 <- function(...) {
 #' @param barycenter_eps Stabilizer for divisions in barycenter updates.
 #' @param verbose If `TRUE`, print outer-iteration diagnostics.
 #' @return A list with `X`, `C`, `p`, `couplings`, `history`, `iterations`,
-#'   and `objective`.
+#'   `objective`, outer `status`/`converged`, and compact final
+#'   `solver_diagnostics` for each inner FGW problem. `history` includes
+#'   aggregate inner-solver diagnostics for every barycenter iteration.
 #' @export
 fgw_barycenters <- function(
     N,
@@ -647,8 +722,8 @@ fgw_barycenters <- function(
     solver = c("PGD", "PPA"),
     sinkhorn_max_iter = 500L,
     sinkhorn_tol = 1e-9,
-    sinkhorn_method = c("scaling", "log"),
-    precision = c("mixed", "double"),
+    sinkhorn_method = c("auto", "scaling", "log"),
+    precision = c("mixed", "double", "strict_double"),
     check_every = 10L,
     init_C = NULL,
     init_X = NULL,
@@ -659,9 +734,14 @@ fgw_barycenters <- function(
     verbose = FALSE) {
   .check_square_loss(loss_fun)
   solver <- match.arg(solver)
-  sinkhorn_method <- match.arg(sinkhorn_method)
+  requested_sinkhorn_method <- match.arg(sinkhorn_method)
+  sinkhorn_method <- requested_sinkhorn_method
   precision <- match.arg(precision)
   feature_cost_metric <- match.arg(feature_cost_metric)
+  N <- .validate_count(N, "N", min = 2L)
+  max_iter <- .validate_count(max_iter, "max_iter")
+  sinkhorn_max_iter <- .validate_count(sinkhorn_max_iter, "sinkhorn_max_iter")
+  check_every <- .validate_count(check_every, "check_every")
 
   if (!is.list(Cs) || length(Cs) == 0L) {
     stop("`Cs` must be a non-empty list of square matrices.", call. = FALSE)
@@ -671,10 +751,6 @@ fgw_barycenters <- function(
   }
 
   S <- length(Cs)
-  N <- as.integer(N)[1]
-  if (!is.finite(N) || N < 2L) {
-    stop("`N` must be an integer >= 2.", call. = FALSE)
-  }
   if (!is.finite(alpha) || alpha < 0 || alpha > 1) {
     stop("`alpha` must be in [0, 1].", call. = FALSE)
   }
@@ -773,7 +849,10 @@ fgw_barycenters <- function(
   T <- vector("list", S)
   objectives <- rep(NA_real_, S)
   history <- vector("list", as.integer(max_iter))
+  iteration_solver_diagnostics <- vector("list", as.integer(max_iter))
   outer_done <- 0L
+  sinkhorn_dispatches <- vector("list", S)
+  solver_diagnostics <- vector("list", S)
 
   for (it in seq_len(as.integer(max_iter))) {
     Cprev <- C
@@ -803,6 +882,14 @@ fgw_barycenters <- function(
       )
       T[[s]] <- out$plan
       objectives[[s]] <- out$fgw_dist
+      solver_diagnostics[[s]] <- .compact_nested_solver_diagnostics(out)
+      sinkhorn_dispatches[[s]] <- list(
+        requested = out$requested_sinkhorn_method,
+        effective = out$effective_sinkhorn_method,
+        reason = out$sinkhorn_dispatch_reason,
+        metric = out$sinkhorn_dynamic_range,
+        threshold = out$sinkhorn_scaling_threshold
+      )
     }
 
     inv_p <- 1 / pmax(p, barycenter_eps)
@@ -830,11 +917,24 @@ fgw_barycenters <- function(
     err_feature <- if (isTRUE(fixed_features)) 0 else sqrt(sum((X - Xprev)^2))
     err_structure <- if (isTRUE(fixed_structure)) 0 else sqrt(sum((C - Cprev)^2))
     obj_total <- sum(lambdas * objectives)
+    iteration_solver_diagnostics[[it]] <- solver_diagnostics
+    statuses <- vapply(solver_diagnostics, `[[`, character(1), "status")
+    solver_converged <- vapply(solver_diagnostics, `[[`, logical(1), "converged")
+    inner_statuses <- vapply(solver_diagnostics, `[[`, character(1), "inner_status")
+    inner_converged <- vapply(solver_diagnostics, `[[`, logical(1), "inner_converged")
+    residuals <- vapply(solver_diagnostics, `[[`, numeric(1), "residual")
+    inner_residuals <- vapply(solver_diagnostics, `[[`, numeric(1), "max_inner_residual")
     history[[it]] <- data.frame(
       iter = it,
       objective = obj_total,
       err_feature = err_feature,
       err_structure = err_structure,
+      solver_status = paste(unique(statuses), collapse = ","),
+      all_solvers_converged = all(solver_converged),
+      max_solver_residual = max(residuals),
+      inner_status = paste(unique(inner_statuses), collapse = ","),
+      all_inner_converged = all(inner_converged),
+      max_inner_residual = max(inner_residuals),
       stringsAsFactors = FALSE
     )
     outer_done <- it
@@ -851,6 +951,12 @@ fgw_barycenters <- function(
   }
 
   hist_df <- do.call(rbind, history[seq_len(outer_done)])
+  barycenter_error <- if (outer_done > 0L) {
+    max(hist_df$err_feature[[outer_done]], hist_df$err_structure[[outer_done]])
+  } else {
+    NA_real_
+  }
+  barycenter_converged <- is.finite(barycenter_error) && barycenter_error <= tol
   list(
     X = X,
     C = C,
@@ -860,10 +966,11 @@ fgw_barycenters <- function(
     objective = sum(lambdas * objectives),
     history = hist_df,
     iterations = as.integer(outer_done),
-    error = if (outer_done > 0L) {
-      max(hist_df$err_feature[[outer_done]], hist_df$err_structure[[outer_done]])
-    } else {
-      NA_real_
-    }
+    sinkhorn_dispatches = sinkhorn_dispatches,
+    error = barycenter_error,
+    status = if (barycenter_converged) "converged" else "max_iter",
+    converged = barycenter_converged,
+    solver_diagnostics = solver_diagnostics,
+    iteration_solver_diagnostics = iteration_solver_diagnostics[seq_len(outer_done)]
   )
 }

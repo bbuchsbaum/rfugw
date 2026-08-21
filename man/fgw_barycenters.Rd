@@ -23,8 +23,8 @@ fgw_barycenters(
   solver = c("PGD", "PPA"),
   sinkhorn_max_iter = 500L,
   sinkhorn_tol = 1e-09,
-  sinkhorn_method = c("scaling", "log"),
-  precision = c("mixed", "double"),
+  sinkhorn_method = c("auto", "scaling", "log"),
+  precision = c("mixed", "double", "strict_double"),
   check_every = 10L,
   init_C = NULL,
   init_X = NULL,
@@ -95,7 +95,9 @@ fgw_barycenters(
 }
 \value{
 A list with \code{X}, \code{C}, \code{p}, \code{couplings}, \code{history}, \code{iterations},
-and \code{objective}.
+\code{objective}, outer \code{status}/\code{converged}, and compact final
+\code{solver_diagnostics} for each inner FGW problem. \code{history} includes
+aggregate inner-solver diagnostics for every barycenter iteration.
 }
 \description{
 Learns a fixed-size barycenter support by alternating between (entropic) FGW

@@ -1,0 +1,5 @@
+"case","median_elapsed_s","result_bytes","status","effective_method","dynamic_range","threshold"
+"uot_n64_scaling",0.00300000000000011,86056,"max_iter","scaling",9.99583065975457,500
+"uot_n64_log",0.135,87664,"converged","log",9.99583065975457,500
+"uot_n64_auto_safe",0.00300000000000011,86104,"max_iter","scaling",9.99583065975457,500
+"uot_n64_auto_adversarial",1.274,87712,"converged","log",99958.3065975457,500

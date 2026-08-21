@@ -134,6 +134,9 @@ test_that("POT-compatible alias names route to existing fast solvers", {
   )
   expect_equal(out_alias$plan, out_base$plan, tolerance = 1e-12)
   expect_equal(out_alias$fgw_dist, out_base$fgw_dist, tolerance = 1e-12)
+  expect_identical(out_alias$alpha_convention, "structure_share")
+  expect_equal(out_alias$feature_weight, 1 - fx$params$alpha)
+  expect_equal(out_alias$structure_weight, fx$params$alpha)
 
   fxu <- read_fixture("fugw_kl_sinkhorn_fixture.json")
   out_u_alias <- rfugw::fused_unbalanced_gromov_wasserstein(
@@ -166,6 +169,10 @@ test_that("POT-compatible alias names route to existing fast solvers", {
   )
   expect_equal(out_u_alias$pi_samp, out_u_base$pi_samp, tolerance = 1e-12)
   expect_equal(out_u_alias$fugw_cost, out_u_base$fugw_cost, tolerance = 1e-12)
+  expect_identical(
+    out_u_alias$alpha_convention,
+    "feature_coefficient_with_unit_structure"
+  )
 })
 
 test_that("entropic semirelaxed GW keeps row marginals and finite objective", {
@@ -348,4 +355,26 @@ test_that("fgw_barycenters returns valid fixed-support outputs", {
   expect_equal(vapply(out$couplings, nrow, integer(1)), rep(7L, 3L))
   expect_equal(out$history$iter[[nrow(out$history)]], out$iterations)
   expect_true(is.finite(out$objective))
+  legacy_names <- c(
+    "X", "C", "p", "couplings", "objectives", "objective", "history",
+    "iterations", "sinkhorn_dispatches", "error"
+  )
+  expect_identical(head(names(out), length(legacy_names)), legacy_names)
+  expect_true(all(c("status", "converged", "solver_diagnostics", "iteration_solver_diagnostics") %in% names(out)))
+  expect_length(out$solver_diagnostics, 3L)
+  expect_length(out$iteration_solver_diagnostics, out$iterations)
+  expect_true(all(c(
+    "solver_status", "all_solvers_converged", "max_solver_residual",
+    "inner_status", "all_inner_converged", "max_inner_residual"
+  ) %in% names(out$history)))
+  expected_diagnostics <- c(
+    "status", "converged", "residual", "iterations", "inner_status",
+    "inner_converged", "inner_residual", "max_inner_residual",
+    "inner_iterations"
+  )
+  expect_true(all(vapply(
+    out$solver_diagnostics,
+    function(x) identical(names(x), expected_diagnostics),
+    logical(1)
+  )))
 })

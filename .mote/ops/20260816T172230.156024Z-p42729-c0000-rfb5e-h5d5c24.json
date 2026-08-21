@@ -1,0 +1,1 @@
+{"actor":"cursor-fugw-impl","entity":"bd-01M05QY6QX0G2YB47DKP08616J","kind":"reserve_open","mode":"exclusive","op":"20260816T172230.156024Z-p42729-c0000-rfb5e-h5d5c24","paths":["R/linear_ot.R","src/fgw_core.cpp","tests/testthat/test-linear-ot.R"],"reservation_id":"rv-01M05SHB4CNG9Q9MVT0E6F11JP","ts":"2026-08-16T17:22:30.156024Z","ttl_s":3600,"v":1}

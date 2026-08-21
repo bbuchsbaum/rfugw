@@ -1,323 +1,378 @@
 ---
-title: "Multiset alignment"
-output: rmarkdown::html_vignette
-vignette: >
+title: Multiset alignment
+output:
+  rmarkdown::html_vignette:
+    toc: yes
+    toc_depth: 2.0
+    css: albers.css
+    includes:
+      in_header: albers-header.html
+params:
+  family: red
+  preset: homage
+resource_files:
+- albers.css
+- albers.js
+- albers-header.html
+- fonts
+
+vignette: |
   %\VignetteIndexEntry{Multiset alignment}
   %\VignetteEngine{knitr::rmarkdown}
   %\VignetteEncoding{UTF-8}
 ---
 
 ```{r setup, include = FALSE}
+if (requireNamespace("ragg", quietly = TRUE)) knitr::opts_chunk$set(dev = "ragg_png")
+if (requireNamespace("systemfonts", quietly = TRUE) && requireNamespace("albersdown", quietly = TRUE)) albersdown::albers_register_fonts()
+if (requireNamespace("ggplot2", quietly = TRUE) && requireNamespace("albersdown", quietly = TRUE)) ggplot2::theme_set(albersdown::theme_albers(family = params$family, preset = params$preset))
 knitr::opts_chunk$set(
-  collapse = TRUE,
-  comment = "#>",
-  message = FALSE,
-  warning = FALSE,
-  fig.width = 5,
-  fig.height = 4
+  collapse = TRUE, comment = "#>", message = FALSE, warning = FALSE,
+  fig.width = 5, fig.height = 4
 )
 ```
 
-When you have multiple subjects---brain scans, molecular graphs, sensor
-networks---and want to align them all into a shared coordinate system,
-`multialign_fit()` is the tool. It aligns each subject to a common template,
-producing a coupling matrix per subject that maps subject nodes to template
-nodes.
+```{r albers-classes, echo=FALSE, results='asis'}
+cat(sprintf(
+  paste0(
+    '<script>document.addEventListener("DOMContentLoaded",function(){',
+    'document.body.classList.remove("palette-red","palette-lapis","palette-ochre","palette-teal","palette-green","palette-violet","preset-homage","preset-interaction","preset-study","preset-structural","preset-adobe","preset-midnight");',
+    'document.body.classList.add("palette-%s","preset-%s");',
+    '});</script>'
+  ),
+  params$family,
+  params$preset
+))
+```
 
-## Quick example
+Multiset alignment puts several attributed structures into correspondence with
+one shared template. A subject might be a brain parcellation, graph, or point
+cloud; subjects may have different numbers of nodes. `multialign_fit()` returns
+one subject-to-template coupling per subject, plus the template and solver
+diagnostics.
 
-```{r quick-example}
+This vignette aligns three related point clouds, checks their couplings, then
+uses those couplings to move features and square matrices between subject and
+template coordinates.
+
+```{r load}
 library(rfugw)
+```
 
-set.seed(1)
-make_subject <- function(n, d_feat = 3, seed = 1) {
+## What does a subject look like?
+
+Each subject is a list containing a square structure matrix `C`. It may also
+contain node features `F`, probability weights `w`, and a character `id`.
+Features must use the same columns across subjects.
+
+```{r make-subjects}
+make_subject <- function(n, phase, seed) {
   set.seed(seed)
-  X <- matrix(rnorm(n * 2), n, 2)
-  C <- as.matrix(dist(X))
-  C <- C / max(C)
-  F <- matrix(rnorm(n * d_feat), n, d_feat)
-  list(C = C, F = F, id = paste0("s", seed))
+  angle <- seq(0, 2 * pi, length.out = n + 1)[-(n + 1)] + phase
+  xy <- cbind(cos(angle), 0.65 * sin(angle))
+  xy <- xy + matrix(rnorm(2 * n, sd = 0.04), ncol = 2)
+  C <- as.matrix(dist(xy))
+  F <- cbind(horizontal = xy[, 1], vertical = xy[, 2])
+  list(C = C / max(C), F = F, id = paste0("subject_", seed))
 }
 
 subjects <- list(
-  make_subject(15, seed = 1),
-  make_subject(18, seed = 2),
-  make_subject(12, seed = 3)
+  make_subject(12, 0.00, 1),
+  make_subject(15, 0.12, 2),
+  make_subject(10, -0.10, 3)
 )
-
-fit <- multialign_fit(
-  subjects = subjects,
-  k_template = 10,
-  alpha = 0.5,
-  epsilon = 0.05
-)
-
-names(fit$couplings)
 ```
 
-Each subject gets a coupling matrix that maps its nodes to the 10-node template.
-
-## How subjects are specified
-
-Each subject is a list with:
-
-- **`C`** (required): square structure matrix (e.g., pairwise distances)
-- **`F`** (optional): feature matrix (`n x d`)
-- **`w`** (optional): node weights (default: uniform)
-- **`id`** (optional): subject identifier string
-
-```{r subject-structure}
-# All subjects can have different numbers of nodes
-vapply(subjects, function(s) nrow(s$C), integer(1))
+```{r inspect-subjects}
+data.frame(
+  id = vapply(subjects, `[[`, character(1), "id"),
+  nodes = vapply(subjects, function(x) nrow(x$C), integer(1)),
+  features = vapply(subjects, function(x) ncol(x$F), integer(1))
+)
 ```
 
-## Building a template
+Missing `w` means uniform node weights. A missing `F` is allowed only when a
+compatible template is supplied; automatic template construction pools the
+subject features.
 
-When you don't provide a template, `multialign_fit()` builds one automatically
-from pooled subject features using k-means. You control the template size with
-`k_template`:
+## How do you align to a shared template?
 
-```{r template-auto}
+With `template = NULL`, `multialign_fit()` builds a template by clustering the
+pooled features. `k_template` chooses its number of nodes. The default
+`fgw_entropic` backend balances feature similarity and structural similarity.
+
+```{r fit-alignment}
 fit <- multialign_fit(
-  subjects = subjects,
-  template = NULL,
+  subjects,
   k_template = 8,
   alpha = 0.5,
-  epsilon = 0.05
-)
-dim(fit$template$C)
-dim(fit$template$F)
-```
-
-You can also build the template explicitly with `multialign_make_template()`:
-
-```{r template-explicit}
-tpl <- multialign_make_template(subjects, k = 10, seed = 42)
-str(tpl[c("C", "F", "w")])
-```
-
-Or provide your own template as a list with `C`, `F`, and `w`:
-
-```{r template-custom}
-fit_custom <- multialign_fit(
-  subjects = subjects,
-  template = tpl,
-  alpha = 0.5,
-  epsilon = 0.05
+  epsilon = 0.08,
+  max_iter = 50L,
+  sinkhorn_max_iter = 250L,
+  tol = 1e-9
 )
 ```
 
-## Working with couplings
-
-### Inspecting the coupling
-
-Each coupling is an `n_subject x n_template` matrix:
-
-```{r coupling-inspect}
-P <- fit$couplings$s1
-dim(P)
-
-# Row sums should match subject weights
-summary(rowSums(P))
-
-# Column sums should match template weights
-summary(colSums(P))
+```{r summarize-alignment}
+data.frame(
+  id = names(fit$couplings),
+  subject_nodes = vapply(fit$couplings, nrow, integer(1)),
+  template_nodes = vapply(fit$couplings, ncol, integer(1)),
+  status = fit$diagnostics$status,
+  converged = fit$diagnostics$converged,
+  inner_status = fit$diagnostics$inner_status,
+  objective = fit$objectives
+)
 ```
 
-### Projecting features into a shared space
+```{r check-alignment, include = FALSE}
+stopifnot(
+  identical(names(fit$couplings), vapply(subjects, `[[`, character(1), "id")),
+  identical(dim(fit$template$C), c(8L, 8L)),
+  all(is.finite(fit$template$C)), all(is.finite(fit$template$F)),
+  stats::sd(fit$template$C[upper.tri(fit$template$C)]) > 0,
+  all(is.finite(fit$objectives)),
+  all(is.finite(fit$diagnostics$error)),
+  all(fit$diagnostics$error <= 1e-9),
+  all(fit$diagnostics$status == "outer_converged_inner_unavailable"),
+  all(is.na(fit$diagnostics$converged)),
+  all(fit$diagnostics$inner_status == "unavailable"),
+  all(is.na(fit$diagnostics$inner_converged))
+)
+for (i in seq_along(subjects)) {
+  P <- fit$couplings[[i]]
+  subject_w <- rep(1 / nrow(subjects[[i]]$C), nrow(subjects[[i]]$C))
+  stopifnot(
+    all(is.finite(P)), all(P >= 0), diff(range(P)) > 0,
+    max(abs(rowSums(P) - subject_w)) < 2e-5,
+    max(abs(colSums(P) - fit$template$w)) < 2e-5
+  )
+}
+```
 
-Use `multialign_project_features()` to map template-level features (e.g., a
-shared embedding) back to each subject's native resolution:
+Each coupling has one row per subject node and one column per template node.
+For balanced FGW, its row and column sums reproduce the subject and template
+weights. Different node counts do not by themselves require an unbalanced
+solver. This run uses the native batch path: the outer stopping residual and
+balanced feasibility checks pass, but the batch kernel does not return nested
+Sinkhorn certificates. Consequently `converged` is `NA` and `inner_status` is
+`"unavailable"`; the result does not claim fully certified convergence.
+
+## How do you reuse a template?
+
+Build a template explicitly when several analyses should use the same target,
+or when you want to inspect and save it before fitting.
+
+```{r make-template}
+template <- multialign_make_template(subjects, k = 8, seed = 42)
+fit_fixed <- multialign_fit(
+  subjects, template = template,
+  alpha = 0.5, epsilon = 0.08,
+  max_iter = 50L, sinkhorn_max_iter = 250L
+)
+```
+
+```{r summarize-fixed}
+fit_fixed$diagnostics[, c(
+  "id", "status", "converged", "inner_status", "objective"
+)]
+```
+
+```{r check-fixed, include = FALSE}
+stopifnot(
+  identical(fit_fixed$template, template),
+  length(fit_fixed$couplings) == length(subjects),
+  all(is.finite(fit_fixed$objectives)),
+  all(fit_fixed$diagnostics$status ==
+        "outer_converged_inner_unavailable"),
+  all(is.na(fit_fixed$diagnostics$converged)),
+  all(fit_fixed$diagnostics$inner_status == "unavailable"),
+  all(is.na(fit_fixed$diagnostics$inner_converged)),
+  all(is.finite(fit_fixed$diagnostics$error)),
+  all(fit_fixed$diagnostics$error <= 1e-9)
+)
+for (i in seq_along(subjects)) {
+  P <- fit_fixed$couplings[[i]]
+  subject_w <- rep(1 / nrow(subjects[[i]]$C), nrow(subjects[[i]]$C))
+  stopifnot(
+    max(abs(rowSums(P) - subject_w)) < 2e-5,
+    max(abs(colSums(P) - template$w)) < 2e-5
+  )
+}
+```
+
+An explicit template can also be any valid list with `C`, `F`, and `w`. Reusing
+one makes coordinates comparable across separate runs; an automatically built
+template is specific to the subjects supplied in that call.
+
+## How do you project template features to a subject?
+
+`multialign_project_features()` maps a template-level matrix back to subject
+resolution. Row normalization turns each subject row of the coupling into
+weights over template nodes.
 
 ```{r project-features}
-# Suppose the template carries a learned embedding
-E_template <- fit$template$F
-
-# Project it to each subject's nodes
-E_s1 <- multialign_project_features(fit$couplings$s1, E_template)
-E_s2 <- multialign_project_features(fit$couplings$s2, E_template)
-
-dim(E_s1)
-dim(E_s2)
+P1 <- fit$couplings$subject_1
+subject_1_features <- multialign_project_features(P1, fit$template$F)
+data.frame(
+  feature = colnames(subject_1_features),
+  correlation = diag(cor(subjects[[1]]$F, subject_1_features))
+)
 ```
 
-Now `E_s1` and `E_s2` live in the same d-dimensional feature space, enabling
-direct cross-subject comparison.
+```{r check-features, include = FALSE}
+stopifnot(
+  identical(dim(subject_1_features), c(12L, 2L)),
+  all(is.finite(subject_1_features)),
+  sum(apply(subject_1_features, 2, stats::var)) > 0,
+  all(diag(cor(subjects[[1]]$F, subject_1_features)) > 0.9)
+)
+```
 
-### Projecting a subject matrix to template space
+The output has one row per subject node and the same columns as the template
+features. The high correlations show that this synthetic alignment preserves
+the known feature pattern. Because the template was built from these same
+features, this is an illustrative sanity check, not independent accuracy
+evidence.
 
-Use `multialign_project_matrix()` to push a subject's square matrix (e.g.,
-connectivity, correlation) into template coordinates:
+## How do you move a square matrix to template space?
+
+`multialign_project_matrix()` pushes a subject-level square matrix through both
+sides of the coupling. This is useful for connectivity or similarity matrices.
 
 ```{r project-matrix}
-# Project subject 1's structure into template space
-C_proj <- multialign_project_matrix(
-  fit$couplings$s1,
-  subjects[[1]]$C,
-  normalize = "col"
+template_structure <- multialign_project_matrix(
+  P1, subjects[[1]]$C, normalize = "col"
 )
-dim(C_proj)
+dim(template_structure)
 ```
 
-## Choosing between FGW and FUGW backends
+```{r check-matrix, include = FALSE}
+stopifnot(
+  identical(dim(template_structure), c(8L, 8L)),
+  all(is.finite(template_structure)),
+  max(abs(template_structure - t(template_structure))) < 1e-10,
+  stats::sd(template_structure[upper.tri(template_structure)]) > 0
+)
+```
 
-`multialign_fit()` supports two solver backends:
+Normalization changes the interpretation. Use `"row"` when interpolating
+template values at subject nodes and `"col"` when aggregating subject values
+at template nodes; use `multialign_normalize_plan()` directly when you need to
+inspect those weights.
 
-- **`"fgw_entropic"`** (default): Standard Fused GW with entropic
-  regularization. Both marginals are fixed.
-- **`"fugw_kl"`**: Fused Unbalanced GW with KL marginal relaxation. Allows
-  partial or unbalanced mass transfer.
+## When should you use unbalanced FUGW?
 
-```{r fugw-backend}
-fit_fugw <- multialign_fit(
-  subjects = subjects,
-  k_template = 10,
+The default `method = "fgw_entropic"` fixes both marginals. Choose
+`method = "fugw_kl"` when unmatched regions, contamination, or genuine mass
+variation make exact marginal preservation inappropriate.
+
+```{r fit-unbalanced}
+fit_unbalanced <- multialign_fit(
+  subjects,
+  template = template,
   method = "fugw_kl",
   alpha = 0.5,
-  epsilon = 0.01,
-  reg_marginals = c(10, 10)
+  epsilon = 0.5,
+  reg_marginals = c(1, 1),
+  max_iter = 200L,
+  tol = 1e-6,
+  max_iter_ot = 1000L,
+  tol_ot = 1e-6,
+  use_cpp_batch = FALSE
 )
-
-# FUGW allows non-uniform marginals
-summary(rowSums(fit_fugw$couplings$s1))
+data.frame(
+  id = names(fit_unbalanced$couplings),
+  status = fit_unbalanced$diagnostics$status,
+  inner_status = fit_unbalanced$diagnostics$inner_status,
+  transported_mass = fit_unbalanced$diagnostics$plan_mass
+)
 ```
 
-Use `"fugw_kl"` when subject sizes differ substantially or when you expect only
-partial correspondence.
+```{r check-unbalanced, include = FALSE}
+unbalanced_mass <- vapply(fit_unbalanced$couplings, sum, numeric(1))
+stopifnot(
+  all(vapply(fit_unbalanced$couplings, function(P) {
+    all(is.finite(P)) && all(P >= 0) && diff(range(P)) > 0
+  }, logical(1))),
+  all(is.finite(unbalanced_mass)), all(unbalanced_mass > 0),
+  all(fit_unbalanced$diagnostics$status == "converged"),
+  all(fit_unbalanced$diagnostics$converged),
+  all(fit_unbalanced$diagnostics$inner_status == "converged"),
+  all(fit_unbalanced$diagnostics$inner_converged),
+  all(is.finite(fit_unbalanced$diagnostics$error)),
+  all(fit_unbalanced$diagnostics$error <= 1e-6),
+  all(is.finite(fit_unbalanced$diagnostics$max_inner_residual)),
+  all(fit_unbalanced$diagnostics$max_inner_residual <= 1e-6)
+)
+```
 
-## Learned templates
+Unbalanced row and column sums are intentionally relaxed. The
+`reg_marginals` penalties control that relaxation, so transported mass and
+solver diagnostics should be checked rather than judged by balanced marginal
+equalities.
 
-By default, `multialign_fit()` uses `template_mode = "fixed"`---the template
-stays constant. With `template_mode = "learned"`, the template is iteratively
-updated as a barycenter of the aligned subjects:
+## Should the template be fixed or learned?
 
-```{r learned-template}
-fit_learned <- multialign_fit(
-  subjects = subjects,
+The default `template_mode = "fixed"` estimates couplings to an unchanged
+template. `template_mode = "learned"` alternates alignment with
+barycenter-style template updates.
+
+```{r fit-learned-template}
+learned <- multialign_fit(
+  subjects,
+  template = template,
   template_mode = "learned",
-  k_template = 10,
   alpha = 0.5,
-  epsilon = 0.05,
-  template_max_iter = 4,
-  template_tol = 1e-6
+  epsilon = 0.08,
+  max_iter = 40L,
+  template_max_iter = 3L
 )
-
-# Template was refined across outer iterations
-fit_learned$outer_iterations
-
-# Convergence history
-fit_learned$template_history
-```
-
-Learned templates adapt to the data but cost more computation (one full
-alignment pass per outer iteration).
-
-## Diagnostics
-
-`multialign_fit()` returns a diagnostics data frame with per-subject solver
-statistics:
-
-```{r diagnostics}
-fit$diagnostics[, c("id", "n_nodes", "objective", "iterations")]
-```
-
-## Performance tuning
-
-### C++ batch mode
-
-When aligning many subjects, the C++ batch kernel processes all subjects in a
-single vectorized call with OpenMP parallelism:
-
-```{r batch-mode}
-fit_fast <- multialign_fit(
-  subjects = subjects,
-  k_template = 10,
-  alpha = 0.5,
-  epsilon = 0.05,
-  use_cpp_batch = TRUE,
-  n_threads = 2
-)
-fit_fast$used_cpp_batch
-```
-
-### Mixed precision
-
-`precision = "mixed"` (the default in `multialign_fit()`) uses single-precision
-inner Sinkhorn iterations for a 1.5--2x speedup:
-
-```{r mixed-precision}
-fit_mixed <- multialign_fit(
-  subjects = subjects,
-  k_template = 10,
-  alpha = 0.5,
-  epsilon = 0.05,
-  precision = "mixed"
+last_template_step <- learned$template_history[learned$outer_iterations, ]
+data.frame(
+  outer_iterations = learned$outer_iterations,
+  stopped_at_cap = learned$outer_iterations == 3L,
+  template_tolerance_met =
+    last_template_step$delta_template < 1e-6 &&
+    last_template_step$delta_objective < 1e-6
 )
 ```
 
-### Autotune
-
-For large problems, `autotune = TRUE` automatically caps iteration counts and
-check intervals based on problem size:
-
-```{r autotune}
-fit_auto <- multialign_fit(
-  subjects = subjects,
-  k_template = 10,
-  alpha = 0.5,
-  epsilon = 0.05,
-  autotune = TRUE,
-  autotune_level = "moderate"
+```{r check-learned, include = FALSE}
+stopifnot(
+  is.data.frame(learned$template_history),
+  nrow(learned$template_history) == learned$outer_iterations,
+  all(is.finite(learned$template_history$objective_total)),
+  all(is.finite(learned$template_history$delta_template)),
+  learned$outer_iterations == 3L,
+  !(last_template_step$delta_template < 1e-6 &&
+      last_template_step$delta_objective < 1e-6),
+  max(abs(learned$template$C - template$C)) > 0
 )
-fit_auto$autotuned_controls
 ```
 
-### Low-rank structure approximation
+A learned template is a fitted summary of the supplied collection rather than
+a fixed external reference. It costs additional alignment passes and makes the
+result specific to those inputs. In this example the run reaches its
+three-iteration cap; it must not be described as converged unless both reported
+deltas meet `template_tol`. Even when they do, the non-convex optimization does
+not establish a unique or globally optimal template.
 
-`structure_rank` enables a low-rank approximation of the GW tensor product.
-Use `"auto"` for size-aware rank selection:
+## What should you tune first?
 
-```{r structure-rank}
-fit_lr <- multialign_fit(
-  subjects = subjects,
-  k_template = 10,
-  alpha = 0.5,
-  epsilon = 0.05,
-  structure_rank = "auto"
-)
-fit_lr$structure_rank
-```
+- `alpha` controls structure (`1`) versus features (`0`). Choose it from the
+  scientific question or downstream validation.
+- `epsilon` controls entropic smoothing. Smaller values can sharpen couplings
+  but are harder to optimize.
+- `precision`, batching, low-rank structure, and `autotune` are performance
+  controls. Establish a trustworthy full-precision result before relying on
+  approximations, and compare both objectives and coupling feasibility.
 
-## Putting it together: a typical workflow
+## Where should you go next?
 
-```{r full-workflow}
-# 1. Prepare subjects
-subjects <- lapply(1:5, function(i) {
-  make_subject(n = sample(10:20, 1), seed = i)
-})
-
-# 2. Align to a shared template
-fit <- multialign_fit(
-  subjects = subjects,
-  k_template = 12,
-  method = "fgw_entropic",
-  alpha = 0.5,
-  epsilon = 0.05,
-  precision = "mixed",
-  use_cpp_batch = TRUE,
-  n_threads = 2
-)
-
-# 3. Project all subjects into the shared feature space
-shared_features <- lapply(names(fit$couplings), function(id) {
-  multialign_project_features(fit$couplings[[id]], fit$template$F)
-})
-
-# 4. Now all subjects have features in the same 3-d space
-vapply(shared_features, dim, integer(2))
-```
-
-## Next steps
-
-- `vignette("solver-guide")`: details on each solver variant
-- `vignette("barycenters")`: computing GW barycenters directly
+- `vignette("barycenters")` explains direct fixed-support GW and FGW
+  barycenters.
+- `vignette("solver-guide")` covers solver formulations, convergence, and
+  diagnostics.
+- See `?multialign_fit` and `?multialign_project_features` for the complete
+  interfaces.

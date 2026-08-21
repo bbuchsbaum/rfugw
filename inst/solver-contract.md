@@ -19,6 +19,15 @@ Current global limits:
 - Inner structural loss is `square_loss` only.
 - There is no Python runtime dependency.
 - Numerical claims are guarded by tests and, where advertised, POT fixtures.
+- Symmetric and asymmetric partial GW/FGW use the same canonical square-loss
+  tensor module. The general path is certified by O(n^4) loss/gradient,
+  directional-derivative, permutation, exact-LP, and entropic-projection
+  oracles. Passing `symmetric = TRUE` never overrides validation of asymmetric
+  inputs.
+- `inst/numerical-trust-charter.md` defines the test families and evidence
+  required for a path to be classified as supported.
+- `inst/numerical-path-matrix.csv` is the executable inventory of advertised
+  backend, precision, adapter, start, threading, and approximation paths.
 
 ## Compatibility policy
 
@@ -56,6 +65,7 @@ Current global limits:
 |---|---|---|
 | `ot_sinkhorn` | Balanced entropic linear OT | Flagship |
 | `ot_emd` | Exact balanced linear OT | Flagship |
+| `ot_partial_emd` | Exact nonnegative-cost partial linear OT | Supported |
 | `ot_sinkhorn_unbalanced` | KL-unbalanced entropic linear OT | Flagship |
 | `fgw_entropic` | Entropic FGW | Flagship |
 | `fgw_exact_cg` | Unregularized FGW (CG + LP) | Flagship |
@@ -122,6 +132,11 @@ These evaluators are independent of solver internals. Reported
 `ot_dist` / `fgw_dist` values must match `ot_linear_cost` /
 `ot_fgw_square` on the returned plan.
 
+`ot_kl(plan, p, q)` is generalized KL from `plan` to `p %o% q`: it
+includes `-sum(plan) + sum(p %o% q)`. Zero-over-zero terms contribute zero,
+while positive plan mass outside zero reference support returns `Inf`.
+`ot_entropy()` remains the separate `sum(plan * log(plan))` functional.
+
 Alignment helpers: `graph_diffusion_coordinates`, `multialign_fit`,
 `multialign_make_template`, `multialign_normalize_plan`,
 `multialign_project_features`, `multialign_project_matrix`.
@@ -137,12 +152,27 @@ remain for compatibility.
 | `plan` | Coupling matrix. Balanced solvers satisfy the documented marginals up to residual. |
 | `iterations` | Outer iterations executed. |
 | `inner_iterations` | Inner linear-OT / Sinkhorn iterations, when a nested solver exists. |
+| `inner_residual`, `max_inner_residual` | Residual from the final required inner solve and the maximum across required inner solves. A final small value does not erase an earlier uncertified solve. |
+| `inner_converged`, `inner_status` | Whether every formulation-required inner solve was certified, plus its final/specific status. Outer convergence cannot be `TRUE` when this field is `FALSE`. |
 | `error` | Stopping residual used by that solver (see table below). Prefer `residual` for new code. |
 | `residual` | Same numeric quantity as `error`, with a documented unit. |
 | `rel_error` | Relative cost change, used by unregularized CG. |
-| `row_residual`, `col_residual` | `max(abs(rowSums(plan) - p))` and `max(abs(colSums(plan) - q))` after any documented renormalization. Unbalanced solvers report mass and KL residuals instead. |
-| `status` | One of `converged`, `max_iter`, `numerical_failure`, `lp_failure`. |
-| `converged` | `TRUE` only when `status == "converged"`. Iteration limit and NaN/Inf breakdown are never success. |
+| `row_residual`, `col_residual` | Balanced: `max(abs(rowSums(plan) - p))` and `max(abs(colSums(plan) - q))`. Partial: maximum positive row/column capacity violation. |
+| `mass`, `mass_residual` | Returned mass and, for partial solvers, `abs(sum(plan) - requested_mass)`. Partial log results also expose `transported_mass_target` and whether it was defaulted. |
+| `feasibility`, `feasibility_residual`, `feasibility_tolerance`, `feasible` | Formulation-specific certificate. Balanced solvers check both marginals; partial solvers check marginal inequalities and transported mass; semirelaxed solvers check the fixed source marginal; unbalanced solvers use the required scaling fixed-point certificate. |
+| `objective_recomputed`, `objective_residual`, `objective_tolerance`, `objective_consistent` | Independent evaluation of the advertised objective, its discrepancy from the reported value, the comparison threshold, and the resulting certificate. Named objective components expose analogous `*_recomputed`, `*_residual`, and `*_consistent` fields. |
+| `objective_components_consistent` | Whether every independently checked named objective component is finite and self-consistent. |
+| `status` | Normally one of `converged`, `max_iter`, `inner_failure`, `infeasible`, `objective_mismatch`, `numerical_failure`, `lp_failure`. Exact linear OT preserves its more specific internal failure reason. |
+| `converged` | `TRUE` only when `status == "converged"`: the plan is finite and nonnegative, formulation feasibility passes, reported and independently recomputed objectives agree, every required inner solve is certified, and the solver's stopping rule passes. Iteration count alone never establishes success. |
+| `termination_reason` | Exact linear OT uses `optimal`, `max_iter`, `disconnected_basis`, `invalid_cycle`, `invalid_step`, `no_leaving_variable`, or `numerical_failure`. |
+| `source_potential`, `target_potential` | Dual potentials for exact balanced linear OT. Their weighted sum is `dual_objective`. |
+| `primal_objective`, `dual_objective`, `duality_gap` | Exact-OT certificate values. The gap is primal minus dual. |
+| `min_reduced_cost` | Minimum `M[i,j] - source_potential[i] - target_potential[j]` over nonbasic cells. |
+| `feasibility_tolerance`, `reduced_cost_tolerance`, `duality_gap_tolerance` | The actual thresholds used to certify an exact transport result. |
+| `requested_tol`, `effective_tol`, `requested_inner_tol`, `effective_inner_tol` | Caller requests and the thresholds actually used. They are always reported on precision-selecting flagship solvers. |
+| `requested_precision`, `effective_precision`, `compute_precision` | Requested policy, selected backend policy, and arithmetic reported by the native implementation. |
+| `backend_transition`, `automatic_backend_transition` | Names and flags any automatic precision/backend transition. `none` means no transition. |
+| `warning_payload` | `NULL` for a certified result; otherwise a structured failure code and message suitable for callers that do not want emitted warnings. |
 
 Flagship solvers return an `rfugw_result` list. `print()` / `summary()` show
 diagnostics without dumping the plan. Accessors `rfugw_plan()`,
@@ -151,10 +181,18 @@ downstream API. Legacy fields (`plan`, `fgw_dist`, `error`, ...) remain.
 The object is a named list, so `saveRDS()` / `readRDS()` and copies preserve
 fields and the S3 class.
 
+For every public solver result, `converged == TRUE` therefore implies
+`feasible == TRUE`, `objective_consistent == TRUE`,
+`objective_components_consistent == TRUE`, and either no required nested
+certificate or `inner_converged == TRUE`. A failed implication is represented
+by its specific status and termination reason; it is never repaired by merely
+reaching or avoiding an iteration limit.
+
 ### Residual units by family
 
 | Family | `error` / `residual` |
 |---|---|
+| Exact balanced linear OT | Maximum of row residual, column residual, reduced-cost violation, and absolute primal-dual gap; `Inf` unless certified optimal |
 | Entropic GW/FGW | Frobenius norm of the outer plan update |
 | Unregularized CG GW/FGW | Absolute objective change |
 | FUGW / UCOOT | L1 change of the sample coupling |
@@ -167,8 +205,24 @@ fields and the S3 class.
 
 `M`, `C1`, `C2`, `p`, `q`, `alpha`, `epsilon`, `max_iter`, `tol`,
 `sinkhorn_max_iter`, `sinkhorn_tol`, `init_plan` / `G0`, `structure_rank`,
-`sinkhorn_method` (`scaling`, `log`), `precision` (`mixed`, `double`),
+`sinkhorn_method` (`scaling`, `log`, `auto`), `precision` (`mixed`, `double`,
+`strict_double`),
 `symmetric`, `solver` (`PGD`, `PPA`), `check_every`.
+
+The float tolerance boundary is `1e-6`. A `mixed` request with either outer
+or inner tolerance below that boundary is promoted to `strict_double`; the
+requested tolerance is preserved. `strict_double` never enters a float path.
+For scaling-domain PGD problems at least 32 by 32, `double` may select the
+reported `mixed_accelerated` backend only when both tolerances are at least
+`1e-6`. Log Sinkhorn, PPA, tight requests, and smaller problems remain double.
+The result records the transition and the C++-reported arithmetic path.
+`sinkhorn_method = "auto"` computes a conservative scaled-cost criterion. In
+double precision, scaling is eligible only when both the maximum exponent
+magnitude and scaled span are at most 500 (50 for mixed/float arithmetic).
+Auto records the requested/effective method, threshold, metric, transition, and
+reason. It selects genuine log-domain Sinkhorn outside that regime. Explicit
+scaling outside the same regime errors and never silently returns a clipped
+kernel as the requested problem.
 
 `loss_fun` is accepted only as `"square_loss"`; any other value is
 unsupported.
@@ -188,16 +242,16 @@ computation.
 
 `Cx`, `Cy`, `wx`, `wy`, `reg_marginals`, `epsilon`, `alpha`, `M`,
 `init_pi`, `max_iter`, `tol`, `max_iter_ot`, `tol_ot`, `rescale_plan`,
-`check_every`, `precision`.
+`check_every`, `precision` (`mixed`, `double`, `strict_double`). Tight mixed
+requests are promoted to strict double with no tolerance floor.
 
 ### UCOOT / across-spaces (`bd-01M05QY37G4BNPY5WNH9K387A4`)
 
 Supported:
 
 - `divergence = "kl"`
-- `unbalanced_solver = "sinkhorn"` ( `"sinkhorn_log"` is an accepted alias
-  of the same scaling-domain implementation until a true log-domain path
-  exists)
+- `unbalanced_solver = "sinkhorn"`; the former `"sinkhorn_log"` scaling alias
+  is deprecated and errors rather than claiming log-domain behavior
 - `reg_type = "joint"` or `"independent"`
 - `epsilon > 0` (default `1e-2`)
 
@@ -222,12 +276,17 @@ Explicitly ignored:
 ## Symmetry (`bd-01M05QY3MGVG3YQS0DTRG1PR7K`)
 
 - Default is auto-detect: `symmetric = NULL` means
-  `max(abs(C - t(C))) <= 1e-10` on both structure costs.
+  `max(abs(C - t(C))) <= 1e-10 + 1e-12 * max(abs(C), 1)` on both structure
+  costs. The absolute-plus-relative rule is stable across matrix scales.
 - `symmetric = TRUE` is a correctness claim. If the costs fail the
   tolerance, the call errors. It is not a silent fast-path override.
 - `symmetric = FALSE` always uses the two-sided tensor.
 - The symmetric fast path and the general path must agree on symmetric
   inputs.
+
+All public iteration, rank, sampling-budget, dummy-node, and check-interval
+counts must be exact finite integers in range. Fractional values are rejected;
+they are never truncated before validation.
 
 ## Warm starts
 
@@ -258,8 +317,10 @@ parallel kernels are the C++ batched paths used by `multialign_fit()`
   `inst/bench/benchmark_thread_scaling.R` and
   `inst/bench/threading-memory.md`.
 - Hosted ASan/UBSan builds disable OpenMP. They certify serial memory
-  safety, not data races. Threaded correctness is the 1-vs-N
-  equivalence test. There is no TSan job.
+  safety, not data races. Threaded correctness includes 1/2/4 equivalence;
+  the nightly pure-C++ OpenMP harness runs under ThreadSanitizer for shared
+  caches, disjoint writes, exception capture, and nested suppression. See
+  `inst/thread-safety.md`.
 
 RNG and deterministic sampling:
 

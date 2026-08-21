@@ -1,0 +1,1 @@
+{"actor":"cursor-fugw-impl","entity":"bd-01M05QY759KA7W2VQHYSPEEJ1M","kind":"reserve_open","mode":"exclusive","op":"20260816T173917.035049Z-p48365-c0000-r5dc0-hd189bc","paths":["R/ot_utils.R","tests/testthat/test-ot-utils.R","NAMESPACE"],"reservation_id":"rv-01M05TG2DA1T9149WGWDW1XVN2","ts":"2026-08-16T17:39:17.035049Z","ttl_s":3600,"v":1}

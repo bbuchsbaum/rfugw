@@ -1,0 +1,12 @@
+{
+  "schema_version": 1,
+  "entries": [
+    {
+      "effective_date": "2026-08-20",
+      "thresholds_md5": "0e56be37b1d3c55f825816140b81a471",
+      "evidence": "inst/bench/threshold-separation-evidence.md",
+      "review_requirement": "Any threshold or cap change must retain same-commit protocol artifacts and an explicit reviewer note.",
+      "comparability": "schema v2 starts a new certified-comparison series; legacy max_iter rows remain performance-only historical data"
+    }
+  ]
+}

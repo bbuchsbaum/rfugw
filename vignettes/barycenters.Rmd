@@ -1,214 +1,312 @@
 ---
-title: "Computing GW barycenters"
-output: rmarkdown::html_vignette
-vignette: >
+title: Computing GW barycenters
+output:
+  rmarkdown::html_vignette:
+    toc: yes
+    toc_depth: 2.0
+    css: albers.css
+    includes:
+      in_header: albers-header.html
+params:
+  family: red
+  preset: homage
+resource_files:
+- albers.css
+- albers.js
+- albers-header.html
+- fonts
+
+vignette: |
   %\VignetteIndexEntry{Computing GW barycenters}
   %\VignetteEngine{knitr::rmarkdown}
   %\VignetteEncoding{UTF-8}
 ---
 
 ```{r setup, include = FALSE}
+if (requireNamespace("ragg", quietly = TRUE)) knitr::opts_chunk$set(dev = "ragg_png")
+if (requireNamespace("systemfonts", quietly = TRUE) && requireNamespace("albersdown", quietly = TRUE)) albersdown::albers_register_fonts()
+if (requireNamespace("ggplot2", quietly = TRUE) && requireNamespace("albersdown", quietly = TRUE)) ggplot2::theme_set(albersdown::theme_albers(family = params$family, preset = params$preset))
 knitr::opts_chunk$set(
-  collapse = TRUE,
-  comment = "#>",
-  message = FALSE,
-  warning = FALSE,
-  fig.width = 5,
-  fig.height = 4
+  collapse = TRUE, comment = "#>", message = FALSE, warning = FALSE,
+  fig.width = 5, fig.height = 4
 )
 ```
 
-A **Gromov-Wasserstein barycenter** is the "average shape" of a collection of
-metric-measure spaces. Given several structure matrices (and optionally
-features), the barycenter solver finds a new structure matrix and feature matrix
-that best summarize the input collection in the GW sense.
+```{r albers-classes, echo=FALSE, results='asis'}
+cat(sprintf(
+  paste0(
+    '<script>document.addEventListener("DOMContentLoaded",function(){',
+    'document.body.classList.remove("palette-red","palette-lapis","palette-ochre","palette-teal","palette-green","palette-violet","preset-homage","preset-interaction","preset-study","preset-structural","preset-adobe","preset-midnight");',
+    'document.body.classList.add("palette-%s","preset-%s");',
+    '});</script>'
+  ),
+  params$family,
+  params$preset
+))
+```
 
-This is useful for:
+A GW barycenter summarizes several weighted structures with a new,
+fixed-size structure. An FGW barycenter can also summarize node features. The
+inputs may contain different numbers of nodes because the solver learns a
+coupling from each sample to the shared barycenter.
 
-- Summarizing multiple subjects into a representative template
-- Initializing a shared coordinate system for downstream alignment
-- Visualizing the central tendency of a set of shapes or graphs
+This vignette combines three related point-cloud shapes into an eight-node
+template. You will obtain its structure matrix, feature matrix, weights, and
+one coupling per input sample.
 
-## Setup: three small graphs
-
-We'll create three small "graphs" (point clouds with pairwise distance
-structure) that share a similar shape but differ in detail.
-
-```{r create-samples}
+```{r load}
 library(rfugw)
+```
 
-make_sample <- function(n, d_feat = 2, seed = 1) {
+## What does each sample contain?
+
+Each sample needs a square structure matrix `C` and a feature matrix `F` with
+one row per node. Here, `C` contains normalized pairwise distances, while `F`
+contains two measured attributes. All feature matrices must have the same
+number of columns.
+
+```{r make-samples}
+make_sample <- function(n, phase, seed) {
   set.seed(seed)
-  X <- matrix(rnorm(n * 3), n, 3)
-  C <- as.matrix(dist(X))
+  angle <- seq(0, 2 * pi, length.out = n + 1)[-(n + 1)] + phase
+  xy <- cbind(cos(angle), 0.7 * sin(angle))
+  xy <- xy + matrix(rnorm(2 * n, sd = 0.04), ncol = 2)
+  C <- as.matrix(dist(xy))
   C <- C / max(C)
-  F <- matrix(rnorm(n * d_feat), n, d_feat)
+  F <- cbind(horizontal = xy[, 1], vertical = xy[, 2])
   list(C = C, F = F)
 }
 
-s1 <- make_sample(12, seed = 1)
-s2 <- make_sample(14, seed = 2)
-s3 <- make_sample(10, seed = 3)
+samples <- list(
+  make_sample(8, 0.00, 1),
+  make_sample(10, 0.12, 2),
+  make_sample(9, -0.10, 3)
+)
+Cs <- lapply(samples, `[[`, "C")
+Ys <- lapply(samples, `[[`, "F")
 ```
 
-## Computing the FGW barycenter
+```{r inspect-inputs}
+data.frame(
+  sample = seq_along(samples),
+  nodes = vapply(Cs, nrow, integer(1)),
+  features = vapply(Ys, ncol, integer(1))
+)
+```
 
-`fgw_barycenters()` learns a fixed-size barycenter by alternating between FGW
-coupling steps and closed-form barycenter updates. You specify `N`, the number
-of nodes in the output barycenter.
+Structure and feature scales affect the optimization. In this example the
+structures are scaled to `[0, 1]`; the default feature-cost normalization also
+scales each cross-feature cost before solving.
 
-```{r fgw-barycenter}
+## How do you fit an FGW barycenter?
+
+`fgw_barycenters()` alternates between FGW couplings and closed-form updates
+of the barycenter. `N` sets the output size, not the size of any particular
+sample.
+
+```{r fit-barycenter}
 bary <- fgw_barycenters(
-  N = 10,
-  Ys = list(s1$F, s2$F, s3$F),
-  Cs = list(s1$C, s2$C, s3$C),
-  alpha = 0.5,
-  epsilon = 0.05,
-  max_iter = 50,
-  random_state = 42
+  N = 8, Ys = Ys, Cs = Cs,
+  alpha = 0.5, epsilon = 0.08,
+  max_iter = 30L, tol = 1e-4, random_state = 42
 )
 ```
 
-The result contains the learned barycenter structure and features:
-
-```{r bary-inspect}
-# Barycenter structure matrix
-dim(bary$C)
-
-# Barycenter features
-dim(bary$X)
-
-# Convergence history
-tail(bary$history, 3)
-```
-
-## How alpha affects the barycenter
-
-The `alpha` parameter controls whether the barycenter emphasizes structure
-matching or feature matching:
-
-```{r alpha-comparison}
-bary_struct <- fgw_barycenters(
-  N = 10,
-  Ys = list(s1$F, s2$F, s3$F),
-  Cs = list(s1$C, s2$C, s3$C),
-  alpha = 0.9,
-  epsilon = 0.05,
-  max_iter = 50,
-  random_state = 42
+```{r summarize-barycenter}
+data.frame(
+  status = bary$status,
+  converged = bary$converged,
+  nodes = nrow(bary$C),
+  features = ncol(bary$X),
+  iterations = bary$iterations,
+  final_update = bary$error,
+  objective = bary$objective
 )
+```
 
-bary_feat <- fgw_barycenters(
-  N = 10,
-  Ys = list(s1$F, s2$F, s3$F),
-  Cs = list(s1$C, s2$C, s3$C),
-  alpha = 0.1,
-  epsilon = 0.05,
-  max_iter = 50,
-  random_state = 42
+```{r check-barycenter, include = FALSE}
+last <- bary$history[nrow(bary$history), ]
+stopifnot(
+  identical(dim(bary$C), c(8L, 8L)),
+  identical(dim(bary$X), c(8L, 2L)),
+  all(is.finite(bary$C)), all(is.finite(bary$X)),
+  is.finite(bary$objective), is.finite(last$err_structure),
+  identical(bary$status, "converged"), isTRUE(bary$converged),
+  bary$error <= 1e-4,
+  isTRUE(last$all_solvers_converged),
+  isTRUE(last$all_inner_converged),
+  is.finite(last$max_inner_residual),
+  max(abs(bary$C - t(bary$C))) < 1e-10,
+  max(abs(diag(bary$C))) < 1e-10,
+  stats::sd(bary$C[upper.tri(bary$C)]) > 0,
+  sum(apply(bary$X, 2, stats::var)) > 0,
+  abs(sum(bary$p) - 1) < 1e-10
 )
-
-cat("Structure-heavy objective:", bary_struct$objective, "\n")
-cat("Feature-heavy objective:  ", bary_feat$objective, "\n")
+for (i in seq_along(bary$couplings)) {
+  P <- bary$couplings[[i]]
+  stopifnot(
+    all(is.finite(P)), all(P >= 0), diff(range(P)) > 0,
+    max(abs(rowSums(P) - bary$p)) < 1e-5,
+    max(abs(colSums(P) - rep(1 / nrow(Cs[[i]]), nrow(Cs[[i]])))) < 1e-5
+  )
+}
 ```
 
-## Weighted barycenters
-
-The `lambdas` parameter lets you weight each sample differently. This is useful
-when some samples are more reliable or representative:
-
-```{r weighted-bary}
-bary_w <- fgw_barycenters(
-  N = 10,
-  Ys = list(s1$F, s2$F, s3$F),
-  Cs = list(s1$C, s2$C, s3$C),
-  lambdas = c(0.5, 0.3, 0.2),
-  alpha = 0.5,
-  epsilon = 0.05,
-  max_iter = 50,
-  random_state = 42
+```{r summarize-solvers}
+data.frame(
+  sample = seq_along(bary$solver_diagnostics),
+  status = vapply(bary$solver_diagnostics, `[[`, character(1), "status"),
+  inner_status = vapply(
+    bary$solver_diagnostics, `[[`, character(1), "inner_status"
+  ),
+  max_inner_residual = vapply(
+    bary$solver_diagnostics, `[[`, numeric(1), "max_inner_residual"
+  )
 )
-bary_w$objective
 ```
 
-## Fixed structure or features
+`bary$C` is the learned `8 x 8` structure and `bary$X` is the learned `8 x 2`
+feature matrix. `error` is the final update magnitude, not a proof of global
+optimality. Barycenter optimization is non-convex, so inspect the history and
+consider multiple initializations when the result matters.
 
-You can fix the barycenter structure and only learn features (or vice versa)
-by using `fixed_structure` or `fixed_features` with an initial value:
+The heat map below shows the learned pairwise structure; the feature panel
+places the same eight barycenter nodes in their learned feature coordinates.
 
-```{r fixed-structure}
-# Fix the structure to sample 1's geometry, learn only features
-bary_fs <- fgw_barycenters(
-  N = nrow(s1$C),
-  Ys = list(s1$F, s2$F, s3$F),
-  Cs = list(s1$C, s2$C, s3$C),
-  alpha = 0.5,
-  epsilon = 0.05,
-  fixed_structure = TRUE,
-  init_C = s1$C,
-  max_iter = 30,
-  random_state = 42
+```{r plot-barycenter, echo = FALSE, fig.width = 7, fig.height = 3.2}
+old_par <- par(mfrow = c(1, 2), mar = c(3, 3, 2, 1))
+image(
+  seq_len(nrow(bary$C)), seq_len(ncol(bary$C)), bary$C,
+  xlab = "Barycenter node", ylab = "Barycenter node",
+  main = "Learned structure", col = hcl.colors(20, "YlOrRd", rev = TRUE)
 )
-dim(bary_fs$X)
-```
-
-## Pure GW barycenters (no features)
-
-When you don't have features, use `gromov_barycenters()` or
-`entropic_gromov_barycenters()`. These are equivalent to calling
-`fgw_barycenters()` with `alpha = 1`:
-
-```{r gw-barycenters}
-# With log = FALSE (default), returns just the C matrix
-bary_gw <- entropic_gromov_barycenters(
-  N = 10,
-  Cs = list(s1$C, s2$C, s3$C),
-  epsilon = 0.05,
-  max_iter = 50,
-  random_state = 42
+plot(
+  bary$X, asp = 1, pch = 19,
+  xlab = "Feature 1", ylab = "Feature 2",
+  main = "Learned node features"
 )
-dim(bary_gw)
+text(bary$X, labels = seq_len(nrow(bary$X)), pos = 3, cex = 0.75)
+par(old_par)
 ```
 
-Set `log = TRUE` to get the full result with couplings and convergence history:
+The off-diagonal variation in `C` and the spread of `X` show that neither
+learned component has collapsed to a constant.
 
-```{r gw-barycenters-log}
-bary_gw_full <- entropic_gromov_barycenters(
-  N = 10,
-  Cs = list(s1$C, s2$C, s3$C),
-  epsilon = 0.05,
-  max_iter = 50,
-  random_state = 42,
-  log = TRUE
+## What do the couplings mean?
+
+The `i`th coupling maps barycenter nodes (rows) to nodes of sample `i`
+(columns). Its marginals reproduce the barycenter and sample weights.
+
+```{r summarize-couplings}
+data.frame(
+  sample = seq_along(Cs),
+  rows = vapply(bary$couplings, nrow, integer(1)),
+  columns = vapply(bary$couplings, ncol, integer(1)),
+  transported_mass = vapply(bary$couplings, sum, numeric(1))
 )
-names(bary_gw_full)
 ```
 
-## Examining the couplings
+Large entries identify strong correspondences, but `which.max()` is only a
+hard summary of a soft coupling and can discard meaningful uncertainty.
 
-The barycenter result includes the final couplings from the barycenter to each
-input sample. These tell you how each barycenter node corresponds to each
-sample's nodes:
+## How does `alpha` change the problem?
 
-```{r couplings}
-# Coupling from barycenter to sample 1
-dim(bary$couplings[[1]])
+`alpha` weights structure relative to features: `alpha = 0` is feature-only
+and `alpha = 1` is structure-only. Values in between fit both. Objective values
+from different `alpha` settings are not directly comparable because they weight
+different losses.
 
-# Best match for each barycenter node in sample 1
-apply(bary$couplings[[1]], 1, which.max)
+```{r compare-alpha}
+mostly_features <- fgw_barycenters(
+  8, Ys, Cs, alpha = 0.2, epsilon = 0.08,
+  max_iter = 100L, tol = 1e-4, random_state = 42
+)
+mostly_structure <- fgw_barycenters(
+  8, Ys, Cs, alpha = 0.8, epsilon = 0.08,
+  max_iter = 100L, tol = 1e-4, random_state = 42
+)
 ```
 
-## Tips for larger problems
+```{r summarize-alpha-status}
+data.frame(
+  alpha = c(0.2, 0.8),
+  status = c(mostly_features$status, mostly_structure$status),
+  final_update = c(mostly_features$error, mostly_structure$error)
+)
+```
 
-- **Warm starts**: `warmstartT = TRUE` (default) reuses previous couplings
-  across outer iterations, which helps convergence.
-- **Precision**: `precision = "mixed"` speeds up the inner Sinkhorn iterations.
-- **Epsilon**: Larger `epsilon` converges faster but gives blurrier couplings.
-  Start with 0.05--0.1 and decrease if needed.
-- **N**: The barycenter size `N` doesn't need to match any input size. Choose
-  it based on the resolution you need.
+```{r summarize-alpha}
+data.frame(
+  difference = c("structure matrices", "feature matrices"),
+  relative_change = c(
+    sqrt(sum((mostly_structure$C - mostly_features$C)^2)) /
+      sqrt(sum(mostly_features$C^2)),
+    sqrt(sum((mostly_structure$X - mostly_features$X)^2)) /
+      sqrt(sum(mostly_features$X^2))
+  )
+)
+```
 
-## Next steps
+```{r check-alpha, include = FALSE}
+alpha_changes <- c(
+  sum((mostly_structure$C - mostly_features$C)^2),
+  sum((mostly_structure$X - mostly_features$X)^2)
+)
+for (candidate in list(mostly_features, mostly_structure)) {
+  candidate_last <- candidate$history[nrow(candidate$history), ]
+  stopifnot(
+    identical(candidate$status, "converged"), isTRUE(candidate$converged),
+    candidate$error <= 1e-4,
+    isTRUE(candidate_last$all_solvers_converged),
+    isTRUE(candidate_last$all_inner_converged),
+    is.finite(candidate_last$max_inner_residual)
+  )
+}
+stopifnot(all(is.finite(alpha_changes)), all(alpha_changes > 0))
+```
 
-- `vignette("multiset-alignment")`: using `multialign_fit()` for multi-subject
-  alignment, which offers a more scalable template-based workflow
+Choose `alpha` from domain knowledge or a downstream validation criterion, not
+from the smallest raw objective across settings.
+
+## How do sample weights work?
+
+`lambdas` controls how strongly each input contributes. The values are
+normalized to sum to one. This is useful when samples have unequal reliability;
+it is not a substitute for node weights `ps`, which act within samples.
+
+```{r weighted-barycenter}
+weighted <- fgw_barycenters(
+  8, Ys, Cs, lambdas = c(0.6, 0.25, 0.15),
+  alpha = 0.5, epsilon = 0.08,
+  max_iter = 30L, tol = 1e-4, random_state = 42
+)
+```
+
+```{r check-weighted, include = FALSE}
+stopifnot(
+  all(is.finite(weighted$C)), all(is.finite(weighted$X)),
+  is.finite(weighted$objective),
+  sum((weighted$C - bary$C)^2) > 0
+)
+```
+
+## Which barycenter function should you use?
+
+| Available information | Function | Returned result |
+|---|---|---|
+| Structure and node features | `fgw_barycenters()` | Full list with structure, features, couplings, and history |
+| Structure only | `entropic_gromov_barycenters()` | Structure matrix by default; full list with `log = TRUE` |
+| POT-style entropic FGW interface | `entropic_fused_gromov_barycenters()` | List containing features and structure; adds diagnostics with `log = TRUE` |
+
+You can hold one part of an FGW barycenter fixed: set `fixed_structure = TRUE`
+with `init_C`, or `fixed_features = TRUE` with `init_X`. Fixing a component
+changes the estimand and should reflect a substantive modeling choice.
+
+## Where should you go next?
+
+- `vignette("multiset-alignment")` aligns each sample to a shared fixed or
+  learned template and provides projection helpers.
+- `vignette("solver-guide")` explains GW and FGW formulations and their
+  diagnostics.
+- See `?fgw_barycenters` for initialization, inner-solver, and precision
+  controls.

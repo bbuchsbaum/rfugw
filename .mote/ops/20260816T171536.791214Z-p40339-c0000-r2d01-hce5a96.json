@@ -1,0 +1,1 @@
+{"actor":"cursor-fugw-impl","entity":"bd-01M05QY3MGVG3YQS0DTRG1PR7K","kind":"reserve_open","mode":"exclusive","op":"20260816T171536.791214Z-p40339-c0000-r2d01-hce5a96","paths":["R/solver_helpers.R","R/fgw.R","R/pot_api.R","tests/testthat/test-solver-contract.R"],"reservation_id":"rv-01M05S4QEQVASRSJQM3YEGVZV9","ts":"2026-08-16T17:15:36.791214Z","ttl_s":3600,"v":1}

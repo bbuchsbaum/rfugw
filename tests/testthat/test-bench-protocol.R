@@ -1,4 +1,13 @@
-source(testthat::test_path("..", "..", "inst", "bench", "protocol.R"))
+source(bench_test_resource("protocol.R"))
+
+test_that("benchmark resources resolve from an installed-package-safe path", {
+  protocol <- bench_test_resource("protocol.R")
+  gate <- bench_test_resource("gate_protocol.R")
+  caps <- bench_test_resource("ci_time_caps.json")
+
+  expect_true(all(file.exists(protocol, gate, caps)))
+  expect_match(normalizePath(protocol), "bench[/\\\\]protocol[.]R$")
+})
 
 test_that("quality gate rejects a failed status and accepts a valid plan", {
   M <- matrix(c(0, 1, 1, 0), 2, 2)
@@ -47,6 +56,9 @@ test_that("split timing records prepare, solve, and e2e separately", {
     method = "ot_sinkhorn"
   )
   expect_true(timing$valid)
+  expect_true(timing$certified)
+  expect_true(timing$comparison_eligible)
+  expect_false(timing$performance_regression_eligible)
   expect_gt(timing$prepare_ms, 5)
   expect_true(is.finite(timing$solve_ms))
   expect_gte(timing$solve_ms, 0)
@@ -74,13 +86,16 @@ test_that("partial quality uses independent reconstruction and mass bounds", {
   expect_true(ok$valid)
 })
 
-test_that("UCOOT quality accepts a finite independent-mode solve", {
+test_that("a finite but uncertified UCOOT solve is not comparison eligible", {
   d <- bench_make_problem("ucoot", 6L, 20260816L)
   out <- unbalanced_co_optimal_transport(
     d$X, d$Y, max_iter = 20L, tol = 1e-6, max_iter_ot = 80L, log = TRUE
   )
   ok <- bench_check_quality("unbalanced_co_optimal_transport", out, d)
-  expect_true(ok$valid)
+  expect_false(ok$valid)
+  expect_false(ok$certified)
+  expect_false(ok$comparison_eligible)
+  expect_match(ok$reject_reason, "status|not_converged|certificate")
 })
 
 test_that("semirelaxed quality uses independent GW reconstruction", {
@@ -114,13 +129,21 @@ test_that("protocol suite filter accepts known families and rejects unknown", {
   expect_true("sampled" %in% bench_parse_suites(""))
 })
 
-test_that("FUGW and sampled quality helpers accept finite solves", {
+test_that("FUGW and sampled fixed budgets never masquerade as certification", {
   d <- bench_make_problem("fgw", 6L, 20260816L)
   fugw <- fugw_kl(
     Cx = d$C1, Cy = d$C2, wx = d$p, wy = d$q, M = d$M,
-    epsilon = 0.05, max_iter = 20L, max_iter_ot = 80L
+    epsilon = 0.05, max_iter = 10L, max_iter_ot = 120L
   )
-  expect_true(bench_check_quality("fugw_kl", fugw, d)$valid)
+  fugw_cert <- bench_check_quality("fugw_kl", fugw, d)
+  fugw_perf <- bench_check_quality(
+    "fugw_kl", fugw, d, evidence_class = "fixed_budget_performance"
+  )
+  expect_false(fugw_cert$valid)
+  expect_true(fugw_perf$valid)
+  expect_false(fugw_perf$certified)
+  expect_false(fugw_perf$comparison_eligible)
+  expect_true(fugw_perf$performance_regression_eligible)
 
   samp <- sampled_gromov_wasserstein(
     d$C1, d$C2, p = d$p, q = d$q,
@@ -130,12 +153,38 @@ test_that("FUGW and sampled quality helpers accept finite solves", {
     random_state = 20260816L,
     log = TRUE
   )
-  expect_true(bench_check_quality("sampled_gromov_wasserstein", samp, d)$valid)
+  sampled_cert <- bench_check_quality("sampled_gromov_wasserstein", samp, d)
+  sampled_perf <- bench_check_quality(
+    "sampled_gromov_wasserstein", samp, d,
+    evidence_class = "fixed_budget_performance"
+  )
+  expect_false(sampled_cert$valid)
+  expect_true(sampled_perf$valid)
+  expect_false(sampled_perf$certified)
+  expect_false(sampled_perf$comparison_eligible)
+})
+
+test_that("threshold changes require a retained matching evidence entry", {
+  expect_no_error(bench_validate_threshold_history())
+  history <- jsonlite::fromJSON(bench_threshold_history_path(), simplifyVector = FALSE)
+  expect_identical(
+    history$entries[[length(history$entries)]]$thresholds_md5,
+    unname(tools::md5sum(bench_thresholds_path())[[1]])
+  )
+})
+
+test_that("sampled protocol records answer quality against budget", {
+  script <- readLines(bench_test_resource("run_protocol.R"), warn = FALSE)
+  expect_true(any(grepl("c(2L, 1L)", script, fixed = TRUE)))
+  expect_true(any(grepl("c(4L, 2L)", script, fixed = TRUE)))
+  expect_true(any(grepl("c(8L, 4L)", script, fixed = TRUE)))
+  expect_true(any(grepl("approximation_error_abs", script, fixed = TRUE)))
+  expect_true(any(grepl("reference_value", script, fixed = TRUE)))
 })
 
 test_that("protocol gate distinguishes infrastructure from solver failures", {
-  gate <- testthat::test_path("..", "..", "inst", "bench", "gate_protocol.R")
-  caps <- testthat::test_path("..", "..", "inst", "bench", "ci_time_caps.json")
+  gate <- bench_test_resource("gate_protocol.R")
+  caps <- bench_test_resource("ci_time_caps.json")
   missing <- suppressWarnings(system2(
     file.path(R.home("bin"), "Rscript"),
     c(gate, tempfile("no-such-gate-"), caps, "pr"),
@@ -147,19 +196,38 @@ test_that("protocol gate distinguishes infrastructure from solver failures", {
   good <- tempfile("gate-ok-")
   dir.create(good)
   jsonlite::write_json(
-    list(commit = "test", seed = 1L, threads = 1L, profile = "conservative", suites = "fgw"),
+    list(
+      commit = "test", seed = 1L, threads = 1L,
+      profile = "conservative", suites = "fgw",
+      thresholds_md5 = unname(tools::md5sum(bench_test_resource("thresholds.json"))[[1]]),
+      threshold_policy_version = 2L
+    ),
     file.path(good, "meta.json"),
     auto_unbox = TRUE
   )
   utils::write.csv(
-    data.frame(suite = "fgw", method = "fgw_entropic", n = 12L, valid = TRUE,
-               reject_reason = "", solve_ms = 10, stringsAsFactors = FALSE),
+    data.frame(
+      suite = "fgw", method = "fgw_entropic", n = 12L, valid = TRUE,
+      certified = TRUE, comparison_eligible = TRUE,
+      performance_regression_eligible = FALSE,
+      evidence_class = "certified_comparison", reject_reason = "",
+      prepare_ms = 1, setup_ms = 1, solve_ms = 10, e2e_ms = 11,
+      mem_solve_bytes = NA_real_, mem_e2e_bytes = NA_real_,
+      requested_precision = "double", effective_precision = "double",
+      requested_threads = 1L, used_threads = 1L,
+      stringsAsFactors = FALSE
+    ),
     file.path(good, "runs.csv"),
     row.names = FALSE
   )
   utils::write.csv(
-    data.frame(suite = "fgw", method = "fgw_entropic", n = 12L, valid = TRUE,
-               stringsAsFactors = FALSE),
+    data.frame(
+      suite = "fgw", method = "fgw_entropic", n = 12L, valid = TRUE,
+      certified = TRUE, comparison_eligible = TRUE,
+      performance_regression_eligible = FALSE,
+      evidence_class = "certified_comparison", status = "converged",
+      stringsAsFactors = FALSE
+    ),
     file.path(good, "quality.csv"),
     row.names = FALSE
   )
@@ -176,9 +244,13 @@ test_that("protocol gate distinguishes infrastructure from solver failures", {
   file.copy(file.path(good, "meta.json"), file.path(bad, "meta.json"))
   file.copy(file.path(good, "quality.csv"), file.path(bad, "quality.csv"))
   utils::write.csv(
-    data.frame(suite = "fgw", method = "fgw_entropic", n = 12L, valid = FALSE,
-               reject_reason = "status=numerical_failure", solve_ms = 10,
-               stringsAsFactors = FALSE),
+    transform(
+      utils::read.csv(file.path(good, "runs.csv"), stringsAsFactors = FALSE),
+      valid = FALSE,
+      certified = FALSE,
+      comparison_eligible = FALSE,
+      reject_reason = "status=numerical_failure"
+    ),
     file.path(bad, "runs.csv"),
     row.names = FALSE
   )

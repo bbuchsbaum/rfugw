@@ -2,7 +2,12 @@
 // [[Rcpp::plugins(cpp17)]]
 
 #include <RcppArmadillo.h>
+#include "approximation_cache.h"
+#include "batch_worker.h"
+#include "gw_square.h"
+#include "transport_simplex.h"
 #include <algorithm>
+#include <cerrno>
 #include <chrono>
 #include <cmath>
 #include <cstdlib>
@@ -16,6 +21,15 @@
 #endif
 
 namespace {
+
+using rfugw::TransportSimplexResult;
+using rfugw::TransportTermination;
+using rfugw::TransportTestFault;
+using rfugw::LowRankC2CacheD;
+using rfugw::LowRankC2CacheF;
+using rfugw::SquareC2CacheD;
+using rfugw::SquareC2CacheF;
+using rfugw::run_worker_guarded;
 
 constexpr double kTiny = 1e-300;
 constexpr double kExpClip = 700.0;
@@ -47,9 +61,14 @@ inline arma::uword parse_uword_env(const char* name, arma::uword fallback) {
   if (raw == nullptr || raw[0] == '\0') {
     return fallback;
   }
+  if (raw[0] == '-') {
+    return fallback;
+  }
+  errno = 0;
   char* end = nullptr;
   const unsigned long long v = std::strtoull(raw, &end, 10);
-  if (end == raw || (end != nullptr && *end != '\0')) {
+  if (errno == ERANGE || end == raw || (end != nullptr && *end != '\0') ||
+      v > static_cast<unsigned long long>(std::numeric_limits<arma::uword>::max())) {
     return fallback;
   }
   return static_cast<arma::uword>(v);
@@ -68,24 +87,34 @@ inline double parse_double_env(const char* name, double fallback) {
   return v;
 }
 
+inline bool parse_bool_env(const char* name, bool fallback) {
+  const char* raw = std::getenv(name);
+  if (raw == nullptr || raw[0] == '\0') {
+    return fallback;
+  }
+  if (raw[0] == '0' && raw[1] == '\0') {
+    return false;
+  }
+  if (raw[0] == '1' && raw[1] == '\0') {
+    return true;
+  }
+  return fallback;
+}
+
 inline bool fugw_enable_warm_start() {
-  static const bool enabled = (parse_uword_env("RFUGW_ENABLE_WARM_START", 0u) != 0u);
-  return enabled;
+  return parse_bool_env("RFUGW_ENABLE_WARM_START", false);
 }
 
 inline bool fugw_enable_adaptive_inner_tol() {
-  static const bool enabled = (parse_uword_env("RFUGW_ADAPTIVE_INNER_TOL", 0u) != 0u);
-  return enabled;
+  return parse_bool_env("RFUGW_ADAPTIVE_INNER_TOL", false);
 }
 
 inline double fugw_adaptive_inner_tol_stage1() {
-  static const double v = parse_double_env("RFUGW_ADAPTIVE_INNER_TOL_STAGE1", 1e-6);
-  return v;
+  return parse_double_env("RFUGW_ADAPTIVE_INNER_TOL_STAGE1", 1e-6);
 }
 
 inline double fugw_adaptive_inner_tol_stage2() {
-  static const double v = parse_double_env("RFUGW_ADAPTIVE_INNER_TOL_STAGE2", 5e-7);
-  return v;
+  return parse_double_env("RFUGW_ADAPTIVE_INNER_TOL_STAGE2", 5e-7);
 }
 
 inline double fugw_effective_inner_tol(double base_tol_ot, double outer_err, double outer_tol) {
@@ -114,53 +143,43 @@ inline double fugw_effective_inner_tol(double base_tol_ot, double outer_err, dou
 }
 
 inline double fugw_sinkhorn_target_tol_abs_mult() {
-  static const double v = parse_double_env("RFUGW_SINKHORN_TARGET_TOL_ABS_MULT", 100.0);
-  return v;
+  return parse_double_env("RFUGW_SINKHORN_TARGET_TOL_ABS_MULT", 100.0);
 }
 
 inline double fugw_sinkhorn_target_tol_mult() {
-  static const double v = parse_double_env("RFUGW_SINKHORN_TARGET_TOL_MULT", 52.0);
-  return v;
+  return parse_double_env("RFUGW_SINKHORN_TARGET_TOL_MULT", 52.0);
 }
 
 inline double fugw_sinkhorn_target_tol_cap_d() {
-  static const double v = parse_double_env("RFUGW_SINKHORN_TARGET_TOL_CAP_D", 1.5e-4);
-  return v;
+  return parse_double_env("RFUGW_SINKHORN_TARGET_TOL_CAP_D", 1.5e-4);
 }
 
 inline double fugw_sinkhorn_target_tol_cap_f() {
-  static const double v = parse_double_env("RFUGW_SINKHORN_TARGET_TOL_CAP_F", 2e-4);
-  return v;
+  return parse_double_env("RFUGW_SINKHORN_TARGET_TOL_CAP_F", 2e-4);
 }
 
 inline double fugw_sinkhorn_rel_tol_mult() {
-  static const double v = parse_double_env("RFUGW_SINKHORN_REL_TOL_MULT", 200.0);
-  return v;
+  return parse_double_env("RFUGW_SINKHORN_REL_TOL_MULT", 200.0);
 }
 
 inline double fugw_sinkhorn_rel_tol_floor_d() {
-  static const double v = parse_double_env("RFUGW_SINKHORN_REL_TOL_FLOOR_D", 4e-5);
-  return v;
+  return parse_double_env("RFUGW_SINKHORN_REL_TOL_FLOOR_D", 4e-5);
 }
 
 inline double fugw_sinkhorn_rel_tol_floor_f() {
-  static const double v = parse_double_env("RFUGW_SINKHORN_REL_TOL_FLOOR_F", 2e-4);
-  return v;
+  return parse_double_env("RFUGW_SINKHORN_REL_TOL_FLOOR_F", 2e-4);
 }
 
 inline double fugw_sinkhorn_col_rel_tol_mult() {
-  static const double v = parse_double_env("RFUGW_SINKHORN_COL_REL_TOL_MULT", 1000.0);
-  return v;
+  return parse_double_env("RFUGW_SINKHORN_COL_REL_TOL_MULT", 1000.0);
 }
 
 inline double fugw_sinkhorn_col_rel_tol_floor_d() {
-  static const double v = parse_double_env("RFUGW_SINKHORN_COL_REL_TOL_FLOOR_D", 1.5e-4);
-  return v;
+  return parse_double_env("RFUGW_SINKHORN_COL_REL_TOL_FLOOR_D", 1.5e-4);
 }
 
 inline double fugw_sinkhorn_col_rel_tol_floor_f() {
-  static const double v = parse_double_env("RFUGW_SINKHORN_COL_REL_TOL_FLOOR_F", 2e-4);
-  return v;
+  return parse_double_env("RFUGW_SINKHORN_COL_REL_TOL_FLOOR_F", 2e-4);
 }
 
 inline void dgemm_nn(
@@ -598,6 +617,14 @@ struct MatvecDispatchThresholds {
   arma::uword gemv_min_f;
 };
 
+MatvecDispatchThresholds g_last_matvec_thresholds{
+  kMatvecBlockedMinWorkD,
+  kGemvMinWorkD,
+  kMatvecBlockedMinWorkF,
+  kGemvMinWorkF
+};
+bool g_matvec_thresholds_initialized = false;
+
 template <typename Fn>
 inline double bench_min_ms(Fn&& fn, int reps = 4) {
   fn();  // warm-up
@@ -737,7 +764,7 @@ inline MatvecDispatchThresholds init_matvec_dispatch_thresholds() {
   t.blocked_min_f = parse_uword_env("RFUGW_MATVEC_BLOCKED_MIN_WORK_F", t.blocked_min_f);
   t.gemv_min_f = parse_uword_env("RFUGW_MATVEC_GEMV_MIN_WORK_F", t.gemv_min_f);
 
-  if (parse_uword_env("RFUGW_AUTOTUNE_MATVEC", 1u) != 0u) {
+  if (parse_bool_env("RFUGW_AUTOTUNE_MATVEC", true)) {
     autotune_matvec_thresholds_double(t.blocked_min_d, t.gemv_min_d);
     autotune_matvec_thresholds_float(t.blocked_min_f, t.gemv_min_f);
   }
@@ -749,6 +776,8 @@ inline MatvecDispatchThresholds init_matvec_dispatch_thresholds() {
     t.gemv_min_f = t.blocked_min_f;
   }
 
+  g_last_matvec_thresholds = t;
+  g_matvec_thresholds_initialized = true;
   return t;
 }
 
@@ -1237,32 +1266,6 @@ struct SinkhornBalancedResultF {
   float err;
 };
 
-struct LowRankC2CacheD {
-  bool valid = false;
-  arma::mat A2t_scaled;
-  arma::mat B2t;
-};
-
-struct LowRankC2CacheF {
-  bool valid = false;
-  arma::fmat A2t_scaled;
-  arma::fmat B2t;
-};
-
-struct SquareC2CacheD {
-  bool valid = false;
-  arma::mat hC2;
-  arma::rowvec right_term;
-};
-
-struct SquareC2CacheF {
-  bool valid = false;
-  arma::fmat C2;
-  arma::fvec q;
-  arma::fmat hC2;
-  arma::frowvec right_term;
-};
-
 inline LowRankC2CacheD build_lowrank_c2_cache_d(
     const arma::mat& C2,
     int approx_rank) {
@@ -1298,39 +1301,27 @@ inline LowRankC2CacheF build_lowrank_c2_cache_f(
 inline bool lowrank_cache_compatible(
     const LowRankC2CacheD& cache,
     const arma::mat& C2) {
-  return cache.valid &&
-    cache.A2t_scaled.n_cols == C2.n_rows &&
-    cache.B2t.n_cols == C2.n_cols &&
-    cache.A2t_scaled.n_rows == cache.B2t.n_rows;
+  return rfugw::lowrank_cache_compatible_t(cache, C2);
 }
 
 inline bool lowrank_cache_compatible_f(
     const LowRankC2CacheF& cache,
     const arma::fmat& C2) {
-  return cache.valid &&
-    cache.A2t_scaled.n_cols == C2.n_rows &&
-    cache.B2t.n_cols == C2.n_cols &&
-    cache.A2t_scaled.n_rows == cache.B2t.n_rows;
+  return rfugw::lowrank_cache_compatible_t(cache, C2);
 }
 
 inline bool lowrank_c1_cache_compatible(
     const arma::mat& A1_scaled,
     const arma::mat& B1t,
     const arma::mat& C1) {
-  return A1_scaled.n_rows == C1.n_rows &&
-    B1t.n_cols == C1.n_cols &&
-    A1_scaled.n_cols == B1t.n_rows &&
-    A1_scaled.n_cols > 0;
+  return rfugw::lowrank_c1_cache_compatible_t(A1_scaled, B1t, C1);
 }
 
 inline bool lowrank_c1_cache_compatible_f(
     const arma::fmat& A1_scaled,
     const arma::fmat& B1t,
     const arma::fmat& C1) {
-  return A1_scaled.n_rows == C1.n_rows &&
-    B1t.n_cols == C1.n_cols &&
-    A1_scaled.n_cols == B1t.n_rows &&
-    A1_scaled.n_cols > 0;
+  return rfugw::lowrank_c1_cache_compatible_t(A1_scaled, B1t, C1);
 }
 
 inline SquareC2CacheD build_square_c2_cache_d(
@@ -1367,27 +1358,17 @@ inline bool square_cache_compatible(
     const SquareC2CacheD& cache,
     const arma::mat& C2,
     const arma::vec& q) {
-  return cache.valid &&
-    C2.n_rows == C2.n_cols &&
-    q.n_elem == C2.n_rows &&
-    cache.hC2.n_rows == C2.n_rows &&
-    cache.hC2.n_cols == C2.n_cols &&
-    cache.right_term.n_elem == C2.n_rows;
+  return rfugw::square_cache_dimensions_compatible_t(cache, C2, q);
 }
 
 inline bool square_cache_compatible_f(
     const SquareC2CacheF& cache,
     const arma::mat& C2,
     const arma::vec& q) {
-  return cache.valid &&
-    C2.n_rows == C2.n_cols &&
-    q.n_elem == C2.n_rows &&
+  return rfugw::square_cache_dimensions_compatible_t(cache, C2, q) &&
     cache.C2.n_rows == C2.n_rows &&
     cache.C2.n_cols == C2.n_cols &&
-    cache.q.n_elem == C2.n_rows &&
-    cache.hC2.n_rows == C2.n_rows &&
-    cache.hC2.n_cols == C2.n_cols &&
-    cache.right_term.n_elem == C2.n_rows;
+    cache.q.n_elem == C2.n_rows;
 }
 
 inline void init_matrices_square_from_cache_d(
@@ -1396,14 +1377,7 @@ inline void init_matrices_square_from_cache_d(
     const SquareC2CacheD& cache,
     arma::mat& constC,
     arma::mat& hC1) {
-  const arma::mat fC1 = C1 % C1;
-  hC1 = C1;
-  const arma::vec left = fC1 * p;
-  constC.set_size(C1.n_rows, cache.hC2.n_rows);
-  for (arma::uword j = 0; j < cache.hC2.n_rows; ++j) {
-    constC.col(j) = left;
-    constC.col(j) += cache.right_term[j];
-  }
+  rfugw::init_matrices_square_from_cache_t(C1, p, cache, constC, hC1);
 }
 
 inline void init_matrices_square_from_cache_f(
@@ -1412,14 +1386,7 @@ inline void init_matrices_square_from_cache_f(
     const SquareC2CacheF& cache,
     arma::fmat& constC,
     arma::fmat& hC1) {
-  const arma::fmat fC1 = C1 % C1;
-  hC1 = C1;
-  const arma::fvec left = fC1 * p;
-  constC.set_size(C1.n_rows, cache.hC2.n_rows);
-  for (arma::uword j = 0; j < cache.hC2.n_rows; ++j) {
-    constC.col(j) = left;
-    constC.col(j) += cache.right_term[j];
-  }
+  rfugw::init_matrices_square_from_cache_t(C1, p, cache, constC, hC1);
 }
 
 inline double logsumexp_vec(const arma::vec& x) {
@@ -1500,12 +1467,14 @@ inline SinkhornBalancedResult sinkhorn_balanced(
 
   SinkhornBalancedResult out;
   out.plan = (u * v.t()) % K;
+  const double row_err = arma::max(arma::abs(arma::sum(out.plan, 1) - p));
+  const double col_err = arma::max(arma::abs(arma::sum(out.plan, 0).t() - q));
   out.u = std::move(u);
   out.v = std::move(v);
   out.f = arma::vec();
   out.g = arma::vec();
   out.iters = it;
-  out.err = err;
+  out.err = std::max(row_err, col_err);
   return out;
 }
 
@@ -1579,10 +1548,12 @@ inline SinkhornBalancedResultF sinkhorn_balanced_f(
 
   SinkhornBalancedResultF out;
   out.plan = (u * v.t()) % K;
+  const float row_err = arma::max(arma::abs(arma::sum(out.plan, 1) - p));
+  const float col_err = arma::max(arma::abs(arma::sum(out.plan, 0).t() - q));
   out.u = std::move(u);
   out.v = std::move(v);
   out.iters = it;
-  out.err = err;
+  out.err = std::max(row_err, col_err);
   return out;
 }
 
@@ -1651,12 +1622,14 @@ inline SinkhornBalancedResult sinkhorn_balanced_log(
 
   SinkhornBalancedResult out;
   out.plan = std::move(plan);
+  const double row_err = arma::max(arma::abs(arma::sum(out.plan, 1) - p));
+  const double col_err = arma::max(arma::abs(arma::sum(out.plan, 0).t() - q));
   out.u = arma::vec();
   out.v = arma::vec();
   out.f = std::move(f);
   out.g = std::move(g);
   out.iters = it;
-  out.err = err;
+  out.err = std::max(row_err, col_err);
   return out;
 }
 
@@ -2407,6 +2380,24 @@ inline SinkhornUnbalancedResult sinkhorn_unbalanced_kl(
     }
   }
 
+  if (use_blas) {
+    dgemv_n(ws.K, ws.v, ws.Kv);
+    dgemv_t(ws.K, ws.u, ws.Ktu);
+  } else if (use_blocked) {
+    matvec_colmajor_blocked(ws.K, ws.v, ws.Kv);
+    tmatvec_colmajor_blocked(ws.K, ws.u, ws.Ktu);
+  } else {
+    matvec_colmajor(ws.K, ws.v, ws.Kv);
+    tmatvec_colmajor(ws.K, ws.u, ws.Ktu);
+  }
+  ws.Kv += kTiny;
+  ws.Ktu += kTiny;
+  const double final_update_abs = std::max(
+    scaling_update_residual(a, ws.Kv, tau1, ws.u),
+    scaling_update_residual(b, ws.Ktu, tau2, ws.v)
+  );
+  const double final_scaling = std::max(max_abs_vec(ws.u), max_abs_vec(ws.v));
+  err = final_update_abs / (final_scaling + kTiny);
   ws.has_scaling = true;
   ws.last_err = err;
   ws.last_iters = it;
@@ -2560,6 +2551,24 @@ inline SinkhornUnbalancedResultF sinkhorn_unbalanced_kl_f(
     }
   }
 
+  if (use_blas) {
+    sgemv_n(ws.K, ws.v, ws.Kv);
+    sgemv_t(ws.K, ws.u, ws.Ktu);
+  } else if (use_blocked) {
+    matvec_colmajor_blocked(ws.K, ws.v, ws.Kv);
+    tmatvec_colmajor_blocked(ws.K, ws.u, ws.Ktu);
+  } else {
+    matvec_colmajor(ws.K, ws.v, ws.Kv);
+    tmatvec_colmajor(ws.K, ws.u, ws.Ktu);
+  }
+  ws.Kv += kTinyF;
+  ws.Ktu += kTinyF;
+  const float final_update_abs = std::max(
+    scaling_update_residual_f(a, ws.Kv, tau1, ws.u),
+    scaling_update_residual_f(b, ws.Ktu, tau2, ws.v)
+  );
+  const float final_scaling = std::max(max_abs_vec_f(ws.u), max_abs_vec_f(ws.v));
+  err = final_update_abs / (final_scaling + kTinyF);
   ws.has_scaling = true;
   ws.last_err = err;
   ws.last_iters = it;
@@ -2685,7 +2694,7 @@ inline void init_transport_northwest(
   }
 }
 
-inline void compute_transport_potentials(
+inline bool compute_transport_potentials(
     const arma::mat& cost,
     const std::vector<unsigned char>& basis,
     int n,
@@ -2696,37 +2705,35 @@ inline void compute_transport_potentials(
   v.assign(m, std::numeric_limits<double>::quiet_NaN());
   std::deque<int> dq;
 
-  for (int seed = 0; seed < n; ++seed) {
-    if (std::isfinite(u[seed])) {
-      continue;
-    }
-    u[seed] = 0.0;
-    dq.push_back(seed);
+  if (n <= 0 || m <= 0) {
+    return false;
+  }
+  u[0] = 0.0;
+  dq.push_back(0);
 
-    while (!dq.empty()) {
-      const int node = dq.front();
-      dq.pop_front();
-      if (node < n) {
-        const int i = node;
-        for (int j = 0; j < m; ++j) {
-          if (!basis[basis_index(i, j, m)]) {
-            continue;
-          }
-          if (!std::isfinite(v[j])) {
-            v[j] = cost(i, j) - u[i];
-            dq.push_back(n + j);
-          }
+  while (!dq.empty()) {
+    const int node = dq.front();
+    dq.pop_front();
+    if (node < n) {
+      const int i = node;
+      for (int j = 0; j < m; ++j) {
+        if (!basis[basis_index(i, j, m)]) {
+          continue;
         }
-      } else {
-        const int j = node - n;
-        for (int i = 0; i < n; ++i) {
-          if (!basis[basis_index(i, j, m)]) {
-            continue;
-          }
-          if (!std::isfinite(u[i])) {
-            u[i] = cost(i, j) - v[j];
-            dq.push_back(i);
-          }
+        if (!std::isfinite(v[j])) {
+          v[j] = cost(i, j) - u[i];
+          dq.push_back(n + j);
+        }
+      }
+    } else {
+      const int j = node - n;
+      for (int i = 0; i < n; ++i) {
+        if (!basis[basis_index(i, j, m)]) {
+          continue;
+        }
+        if (!std::isfinite(u[i])) {
+          u[i] = cost(i, j) - v[j];
+          dq.push_back(i);
         }
       }
     }
@@ -2734,14 +2741,15 @@ inline void compute_transport_potentials(
 
   for (int i = 0; i < n; ++i) {
     if (!std::isfinite(u[i])) {
-      u[i] = 0.0;
+      return false;
     }
   }
   for (int j = 0; j < m; ++j) {
     if (!std::isfinite(v[j])) {
-      v[j] = 0.0;
+      return false;
     }
   }
+  return true;
 }
 
 inline bool find_basis_path(
@@ -2789,12 +2797,6 @@ inline bool find_basis_path(
 
   return parent[target] != -1;
 }
-
-struct TransportSimplexResult {
-  arma::mat plan;
-  int iterations;
-  bool converged;
-};
 
 inline double solve_1d_linesearch_quad(double a, double b) {
   if (!std::isfinite(a) || !std::isfinite(b)) {
@@ -2939,7 +2941,13 @@ inline arma::uvec deterministic_topk_indices(const arma::vec& prob, int k) {
   return out;
 }
 
-inline arma::uvec hungarian_assignment(const arma::mat& cost) {
+struct HungarianAssignmentResult {
+  arma::uvec assignment;
+  arma::vec source_potential;
+  arma::vec target_potential;
+};
+
+inline HungarianAssignmentResult hungarian_assignment(const arma::mat& cost) {
   const std::size_t n = cost.n_rows;
   arma::uvec assignment(n, arma::fill::zeros);
   std::vector<double> u(n + 1u, 0.0);
@@ -2999,7 +3007,121 @@ inline arma::uvec hungarian_assignment(const arma::mat& cost) {
       assignment(static_cast<arma::uword>(i - 1)) = static_cast<arma::uword>(j - 1);
     }
   }
-  return assignment;
+  HungarianAssignmentResult out;
+  out.assignment = std::move(assignment);
+  out.source_potential.set_size(static_cast<arma::uword>(n));
+  out.target_potential.set_size(static_cast<arma::uword>(n));
+  for (std::size_t i = 1; i <= n; ++i) {
+    out.source_potential(static_cast<arma::uword>(i - 1)) = u[i];
+    out.target_potential(static_cast<arma::uword>(i - 1)) = v[i];
+  }
+  return out;
+}
+
+inline bool fill_transport_certificate(
+    TransportSimplexResult& out,
+    const arma::mat& cost,
+    const arma::vec& p,
+    const arma::vec& q,
+    const std::vector<unsigned char>& basis,
+    double tol_opt) {
+  const int n = static_cast<int>(p.n_elem);
+  const int m = static_cast<int>(q.n_elem);
+  const double machine_eps = std::numeric_limits<double>::epsilon();
+  const double mass_scale = std::max(
+    1.0,
+    std::max(arma::accu(arma::abs(p)), arma::accu(arma::abs(q)))
+  );
+  const double cost_scale = std::max(1.0, arma::abs(cost).max());
+  const double dim_scale = static_cast<double>(std::max(1, n + m));
+  out.feasibility_tolerance = std::max(tol_opt, 128.0 * machine_eps * dim_scale * mass_scale);
+  out.reduced_cost_tolerance = std::max(tol_opt, 128.0 * machine_eps * dim_scale * cost_scale);
+
+  if (out.plan.n_rows != p.n_elem || out.plan.n_cols != q.n_elem ||
+      out.source_potential.n_elem != p.n_elem || out.target_potential.n_elem != q.n_elem ||
+      basis.size() != static_cast<std::size_t>(n) * static_cast<std::size_t>(m)) {
+    return false;
+  }
+
+  const arma::vec row_sum = arma::sum(out.plan, 1);
+  const arma::vec col_sum = arma::sum(out.plan, 0).t();
+  out.row_residual = arma::max(arma::abs(row_sum - p));
+  out.col_residual = arma::max(arma::abs(col_sum - q));
+  out.primal_objective = arma::accu(cost % out.plan);
+  out.dual_objective = arma::dot(p, out.source_potential) + arma::dot(q, out.target_potential);
+  out.duality_gap = out.primal_objective - out.dual_objective;
+
+  bool have_nonbasic = false;
+  out.min_reduced_cost = std::numeric_limits<double>::infinity();
+  for (int i = 0; i < n; ++i) {
+    for (int j = 0; j < m; ++j) {
+      if (basis[basis_index(i, j, m)]) {
+        continue;
+      }
+      have_nonbasic = true;
+      const double reduced_cost = cost(i, j) -
+        out.source_potential(static_cast<arma::uword>(i)) -
+        out.target_potential(static_cast<arma::uword>(j));
+      out.min_reduced_cost = std::min(out.min_reduced_cost, reduced_cost);
+    }
+  }
+  if (!have_nonbasic) {
+    out.min_reduced_cost = 0.0;
+  }
+
+  const double objective_scale = 1.0 + std::abs(out.primal_objective) + std::abs(out.dual_objective);
+  out.duality_gap_tolerance = std::max(
+    tol_opt * (1.0 + std::abs(out.primal_objective)),
+    256.0 * machine_eps * dim_scale * objective_scale
+  );
+  const double min_plan = out.plan.min();
+  const bool finite = out.plan.is_finite() && out.source_potential.is_finite() &&
+    out.target_potential.is_finite() && std::isfinite(out.primal_objective) &&
+    std::isfinite(out.dual_objective) && std::isfinite(out.duality_gap) &&
+    std::isfinite(out.min_reduced_cost);
+  out.primal_feasible = finite &&
+    min_plan >= -out.feasibility_tolerance &&
+    out.row_residual <= out.feasibility_tolerance &&
+    out.col_residual <= out.feasibility_tolerance;
+  out.dual_feasible = finite && out.min_reduced_cost >= -out.reduced_cost_tolerance;
+  out.gap_certified = finite &&
+    out.duality_gap >= -out.duality_gap_tolerance &&
+    std::abs(out.duality_gap) <= out.duality_gap_tolerance;
+  return out.primal_feasible && out.dual_feasible && out.gap_certified;
+}
+
+inline void finalize_transport_result(
+    TransportSimplexResult& out,
+    const arma::mat& cost,
+    const arma::vec& p,
+    const arma::vec& q,
+    const std::vector<unsigned char>& basis,
+    double tol_opt) {
+  if (out.source_potential.n_elem != p.n_elem || out.target_potential.n_elem != q.n_elem) {
+    std::vector<double> u;
+    std::vector<double> v;
+    if (!compute_transport_potentials(
+          cost,
+          basis,
+          static_cast<int>(p.n_elem),
+          static_cast<int>(q.n_elem),
+          u,
+          v)) {
+      if (out.termination == TransportTermination::optimal) {
+        out.termination = TransportTermination::disconnected_basis;
+      }
+      out.certified = false;
+      return;
+    }
+    out.source_potential = arma::vec(u);
+    out.target_potential = arma::vec(v);
+  }
+
+  const bool certificate_ok = fill_transport_certificate(out, cost, p, q, basis, tol_opt);
+  if (out.termination == TransportTermination::optimal && !certificate_ok) {
+    out.termination = TransportTermination::numerical_failure;
+  }
+  out.certified = out.termination == TransportTermination::optimal && certificate_ok;
 }
 
 inline TransportSimplexResult transport_simplex_solve(
@@ -3008,20 +3130,30 @@ inline TransportSimplexResult transport_simplex_solve(
     const arma::vec& q,
     int max_iter = 20000,
     double tol_opt = 1e-12,
-    double eps = 1e-14) {
+    double eps = 1e-14,
+    TransportTestFault test_fault = TransportTestFault::none) {
   const int n = static_cast<int>(p.n_elem);
   const int m = static_cast<int>(q.n_elem);
 
-  if (n == m && cost.n_rows == cost.n_cols && is_uniform_prob(p, 1e-9) && is_uniform_prob(q, 1e-9)) {
+  const double uniform_tol = 64.0 * std::numeric_limits<double>::epsilon() *
+    static_cast<double>(std::max(1, n));
+  if (test_fault == TransportTestFault::none && n == m && cost.n_rows == cost.n_cols &&
+      is_uniform_prob(p, uniform_tol) && is_uniform_prob(q, uniform_tol)) {
     arma::mat plan(n, n, arma::fill::zeros);
-    const arma::uvec assign = hungarian_assignment(cost);
+    const HungarianAssignmentResult assignment = hungarian_assignment(cost);
+    std::vector<unsigned char> basis(static_cast<std::size_t>(n) * static_cast<std::size_t>(n), 0);
     for (int i = 0; i < n; ++i) {
-      plan(static_cast<arma::uword>(i), assign(static_cast<arma::uword>(i))) = p(static_cast<arma::uword>(i));
+      const arma::uword j = assignment.assignment(static_cast<arma::uword>(i));
+      plan(static_cast<arma::uword>(i), j) = p(static_cast<arma::uword>(i));
+      basis[basis_index(i, static_cast<int>(j), n)] = 1;
     }
     TransportSimplexResult out;
     out.plan = std::move(plan);
+    out.source_potential = assignment.source_potential;
+    out.target_potential = assignment.target_potential;
     out.iterations = 1;
-    out.converged = true;
+    out.termination = TransportTermination::optimal;
+    finalize_transport_result(out, cost, p, q, basis, tol_opt);
     return out;
   }
 
@@ -3034,34 +3166,72 @@ inline TransportSimplexResult transport_simplex_solve(
   std::vector<int> path_nodes;
   std::vector<std::pair<int, int>> cycle;
 
+  TransportSimplexResult out;
+  out.plan = x;
+  out.termination = TransportTermination::max_iter;
+
   int it = 0;
-  for (; it < max_iter; ++it) {
-    compute_transport_potentials(cost, basis, n, m, u, v);
+  for (; it < max_iter;) {
+    if (test_fault == TransportTestFault::numerical_failure) {
+      out.termination = TransportTermination::numerical_failure;
+      break;
+    }
+    if (test_fault == TransportTestFault::disconnected_basis) {
+      out.termination = TransportTermination::disconnected_basis;
+      break;
+    }
+    if (!compute_transport_potentials(cost, basis, n, m, u, v)) {
+      out.termination = TransportTermination::disconnected_basis;
+      break;
+    }
+    if (test_fault == TransportTestFault::invalid_cycle) {
+      out.termination = TransportTermination::invalid_cycle;
+      break;
+    }
+    if (test_fault == TransportTestFault::invalid_step) {
+      out.termination = TransportTermination::invalid_step;
+      break;
+    }
+    if (test_fault == TransportTestFault::no_leaving_variable) {
+      out.termination = TransportTermination::no_leaving_variable;
+      break;
+    }
 
     int enter_i = -1;
     int enter_j = -1;
+    double most_negative_rc = -tol_opt;
     for (int i = 0; i < n; ++i) {
       for (int j = 0; j < m; ++j) {
         if (basis[basis_index(i, j, m)]) {
           continue;
         }
         const double rc = cost(i, j) - u[i] - v[j];
-        if (rc < -tol_opt) {
-          enter_i = i;
-          enter_j = j;
+        if (!std::isfinite(rc)) {
+          out.termination = TransportTermination::numerical_failure;
+          enter_i = -2;
           break;
         }
+        if (rc < most_negative_rc) {
+          most_negative_rc = rc;
+          enter_i = i;
+          enter_j = j;
+        }
       }
-      if (enter_i >= 0) {
+      if (enter_i == -2) {
         break;
       }
     }
 
+    if (enter_i == -2) {
+      break;
+    }
     if (enter_i < 0) {
+      out.termination = TransportTermination::optimal;
       break;
     }
 
     if (!find_basis_path(basis, n, m, enter_i, enter_j, parent)) {
+      out.termination = TransportTermination::disconnected_basis;
       break;
     }
 
@@ -3085,13 +3255,18 @@ inline TransportSimplexResult transport_simplex_solve(
         cycle.emplace_back(b, a - n);
       }
     }
+    if (cycle.size() < 4u || (cycle.size() % 2u) != 0u) {
+      out.termination = TransportTermination::invalid_cycle;
+      break;
+    }
 
     double theta = std::numeric_limits<double>::infinity();
     for (std::size_t k = 1; k < cycle.size(); k += 2) {
       const auto ij = cycle[k];
       theta = std::min(theta, x(ij.first, ij.second));
     }
-    if (!std::isfinite(theta)) {
+    if (!std::isfinite(theta) || theta < -eps) {
+      out.termination = TransportTermination::invalid_step;
       break;
     }
 
@@ -3111,6 +3286,7 @@ inline TransportSimplexResult transport_simplex_solve(
       }
     }
     if (leave_i < 0) {
+      out.termination = TransportTermination::no_leaving_variable;
       break;
     }
 
@@ -3128,13 +3304,53 @@ inline TransportSimplexResult transport_simplex_solve(
 
     basis[basis_index(enter_i, enter_j, m)] = 1;
     basis[basis_index(leave_i, leave_j, m)] = 0;
+    ++it;
+    if (!x.is_finite() || x.min() < -eps) {
+      out.termination = TransportTermination::numerical_failure;
+      break;
+    }
   }
 
-  TransportSimplexResult out;
   out.plan = std::move(x);
   out.iterations = it;
-  out.converged = (it < max_iter);
+  finalize_transport_result(out, cost, p, q, basis, tol_opt);
   return out;
+}
+
+inline double transport_certificate_error(const TransportSimplexResult& res) {
+  if (!res.certified) {
+    return R_PosInf;
+  }
+  return std::max({
+    res.row_residual,
+    res.col_residual,
+    std::max(0.0, -res.min_reduced_cost),
+    std::abs(res.duality_gap)
+  });
+}
+
+inline Rcpp::List transport_result_list(const TransportSimplexResult& res) {
+  return Rcpp::List::create(
+    Rcpp::Named("plan") = res.plan,
+    Rcpp::Named("iterations") = res.iterations,
+    Rcpp::Named("error") = transport_certificate_error(res),
+    Rcpp::Named("lp_ok") = res.certified,
+    Rcpp::Named("termination_reason") = rfugw::transport_termination_name(res.termination),
+    Rcpp::Named("source_potential") = res.source_potential,
+    Rcpp::Named("target_potential") = res.target_potential,
+    Rcpp::Named("primal_objective") = res.primal_objective,
+    Rcpp::Named("dual_objective") = res.dual_objective,
+    Rcpp::Named("duality_gap") = res.duality_gap,
+    Rcpp::Named("row_residual") = res.row_residual,
+    Rcpp::Named("col_residual") = res.col_residual,
+    Rcpp::Named("min_reduced_cost") = res.min_reduced_cost,
+    Rcpp::Named("feasibility_tolerance") = res.feasibility_tolerance,
+    Rcpp::Named("reduced_cost_tolerance") = res.reduced_cost_tolerance,
+    Rcpp::Named("duality_gap_tolerance") = res.duality_gap_tolerance,
+    Rcpp::Named("primal_feasible") = res.primal_feasible,
+    Rcpp::Named("dual_feasible") = res.dual_feasible,
+    Rcpp::Named("gap_certified") = res.gap_certified
+  );
 }
 
 inline Rcpp::List fgw_entropic_square_mixed_impl(
@@ -3230,6 +3446,10 @@ inline Rcpp::List fgw_entropic_square_mixed_impl(
   }
 
   double err = std::numeric_limits<double>::infinity();
+  double inner_residual = std::numeric_limits<double>::infinity();
+  double max_inner_residual = 0.0;
+  int inner_iterations = 0;
+  bool inner_converged = true;
   int it = 0;
   for (; it < max_iter; ++it) {
     if ((it + 1) % check_every == 0) {
@@ -3261,6 +3481,11 @@ inline Rcpp::List fgw_entropic_square_mixed_impl(
     SinkhornBalancedResultF sk = sinkhorn_balanced_f(
       pf, qf, tens, epsilon_f, sinkhorn_max_iter, sinkhorn_tol_f, u_ws, v_ws
     );
+    inner_residual = static_cast<double>(sk.err);
+    max_inner_residual = std::max(max_inner_residual, inner_residual);
+    inner_iterations += sk.iters;
+    inner_converged = inner_converged && sk.plan.is_finite() &&
+      std::isfinite(inner_residual) && inner_residual <= static_cast<double>(sinkhorn_tol_f);
     T = std::move(sk.plan);
     u_ws = std::move(sk.u);
     v_ws = std::move(sk.v);
@@ -3285,7 +3510,13 @@ inline Rcpp::List fgw_entropic_square_mixed_impl(
     Rcpp::Named("fgw_dist") = fgw_dist,
     Rcpp::Named("iterations") = it,
     Rcpp::Named("error") = err,
-    Rcpp::Named("err_trace") = err_trace
+    Rcpp::Named("err_trace") = err_trace,
+    Rcpp::Named("inner_residual") = inner_residual,
+    Rcpp::Named("max_inner_residual") = max_inner_residual,
+    Rcpp::Named("inner_iterations") = inner_iterations,
+    Rcpp::Named("inner_converged") = inner_converged && it > 0,
+    Rcpp::Named("compute_precision") = "mixed",
+    Rcpp::Named("used_float_inner") = true
   );
 }
 
@@ -4139,6 +4370,7 @@ inline FgwEntropicCoreResult fgw_entropic_square_core(
     bool use_ppa,
     bool use_log_sinkhorn,
     bool use_mixed_precision,
+    bool allow_double_mixed_accel,
     int check_every,
     int approx_rank,
     const arma::mat& init_plan,
@@ -4154,6 +4386,7 @@ inline FgwEntropicCoreResult fgw_entropic_square_core(
     const SquareC2CacheD* c2_square_cache_d,
     const SquareC2CacheF* c2_square_cache_f) {
   const bool use_double_mixed_accel =
+    allow_double_mixed_accel &&
     (!use_mixed_precision) &&
     (!use_log_sinkhorn) &&
     (!use_ppa) &&
@@ -4179,6 +4412,44 @@ inline FgwEntropicCoreResult fgw_entropic_square_core(
 }  // namespace
 
 // [[Rcpp::export]]
+Rcpp::List cpp_runtime_controls() {
+  const MatvecDispatchThresholds& t = g_last_matvec_thresholds;
+#ifdef _OPENMP
+  const bool openmp_available = true;
+  const int openmp_max_threads = omp_get_max_threads();
+#else
+  const bool openmp_available = false;
+  const int openmp_max_threads = 1;
+#endif
+  return Rcpp::List::create(
+    Rcpp::Named("enable_warm_start") = fugw_enable_warm_start(),
+    Rcpp::Named("adaptive_inner_tol") = fugw_enable_adaptive_inner_tol(),
+    Rcpp::Named("adaptive_inner_tol_stage1") = fugw_adaptive_inner_tol_stage1(),
+    Rcpp::Named("adaptive_inner_tol_stage2") = fugw_adaptive_inner_tol_stage2(),
+    Rcpp::Named("sinkhorn_target_tol_abs_mult") = fugw_sinkhorn_target_tol_abs_mult(),
+    Rcpp::Named("sinkhorn_target_tol_mult") = fugw_sinkhorn_target_tol_mult(),
+    Rcpp::Named("sinkhorn_target_tol_cap_d") = fugw_sinkhorn_target_tol_cap_d(),
+    Rcpp::Named("sinkhorn_target_tol_cap_f") = fugw_sinkhorn_target_tol_cap_f(),
+    Rcpp::Named("sinkhorn_rel_tol_mult") = fugw_sinkhorn_rel_tol_mult(),
+    Rcpp::Named("sinkhorn_rel_tol_floor_d") = fugw_sinkhorn_rel_tol_floor_d(),
+    Rcpp::Named("sinkhorn_rel_tol_floor_f") = fugw_sinkhorn_rel_tol_floor_f(),
+    Rcpp::Named("sinkhorn_col_rel_tol_mult") = fugw_sinkhorn_col_rel_tol_mult(),
+    Rcpp::Named("sinkhorn_col_rel_tol_floor_d") = fugw_sinkhorn_col_rel_tol_floor_d(),
+    Rcpp::Named("sinkhorn_col_rel_tol_floor_f") = fugw_sinkhorn_col_rel_tol_floor_f(),
+    Rcpp::Named("matvec_blocked_min_work_d") = static_cast<double>(t.blocked_min_d),
+    Rcpp::Named("matvec_gemv_min_work_d") = static_cast<double>(t.gemv_min_d),
+    Rcpp::Named("matvec_blocked_min_work_f") = static_cast<double>(t.blocked_min_f),
+    Rcpp::Named("matvec_gemv_min_work_f") = static_cast<double>(t.gemv_min_f),
+    Rcpp::Named("matvec_thresholds_initialized") = g_matvec_thresholds_initialized,
+    Rcpp::Named("autotune_matvec") =
+      parse_bool_env("RFUGW_AUTOTUNE_MATVEC", true),
+    Rcpp::Named("openmp_available") = openmp_available,
+    Rcpp::Named("openmp_max_threads") = openmp_max_threads,
+    Rcpp::Named("kernel_omp_min_work") = static_cast<double>(kKernelOmpMinWork)
+  );
+}
+
+// [[Rcpp::export]]
 Rcpp::List cpp_fgw_entropic_square(
     const arma::mat& M,
     const arma::mat& C1,
@@ -4197,7 +4468,8 @@ Rcpp::List cpp_fgw_entropic_square(
     bool use_mixed_precision,
     int check_every,
     int approx_rank,
-    const arma::mat& init_plan) {
+    const arma::mat& init_plan,
+    bool allow_double_mixed_accel = true) {
   if (check_every <= 0) {
     check_every = 1;
   }
@@ -4205,6 +4477,7 @@ Rcpp::List cpp_fgw_entropic_square(
     approx_rank = 0;
   }
   const bool use_double_mixed_accel =
+    allow_double_mixed_accel &&
     (!use_mixed_precision) &&
     (!use_log_sinkhorn) &&
     (!use_ppa) &&
@@ -4286,6 +4559,10 @@ Rcpp::List cpp_fgw_entropic_square(
   }
 
   double err = std::numeric_limits<double>::infinity();
+  double inner_residual = std::numeric_limits<double>::infinity();
+  double max_inner_residual = 0.0;
+  int inner_iterations = 0;
+  bool inner_converged = true;
   int it = 0;
   for (; it < max_iter; ++it) {
     if ((it + 1) % check_every == 0) {
@@ -4324,6 +4601,11 @@ Rcpp::List cpp_fgw_entropic_square(
         p, q, tens, epsilon, sinkhorn_max_iter, sinkhorn_tol, u_ws, v_ws
       );
     }
+    inner_residual = sk.err;
+    max_inner_residual = std::max(max_inner_residual, inner_residual);
+    inner_iterations += sk.iters;
+    inner_converged = inner_converged && sk.plan.is_finite() &&
+      std::isfinite(inner_residual) && inner_residual <= sinkhorn_tol;
     T = std::move(sk.plan);
     if (use_log_sinkhorn) {
       f_ws = std::move(sk.f);
@@ -4349,7 +4631,13 @@ Rcpp::List cpp_fgw_entropic_square(
     Rcpp::Named("fgw_dist") = fgw_dist,
     Rcpp::Named("iterations") = it,
     Rcpp::Named("error") = err,
-    Rcpp::Named("err_trace") = err_trace
+    Rcpp::Named("err_trace") = err_trace,
+    Rcpp::Named("inner_residual") = inner_residual,
+    Rcpp::Named("max_inner_residual") = max_inner_residual,
+    Rcpp::Named("inner_iterations") = inner_iterations,
+    Rcpp::Named("inner_converged") = inner_converged && it > 0,
+    Rcpp::Named("compute_precision") = "double",
+    Rcpp::Named("used_float_inner") = false
   );
 }
 
@@ -4456,7 +4744,8 @@ Rcpp::List cpp_fgw_entropic_square_batch(
     const Rcpp::List& c1_A_scaled_list,
     const Rcpp::List& c1_Bt_list,
     int approx_rank,
-    int n_threads) {
+    int n_threads,
+    bool allow_double_mixed_accel = true) {
   const int n_jobs = static_cast<int>(M_list.size());
   if (n_jobs <= 0) {
     Rcpp::stop("`M_list` must be non-empty.");
@@ -4487,50 +4776,59 @@ Rcpp::List cpp_fgw_entropic_square_batch(
     n_threads = 1;
   }
 
-  std::vector<Rcpp::NumericMatrix> M_refs(static_cast<std::size_t>(n_jobs));
-  std::vector<Rcpp::NumericMatrix> C1_refs(static_cast<std::size_t>(n_jobs));
-  std::vector<Rcpp::NumericVector> p_refs(static_cast<std::size_t>(n_jobs));
-  std::vector<Rcpp::NumericMatrix> init_refs(static_cast<std::size_t>(n_jobs));
+  // The R main thread converts every input to owned Armadillo storage before
+  // workers start. No worker below holds or queries an R/Rcpp-backed object.
+  std::vector<arma::mat> M_owned(static_cast<std::size_t>(n_jobs));
+  std::vector<arma::mat> C1_owned(static_cast<std::size_t>(n_jobs));
+  std::vector<arma::vec> p_owned(static_cast<std::size_t>(n_jobs));
+  std::vector<arma::mat> init_owned(static_cast<std::size_t>(n_jobs));
   std::vector<unsigned char> has_init(static_cast<std::size_t>(n_jobs), 0);
-  std::vector<Rcpp::NumericMatrix> c1_A_refs(static_cast<std::size_t>(n_jobs));
-  std::vector<Rcpp::NumericMatrix> c1_Bt_refs(static_cast<std::size_t>(n_jobs));
+  std::vector<arma::mat> c1_A_owned(static_cast<std::size_t>(n_jobs));
+  std::vector<arma::mat> c1_Bt_owned(static_cast<std::size_t>(n_jobs));
   std::vector<unsigned char> has_c1_cache(static_cast<std::size_t>(n_jobs), 0);
   for (int i = 0; i < n_jobs; ++i) {
-    M_refs[static_cast<std::size_t>(i)] = Rcpp::as<Rcpp::NumericMatrix>(M_list[i]);
-    C1_refs[static_cast<std::size_t>(i)] = Rcpp::as<Rcpp::NumericMatrix>(C1_list[i]);
-    p_refs[static_cast<std::size_t>(i)] = Rcpp::as<Rcpp::NumericVector>(p_list[i]);
+    const std::size_t idx = static_cast<std::size_t>(i);
+    const Rcpp::NumericMatrix Mi_r = Rcpp::as<Rcpp::NumericMatrix>(M_list[i]);
+    const Rcpp::NumericMatrix C1i_r = Rcpp::as<Rcpp::NumericMatrix>(C1_list[i]);
+    const Rcpp::NumericVector pi_r = Rcpp::as<Rcpp::NumericVector>(p_list[i]);
+    M_owned[idx] = arma::mat(Mi_r.begin(), Mi_r.nrow(), Mi_r.ncol());
+    C1_owned[idx] = arma::mat(C1i_r.begin(), C1i_r.nrow(), C1i_r.ncol());
+    p_owned[idx] = arma::vec(pi_r.begin(), pi_r.size());
     if (init_plan_list.size() == M_list.size()) {
       SEXP init_i = init_plan_list[i];
       if (init_i != R_NilValue) {
-        init_refs[static_cast<std::size_t>(i)] = Rcpp::as<Rcpp::NumericMatrix>(init_i);
-        has_init[static_cast<std::size_t>(i)] = 1;
+        const Rcpp::NumericMatrix init_r = Rcpp::as<Rcpp::NumericMatrix>(init_i);
+        init_owned[idx] = arma::mat(init_r.begin(), init_r.nrow(), init_r.ncol());
+        has_init[idx] = 1;
       }
     }
     if (c1_A_scaled_list.size() == M_list.size()) {
       SEXP c1a_i = c1_A_scaled_list[i];
       SEXP c1b_i = c1_Bt_list[i];
       if (c1a_i != R_NilValue && c1b_i != R_NilValue) {
-        c1_A_refs[static_cast<std::size_t>(i)] = Rcpp::as<Rcpp::NumericMatrix>(c1a_i);
-        c1_Bt_refs[static_cast<std::size_t>(i)] = Rcpp::as<Rcpp::NumericMatrix>(c1b_i);
-        has_c1_cache[static_cast<std::size_t>(i)] = 1;
+        const Rcpp::NumericMatrix c1a_r = Rcpp::as<Rcpp::NumericMatrix>(c1a_i);
+        const Rcpp::NumericMatrix c1b_r = Rcpp::as<Rcpp::NumericMatrix>(c1b_i);
+        c1_A_owned[idx] = arma::mat(c1a_r.begin(), c1a_r.nrow(), c1a_r.ncol());
+        c1_Bt_owned[idx] = arma::mat(c1b_r.begin(), c1b_r.nrow(), c1b_r.ncol());
+        has_c1_cache[idx] = 1;
       }
     }
-    const Rcpp::NumericMatrix& Mi = M_refs[static_cast<std::size_t>(i)];
-    const Rcpp::NumericMatrix& C1i = C1_refs[static_cast<std::size_t>(i)];
-    const Rcpp::NumericVector& pi = p_refs[static_cast<std::size_t>(i)];
-    if (C1i.nrow() != C1i.ncol()) {
+    const arma::mat& Mi = M_owned[idx];
+    const arma::mat& C1i = C1_owned[idx];
+    const arma::vec& pi = p_owned[idx];
+    if (C1i.n_rows != C1i.n_cols) {
       Rcpp::stop("Every `C1_list[[i]]` must be square.");
     }
-    if (static_cast<int>(pi.size()) != C1i.nrow()) {
+    if (pi.n_elem != C1i.n_rows) {
       Rcpp::stop("Each `p_list[[i]]` must match `nrow(C1_list[[i]])`.");
     }
-    if (Mi.nrow() != C1i.nrow() || Mi.ncol() != static_cast<int>(C2.n_rows)) {
+    if (Mi.n_rows != C1i.n_rows || Mi.n_cols != C2.n_rows) {
       Rcpp::stop("Each `M_list[[i]]` must have shape nrow(C1_list[[i]]) x nrow(C2).");
     }
     if (has_c1_cache[static_cast<std::size_t>(i)] == 1) {
-      const Rcpp::NumericMatrix& c1A = c1_A_refs[static_cast<std::size_t>(i)];
-      const Rcpp::NumericMatrix& c1B = c1_Bt_refs[static_cast<std::size_t>(i)];
-      if (c1A.nrow() != C1i.nrow() || c1B.ncol() != C1i.ncol() || c1A.ncol() != c1B.nrow() || c1A.ncol() <= 0) {
+      const arma::mat& c1A = c1_A_owned[idx];
+      const arma::mat& c1B = c1_Bt_owned[idx];
+      if (c1A.n_rows != C1i.n_rows || c1B.n_cols != C1i.n_cols || c1A.n_cols != c1B.n_rows || c1A.n_cols == 0) {
         Rcpp::stop("Each cached C1 low-rank pair must satisfy A(n x r), Bt(r x n).");
       }
     }
@@ -4587,15 +4885,9 @@ Rcpp::List cpp_fgw_entropic_square_batch(
     p_kernel_cache_f.resize(static_cast<std::size_t>(n_jobs));
     for (int i = 0; i < n_jobs; ++i) {
       const std::size_t idx = static_cast<std::size_t>(i);
-      const Rcpp::NumericMatrix& Mref = M_refs[idx];
-      const Rcpp::NumericMatrix& C1ref = C1_refs[idx];
-      const Rcpp::NumericVector& pref = p_refs[idx];
-      const arma::mat Mi(const_cast<double*>(Mref.begin()), static_cast<arma::uword>(Mref.nrow()), static_cast<arma::uword>(Mref.ncol()), false, true);
-      const arma::mat C1i(const_cast<double*>(C1ref.begin()), static_cast<arma::uword>(C1ref.nrow()), static_cast<arma::uword>(C1ref.ncol()), false, true);
-      const arma::vec pi(const_cast<double*>(pref.begin()), static_cast<arma::uword>(pref.size()), false, true);
-      M_kernel_cache_f[idx] = arma::conv_to<arma::fmat>::from(Mi);
-      C1_kernel_cache_f[idx] = arma::conv_to<arma::fmat>::from(C1i);
-      p_kernel_cache_f[idx] = arma::conv_to<arma::fvec>::from(pi);
+      M_kernel_cache_f[idx] = arma::conv_to<arma::fmat>::from(M_owned[idx]);
+      C1_kernel_cache_f[idx] = arma::conv_to<arma::fmat>::from(C1_owned[idx]);
+      p_kernel_cache_f[idx] = arma::conv_to<arma::fvec>::from(p_owned[idx]);
     }
   }
   if (use_mixed_kernel && c1_A_scaled_list.size() == M_list.size()) {
@@ -4606,14 +4898,13 @@ Rcpp::List cpp_fgw_entropic_square_batch(
       if (has_c1_cache[idx] == 0) {
         continue;
       }
-      const Rcpp::NumericMatrix& c1A = c1_A_refs[idx];
-      const Rcpp::NumericMatrix& c1B = c1_Bt_refs[idx];
-      const arma::mat c1A_d(const_cast<double*>(c1A.begin()), static_cast<arma::uword>(c1A.nrow()), static_cast<arma::uword>(c1A.ncol()), false, true);
-      const arma::mat c1B_d(const_cast<double*>(c1B.begin()), static_cast<arma::uword>(c1B.nrow()), static_cast<arma::uword>(c1B.ncol()), false, true);
-      c1_A_cache_f[idx] = arma::conv_to<arma::fmat>::from(c1A_d);
-      c1_Bt_cache_f[idx] = arma::conv_to<arma::fmat>::from(c1B_d);
+      c1_A_cache_f[idx] = arma::conv_to<arma::fmat>::from(c1_A_owned[idx]);
+      c1_Bt_cache_f[idx] = arma::conv_to<arma::fmat>::from(c1_Bt_owned[idx]);
     }
   }
+
+  std::vector<unsigned char> worker_failed(static_cast<std::size_t>(n_jobs), 0);
+  std::vector<std::string> worker_errors(static_cast<std::size_t>(n_jobs));
 
 #ifdef _OPENMP
   const int max_threads = omp_get_max_threads();
@@ -4622,15 +4913,11 @@ Rcpp::List cpp_fgw_entropic_square_batch(
 #pragma omp parallel for schedule(runtime) num_threads(used_threads) if(n_jobs > 1 && used_threads > 1)
   for (int i = 0; i < n_jobs; ++i) {
     const std::size_t idx = static_cast<std::size_t>(i);
-    const Rcpp::NumericMatrix& Mref = M_refs[idx];
-    const Rcpp::NumericMatrix& C1ref = C1_refs[idx];
-    const Rcpp::NumericVector& pref = p_refs[idx];
-    const arma::mat Mi(const_cast<double*>(Mref.begin()), static_cast<arma::uword>(Mref.nrow()), static_cast<arma::uword>(Mref.ncol()), false, true);
-    const arma::mat C1i(const_cast<double*>(C1ref.begin()), static_cast<arma::uword>(C1ref.nrow()), static_cast<arma::uword>(C1ref.ncol()), false, true);
-    const arma::vec pi(const_cast<double*>(pref.begin()), static_cast<arma::uword>(pref.size()), false, true);
-    arma::mat init_i;
-    arma::mat c1A_i;
-    arma::mat c1Bt_i;
+    run_worker_guarded(idx, worker_failed, worker_errors, [&]() {
+    const arma::mat& Mi = M_owned[idx];
+    const arma::mat& C1i = C1_owned[idx];
+    const arma::vec& pi = p_owned[idx];
+    const arma::mat& init_i = init_owned[idx];
     const arma::mat* c1A_ptr = nullptr;
     const arma::mat* c1Bt_ptr = nullptr;
     const arma::fmat* c1A_ptr_f = nullptr;
@@ -4643,28 +4930,21 @@ Rcpp::List cpp_fgw_entropic_square_batch(
       C1_ptr_f = &(C1_kernel_cache_f[idx]);
       p_ptr_f = &(p_kernel_cache_f[idx]);
     }
-    if (has_init[idx]) {
-      const Rcpp::NumericMatrix& init_ref = init_refs[idx];
-      init_i = arma::mat(const_cast<double*>(init_ref.begin()), static_cast<arma::uword>(init_ref.nrow()), static_cast<arma::uword>(init_ref.ncol()), false, true);
-    }
     if (has_c1_cache[idx]) {
       if (use_mixed_kernel) {
         c1A_ptr_f = &(c1_A_cache_f[idx]);
         c1Bt_ptr_f = &(c1_Bt_cache_f[idx]);
       } else {
-        const Rcpp::NumericMatrix& c1A_ref = c1_A_refs[idx];
-        const Rcpp::NumericMatrix& c1Bt_ref = c1_Bt_refs[idx];
-        c1A_i = arma::mat(const_cast<double*>(c1A_ref.begin()), static_cast<arma::uword>(c1A_ref.nrow()), static_cast<arma::uword>(c1A_ref.ncol()), false, true);
-        c1Bt_i = arma::mat(const_cast<double*>(c1Bt_ref.begin()), static_cast<arma::uword>(c1Bt_ref.nrow()), static_cast<arma::uword>(c1Bt_ref.ncol()), false, true);
-        c1A_ptr = &c1A_i;
-        c1Bt_ptr = &c1Bt_i;
+        c1A_ptr = &(c1_A_owned[idx]);
+        c1Bt_ptr = &(c1_Bt_owned[idx]);
       }
     }
     const auto t0 = std::chrono::steady_clock::now();
     FgwEntropicCoreResult out = fgw_entropic_square_core(
       Mi, C1i, C2, pi, q,
       alpha, epsilon, max_iter, tol, sinkhorn_max_iter, sinkhorn_tol,
-      symmetric, use_ppa, use_log_sinkhorn, use_mixed_precision, check_every, approx_rank,
+      symmetric, use_ppa, use_log_sinkhorn, use_mixed_precision,
+      allow_double_mixed_accel, check_every, approx_rank,
       init_i, c1A_ptr, c1Bt_ptr, c1A_ptr_f, c1Bt_ptr_f,
       M_ptr_f, C1_ptr_f, p_ptr_f,
       c2_cache_d_ptr, c2_cache_f_ptr, c2_square_cache_d_ptr, c2_square_cache_f_ptr
@@ -4679,20 +4959,17 @@ Rcpp::List cpp_fgw_entropic_square_batch(
     c1_cache_used[idx] = out.used_c1_cache ? 1 : 0;
     c2_cache_used[idx] = out.used_c2_cache ? 1 : 0;
     square_cache_used[idx] = out.used_square_cache ? 1 : 0;
+    });
   }
 #else
+  const int max_threads = 1;
   const int used_threads = 1;
   for (int i = 0; i < n_jobs; ++i) {
     const std::size_t idx = static_cast<std::size_t>(i);
-    const Rcpp::NumericMatrix& Mref = M_refs[idx];
-    const Rcpp::NumericMatrix& C1ref = C1_refs[idx];
-    const Rcpp::NumericVector& pref = p_refs[idx];
-    const arma::mat Mi(const_cast<double*>(Mref.begin()), static_cast<arma::uword>(Mref.nrow()), static_cast<arma::uword>(Mref.ncol()), false, true);
-    const arma::mat C1i(const_cast<double*>(C1ref.begin()), static_cast<arma::uword>(C1ref.nrow()), static_cast<arma::uword>(C1ref.ncol()), false, true);
-    const arma::vec pi(const_cast<double*>(pref.begin()), static_cast<arma::uword>(pref.size()), false, true);
-    arma::mat init_i;
-    arma::mat c1A_i;
-    arma::mat c1Bt_i;
+    const arma::mat& Mi = M_owned[idx];
+    const arma::mat& C1i = C1_owned[idx];
+    const arma::vec& pi = p_owned[idx];
+    const arma::mat& init_i = init_owned[idx];
     const arma::mat* c1A_ptr = nullptr;
     const arma::mat* c1Bt_ptr = nullptr;
     const arma::fmat* c1A_ptr_f = nullptr;
@@ -4705,28 +4982,21 @@ Rcpp::List cpp_fgw_entropic_square_batch(
       C1_ptr_f = &(C1_kernel_cache_f[idx]);
       p_ptr_f = &(p_kernel_cache_f[idx]);
     }
-    if (has_init[idx]) {
-      const Rcpp::NumericMatrix& init_ref = init_refs[idx];
-      init_i = arma::mat(const_cast<double*>(init_ref.begin()), static_cast<arma::uword>(init_ref.nrow()), static_cast<arma::uword>(init_ref.ncol()), false, true);
-    }
     if (has_c1_cache[idx]) {
       if (use_mixed_kernel) {
         c1A_ptr_f = &(c1_A_cache_f[idx]);
         c1Bt_ptr_f = &(c1_Bt_cache_f[idx]);
       } else {
-        const Rcpp::NumericMatrix& c1A_ref = c1_A_refs[idx];
-        const Rcpp::NumericMatrix& c1Bt_ref = c1_Bt_refs[idx];
-        c1A_i = arma::mat(const_cast<double*>(c1A_ref.begin()), static_cast<arma::uword>(c1A_ref.nrow()), static_cast<arma::uword>(c1A_ref.ncol()), false, true);
-        c1Bt_i = arma::mat(const_cast<double*>(c1Bt_ref.begin()), static_cast<arma::uword>(c1Bt_ref.nrow()), static_cast<arma::uword>(c1Bt_ref.ncol()), false, true);
-        c1A_ptr = &c1A_i;
-        c1Bt_ptr = &c1Bt_i;
+        c1A_ptr = &(c1_A_owned[idx]);
+        c1Bt_ptr = &(c1_Bt_owned[idx]);
       }
     }
     const auto t0 = std::chrono::steady_clock::now();
     FgwEntropicCoreResult out = fgw_entropic_square_core(
       Mi, C1i, C2, pi, q,
       alpha, epsilon, max_iter, tol, sinkhorn_max_iter, sinkhorn_tol,
-      symmetric, use_ppa, use_log_sinkhorn, use_mixed_precision, check_every, approx_rank,
+      symmetric, use_ppa, use_log_sinkhorn, use_mixed_precision,
+      allow_double_mixed_accel, check_every, approx_rank,
       init_i, c1A_ptr, c1Bt_ptr, c1A_ptr_f, c1Bt_ptr_f,
       M_ptr_f, C1_ptr_f, p_ptr_f,
       c2_cache_d_ptr, c2_cache_f_ptr, c2_square_cache_d_ptr, c2_square_cache_f_ptr
@@ -4743,6 +5013,13 @@ Rcpp::List cpp_fgw_entropic_square_batch(
     square_cache_used[idx] = out.used_square_cache ? 1 : 0;
   }
 #endif
+
+  for (int i = 0; i < n_jobs; ++i) {
+    const std::size_t idx = static_cast<std::size_t>(i);
+    if (worker_failed[idx]) {
+      Rcpp::stop("Native FGW batch worker %d failed: %s", i + 1, worker_errors[idx].c_str());
+    }
+  }
 
   int n_lowrank = 0;
   int n_c1_cache = 0;
@@ -4765,7 +5042,10 @@ Rcpp::List cpp_fgw_entropic_square_batch(
     Rcpp::Named("fgw_dist") = dists,
     Rcpp::Named("iterations") = iters,
     Rcpp::Named("error") = errs,
+    Rcpp::Named("requested_threads") = n_threads,
     Rcpp::Named("used_threads") = used_threads,
+    Rcpp::Named("max_threads") = max_threads,
+    Rcpp::Named("nested_parallel") = false,
     Rcpp::Named("kernel_ms") = kernel_ms,
     Rcpp::Named("lowrank_used") = lowrank_used,
     Rcpp::Named("c1_cache_used") = c1_cache_used,
@@ -4803,7 +5083,8 @@ Rcpp::List cpp_fgw_entropic_square_batch_features(
     const Rcpp::List& c1_A_scaled_list,
     const Rcpp::List& c1_Bt_list,
     int approx_rank,
-    int n_threads) {
+    int n_threads,
+    bool allow_double_mixed_accel = true) {
   const int n_jobs = static_cast<int>(C1_list.size());
   if (n_jobs <= 0) {
     Rcpp::stop("`C1_list` must be non-empty.");
@@ -4837,53 +5118,62 @@ Rcpp::List cpp_fgw_entropic_square_batch_features(
     n_threads = 1;
   }
 
-  std::vector<Rcpp::NumericMatrix> F1_refs(static_cast<std::size_t>(n_jobs));
-  std::vector<Rcpp::NumericMatrix> C1_refs(static_cast<std::size_t>(n_jobs));
-  std::vector<Rcpp::NumericVector> p_refs(static_cast<std::size_t>(n_jobs));
-  std::vector<Rcpp::NumericMatrix> init_refs(static_cast<std::size_t>(n_jobs));
+  // Own all list payloads before OpenMP. Worker lifetime is bounded by this
+  // function and independent of R's garbage collector.
+  std::vector<arma::mat> F1_owned(static_cast<std::size_t>(n_jobs));
+  std::vector<arma::mat> C1_owned(static_cast<std::size_t>(n_jobs));
+  std::vector<arma::vec> p_owned(static_cast<std::size_t>(n_jobs));
+  std::vector<arma::mat> init_owned(static_cast<std::size_t>(n_jobs));
   std::vector<unsigned char> has_init(static_cast<std::size_t>(n_jobs), 0);
-  std::vector<Rcpp::NumericMatrix> c1_A_refs(static_cast<std::size_t>(n_jobs));
-  std::vector<Rcpp::NumericMatrix> c1_Bt_refs(static_cast<std::size_t>(n_jobs));
+  std::vector<arma::mat> c1_A_owned(static_cast<std::size_t>(n_jobs));
+  std::vector<arma::mat> c1_Bt_owned(static_cast<std::size_t>(n_jobs));
   std::vector<unsigned char> has_c1_cache(static_cast<std::size_t>(n_jobs), 0);
   for (int i = 0; i < n_jobs; ++i) {
-    F1_refs[static_cast<std::size_t>(i)] = Rcpp::as<Rcpp::NumericMatrix>(F1_list[i]);
-    C1_refs[static_cast<std::size_t>(i)] = Rcpp::as<Rcpp::NumericMatrix>(C1_list[i]);
-    p_refs[static_cast<std::size_t>(i)] = Rcpp::as<Rcpp::NumericVector>(p_list[i]);
+    const std::size_t idx = static_cast<std::size_t>(i);
+    const Rcpp::NumericMatrix F1i_r = Rcpp::as<Rcpp::NumericMatrix>(F1_list[i]);
+    const Rcpp::NumericMatrix C1i_r = Rcpp::as<Rcpp::NumericMatrix>(C1_list[i]);
+    const Rcpp::NumericVector pi_r = Rcpp::as<Rcpp::NumericVector>(p_list[i]);
+    F1_owned[idx] = arma::mat(F1i_r.begin(), F1i_r.nrow(), F1i_r.ncol());
+    C1_owned[idx] = arma::mat(C1i_r.begin(), C1i_r.nrow(), C1i_r.ncol());
+    p_owned[idx] = arma::vec(pi_r.begin(), pi_r.size());
     if (init_plan_list.size() == C1_list.size()) {
       SEXP init_i = init_plan_list[i];
       if (init_i != R_NilValue) {
-        init_refs[static_cast<std::size_t>(i)] = Rcpp::as<Rcpp::NumericMatrix>(init_i);
-        has_init[static_cast<std::size_t>(i)] = 1;
+        const Rcpp::NumericMatrix init_r = Rcpp::as<Rcpp::NumericMatrix>(init_i);
+        init_owned[idx] = arma::mat(init_r.begin(), init_r.nrow(), init_r.ncol());
+        has_init[idx] = 1;
       }
     }
     if (c1_A_scaled_list.size() == C1_list.size()) {
       SEXP c1a_i = c1_A_scaled_list[i];
       SEXP c1b_i = c1_Bt_list[i];
       if (c1a_i != R_NilValue && c1b_i != R_NilValue) {
-        c1_A_refs[static_cast<std::size_t>(i)] = Rcpp::as<Rcpp::NumericMatrix>(c1a_i);
-        c1_Bt_refs[static_cast<std::size_t>(i)] = Rcpp::as<Rcpp::NumericMatrix>(c1b_i);
-        has_c1_cache[static_cast<std::size_t>(i)] = 1;
+        const Rcpp::NumericMatrix c1a_r = Rcpp::as<Rcpp::NumericMatrix>(c1a_i);
+        const Rcpp::NumericMatrix c1b_r = Rcpp::as<Rcpp::NumericMatrix>(c1b_i);
+        c1_A_owned[idx] = arma::mat(c1a_r.begin(), c1a_r.nrow(), c1a_r.ncol());
+        c1_Bt_owned[idx] = arma::mat(c1b_r.begin(), c1b_r.nrow(), c1b_r.ncol());
+        has_c1_cache[idx] = 1;
       }
     }
-    const Rcpp::NumericMatrix& F1i = F1_refs[static_cast<std::size_t>(i)];
-    const Rcpp::NumericMatrix& C1i = C1_refs[static_cast<std::size_t>(i)];
-    const Rcpp::NumericVector& pi = p_refs[static_cast<std::size_t>(i)];
-    if (C1i.nrow() != C1i.ncol()) {
+    const arma::mat& F1i = F1_owned[idx];
+    const arma::mat& C1i = C1_owned[idx];
+    const arma::vec& pi = p_owned[idx];
+    if (C1i.n_rows != C1i.n_cols) {
       Rcpp::stop("Every `C1_list[[i]]` must be square.");
     }
-    if (F1i.nrow() != C1i.nrow()) {
+    if (F1i.n_rows != C1i.n_rows) {
       Rcpp::stop("Each `F1_list[[i]]` must have nrow = nrow(C1_list[[i]]).");
     }
-    if (F1i.ncol() != static_cast<int>(F2.n_cols)) {
+    if (F1i.n_cols != F2.n_cols) {
       Rcpp::stop("Each `F1_list[[i]]` must have ncol = ncol(F2).");
     }
-    if (static_cast<int>(pi.size()) != C1i.nrow()) {
+    if (pi.n_elem != C1i.n_rows) {
       Rcpp::stop("Each `p_list[[i]]` must match `nrow(C1_list[[i]])`.");
     }
     if (has_c1_cache[static_cast<std::size_t>(i)] == 1) {
-      const Rcpp::NumericMatrix& c1A = c1_A_refs[static_cast<std::size_t>(i)];
-      const Rcpp::NumericMatrix& c1B = c1_Bt_refs[static_cast<std::size_t>(i)];
-      if (c1A.nrow() != C1i.nrow() || c1B.ncol() != C1i.ncol() || c1A.ncol() != c1B.nrow() || c1A.ncol() <= 0) {
+      const arma::mat& c1A = c1_A_owned[idx];
+      const arma::mat& c1B = c1_Bt_owned[idx];
+      if (c1A.n_rows != C1i.n_rows || c1B.n_cols != C1i.n_cols || c1A.n_cols != c1B.n_rows || c1A.n_cols == 0) {
         Rcpp::stop("Each cached C1 low-rank pair must satisfy A(n x r), Bt(r x n).");
       }
     }
@@ -4941,16 +5231,14 @@ Rcpp::List cpp_fgw_entropic_square_batch_features(
       if (has_c1_cache[idx] == 0) {
         continue;
       }
-      const Rcpp::NumericMatrix& c1A = c1_A_refs[idx];
-      const Rcpp::NumericMatrix& c1B = c1_Bt_refs[idx];
-      const arma::mat c1A_d(const_cast<double*>(c1A.begin()), static_cast<arma::uword>(c1A.nrow()), static_cast<arma::uword>(c1A.ncol()), false, true);
-      const arma::mat c1B_d(const_cast<double*>(c1B.begin()), static_cast<arma::uword>(c1B.nrow()), static_cast<arma::uword>(c1B.ncol()), false, true);
-      c1_A_cache_f[idx] = arma::conv_to<arma::fmat>::from(c1A_d);
-      c1_Bt_cache_f[idx] = arma::conv_to<arma::fmat>::from(c1B_d);
+      c1_A_cache_f[idx] = arma::conv_to<arma::fmat>::from(c1_A_owned[idx]);
+      c1_Bt_cache_f[idx] = arma::conv_to<arma::fmat>::from(c1_Bt_owned[idx]);
     }
   }
 
   const arma::vec y2 = arma::sum(arma::square(F2), 1);
+  std::vector<unsigned char> worker_failed(static_cast<std::size_t>(n_jobs), 0);
+  std::vector<std::string> worker_errors(static_cast<std::size_t>(n_jobs));
 
 #ifdef _OPENMP
   const int max_threads = omp_get_max_threads();
@@ -4959,17 +5247,13 @@ Rcpp::List cpp_fgw_entropic_square_batch_features(
 #pragma omp parallel for schedule(runtime) num_threads(used_threads) if(n_jobs > 1 && used_threads > 1)
   for (int i = 0; i < n_jobs; ++i) {
     const std::size_t idx = static_cast<std::size_t>(i);
-    const Rcpp::NumericMatrix& F1ref = F1_refs[idx];
-    const Rcpp::NumericMatrix& C1ref = C1_refs[idx];
-    const Rcpp::NumericVector& pref = p_refs[idx];
-    const arma::mat F1i(const_cast<double*>(F1ref.begin()), static_cast<arma::uword>(F1ref.nrow()), static_cast<arma::uword>(F1ref.ncol()), false, true);
-    const arma::mat C1i(const_cast<double*>(C1ref.begin()), static_cast<arma::uword>(C1ref.nrow()), static_cast<arma::uword>(C1ref.ncol()), false, true);
-    const arma::vec pi(const_cast<double*>(pref.begin()), static_cast<arma::uword>(pref.size()), false, true);
+    run_worker_guarded(idx, worker_failed, worker_errors, [&]() {
+    const arma::mat& F1i = F1_owned[idx];
+    const arma::mat& C1i = C1_owned[idx];
+    const arma::vec& pi = p_owned[idx];
     const auto t0 = std::chrono::steady_clock::now();
     arma::mat Mi = cross_feature_cost_matrix(F1i, F2, y2, use_euclidean, rescale01);
-    arma::mat init_i;
-    arma::mat c1A_i;
-    arma::mat c1Bt_i;
+    const arma::mat& init_i = init_owned[idx];
     const arma::mat* c1A_ptr = nullptr;
     const arma::mat* c1Bt_ptr = nullptr;
     const arma::fmat* c1A_ptr_f = nullptr;
@@ -4988,28 +5272,21 @@ Rcpp::List cpp_fgw_entropic_square_batch_features(
       C1_ptr_f = &C1i_f;
       p_ptr_f = &pi_f;
     }
-    if (has_init[idx]) {
-      const Rcpp::NumericMatrix& init_ref = init_refs[idx];
-      init_i = arma::mat(const_cast<double*>(init_ref.begin()), static_cast<arma::uword>(init_ref.nrow()), static_cast<arma::uword>(init_ref.ncol()), false, true);
-    }
     if (has_c1_cache[idx]) {
       if (use_mixed_kernel) {
         c1A_ptr_f = &(c1_A_cache_f[idx]);
         c1Bt_ptr_f = &(c1_Bt_cache_f[idx]);
       } else {
-        const Rcpp::NumericMatrix& c1A_ref = c1_A_refs[idx];
-        const Rcpp::NumericMatrix& c1Bt_ref = c1_Bt_refs[idx];
-        c1A_i = arma::mat(const_cast<double*>(c1A_ref.begin()), static_cast<arma::uword>(c1A_ref.nrow()), static_cast<arma::uword>(c1A_ref.ncol()), false, true);
-        c1Bt_i = arma::mat(const_cast<double*>(c1Bt_ref.begin()), static_cast<arma::uword>(c1Bt_ref.nrow()), static_cast<arma::uword>(c1Bt_ref.ncol()), false, true);
-        c1A_ptr = &c1A_i;
-        c1Bt_ptr = &c1Bt_i;
+        c1A_ptr = &(c1_A_owned[idx]);
+        c1Bt_ptr = &(c1_Bt_owned[idx]);
       }
     }
     const auto tf = std::chrono::steady_clock::now();
     FgwEntropicCoreResult out = fgw_entropic_square_core(
       Mi, C1i, C2, pi, q,
       alpha, epsilon, max_iter, tol, sinkhorn_max_iter, sinkhorn_tol,
-      symmetric, use_ppa, use_log_sinkhorn, use_mixed_precision, check_every, approx_rank,
+      symmetric, use_ppa, use_log_sinkhorn, use_mixed_precision,
+      allow_double_mixed_accel, check_every, approx_rank,
       init_i, c1A_ptr, c1Bt_ptr, c1A_ptr_f, c1Bt_ptr_f,
       M_ptr_f, C1_ptr_f, p_ptr_f,
       c2_cache_d_ptr, c2_cache_f_ptr, c2_square_cache_d_ptr, c2_square_cache_f_ptr
@@ -5026,22 +5303,19 @@ Rcpp::List cpp_fgw_entropic_square_batch_features(
     c1_cache_used[idx] = out.used_c1_cache ? 1 : 0;
     c2_cache_used[idx] = out.used_c2_cache ? 1 : 0;
     square_cache_used[idx] = out.used_square_cache ? 1 : 0;
+    });
   }
 #else
+  const int max_threads = 1;
   const int used_threads = 1;
   for (int i = 0; i < n_jobs; ++i) {
     const std::size_t idx = static_cast<std::size_t>(i);
-    const Rcpp::NumericMatrix& F1ref = F1_refs[idx];
-    const Rcpp::NumericMatrix& C1ref = C1_refs[idx];
-    const Rcpp::NumericVector& pref = p_refs[idx];
-    const arma::mat F1i(const_cast<double*>(F1ref.begin()), static_cast<arma::uword>(F1ref.nrow()), static_cast<arma::uword>(F1ref.ncol()), false, true);
-    const arma::mat C1i(const_cast<double*>(C1ref.begin()), static_cast<arma::uword>(C1ref.nrow()), static_cast<arma::uword>(C1ref.ncol()), false, true);
-    const arma::vec pi(const_cast<double*>(pref.begin()), static_cast<arma::uword>(pref.size()), false, true);
+    const arma::mat& F1i = F1_owned[idx];
+    const arma::mat& C1i = C1_owned[idx];
+    const arma::vec& pi = p_owned[idx];
     const auto t0 = std::chrono::steady_clock::now();
     arma::mat Mi = cross_feature_cost_matrix(F1i, F2, y2, use_euclidean, rescale01);
-    arma::mat init_i;
-    arma::mat c1A_i;
-    arma::mat c1Bt_i;
+    const arma::mat& init_i = init_owned[idx];
     const arma::mat* c1A_ptr = nullptr;
     const arma::mat* c1Bt_ptr = nullptr;
     const arma::fmat* c1A_ptr_f = nullptr;
@@ -5060,28 +5334,21 @@ Rcpp::List cpp_fgw_entropic_square_batch_features(
       C1_ptr_f = &C1i_f;
       p_ptr_f = &pi_f;
     }
-    if (has_init[idx]) {
-      const Rcpp::NumericMatrix& init_ref = init_refs[idx];
-      init_i = arma::mat(const_cast<double*>(init_ref.begin()), static_cast<arma::uword>(init_ref.nrow()), static_cast<arma::uword>(init_ref.ncol()), false, true);
-    }
     if (has_c1_cache[idx]) {
       if (use_mixed_kernel) {
         c1A_ptr_f = &(c1_A_cache_f[idx]);
         c1Bt_ptr_f = &(c1_Bt_cache_f[idx]);
       } else {
-        const Rcpp::NumericMatrix& c1A_ref = c1_A_refs[idx];
-        const Rcpp::NumericMatrix& c1Bt_ref = c1_Bt_refs[idx];
-        c1A_i = arma::mat(const_cast<double*>(c1A_ref.begin()), static_cast<arma::uword>(c1A_ref.nrow()), static_cast<arma::uword>(c1A_ref.ncol()), false, true);
-        c1Bt_i = arma::mat(const_cast<double*>(c1Bt_ref.begin()), static_cast<arma::uword>(c1Bt_ref.nrow()), static_cast<arma::uword>(c1Bt_ref.ncol()), false, true);
-        c1A_ptr = &c1A_i;
-        c1Bt_ptr = &c1Bt_i;
+        c1A_ptr = &(c1_A_owned[idx]);
+        c1Bt_ptr = &(c1_Bt_owned[idx]);
       }
     }
     const auto tf = std::chrono::steady_clock::now();
     FgwEntropicCoreResult out = fgw_entropic_square_core(
       Mi, C1i, C2, pi, q,
       alpha, epsilon, max_iter, tol, sinkhorn_max_iter, sinkhorn_tol,
-      symmetric, use_ppa, use_log_sinkhorn, use_mixed_precision, check_every, approx_rank,
+      symmetric, use_ppa, use_log_sinkhorn, use_mixed_precision,
+      allow_double_mixed_accel, check_every, approx_rank,
       init_i, c1A_ptr, c1Bt_ptr, c1A_ptr_f, c1Bt_ptr_f,
       M_ptr_f, C1_ptr_f, p_ptr_f,
       c2_cache_d_ptr, c2_cache_f_ptr, c2_square_cache_d_ptr, c2_square_cache_f_ptr
@@ -5100,6 +5367,13 @@ Rcpp::List cpp_fgw_entropic_square_batch_features(
     square_cache_used[idx] = out.used_square_cache ? 1 : 0;
   }
 #endif
+
+  for (int i = 0; i < n_jobs; ++i) {
+    const std::size_t idx = static_cast<std::size_t>(i);
+    if (worker_failed[idx]) {
+      Rcpp::stop("Native FGW feature batch worker %d failed: %s", i + 1, worker_errors[idx].c_str());
+    }
+  }
 
   int n_lowrank = 0;
   int n_c1_cache = 0;
@@ -5122,7 +5396,10 @@ Rcpp::List cpp_fgw_entropic_square_batch_features(
     Rcpp::Named("fgw_dist") = dists,
     Rcpp::Named("iterations") = iters,
     Rcpp::Named("error") = errs,
+    Rcpp::Named("requested_threads") = n_threads,
     Rcpp::Named("used_threads") = used_threads,
+    Rcpp::Named("max_threads") = max_threads,
+    Rcpp::Named("nested_parallel") = false,
     Rcpp::Named("kernel_ms") = kernel_ms,
     Rcpp::Named("feature_ms") = feature_ms,
     Rcpp::Named("solve_ms") = solve_ms,
@@ -5152,17 +5429,25 @@ Rcpp::List cpp_feature_cost_batch(
     n_threads = 1;
   }
 
-  std::vector<Rcpp::NumericMatrix> F1_refs(static_cast<std::size_t>(n_jobs));
+  // Materialize every R-backed matrix on the main thread.  OpenMP workers must
+  // only touch owned C++/Armadillo storage; even reading an Rcpp proxy from a
+  // worker can call into the R API or observe GC-managed memory.
+  std::vector<arma::mat> F1_owned(static_cast<std::size_t>(n_jobs));
   for (int i = 0; i < n_jobs; ++i) {
-    F1_refs[static_cast<std::size_t>(i)] = Rcpp::as<Rcpp::NumericMatrix>(F1_list[i]);
-    const Rcpp::NumericMatrix& F1i = F1_refs[static_cast<std::size_t>(i)];
-    if (F1i.ncol() != static_cast<int>(F2.n_cols)) {
+    const Rcpp::NumericMatrix F1_r = Rcpp::as<Rcpp::NumericMatrix>(F1_list[i]);
+    F1_owned[static_cast<std::size_t>(i)] = arma::mat(
+      F1_r.begin(), F1_r.nrow(), F1_r.ncol()
+    );
+    const arma::mat& F1i = F1_owned[static_cast<std::size_t>(i)];
+    if (F1i.n_cols != F2.n_cols) {
       Rcpp::stop("Each `F1_list[[i]]` must have ncol = ncol(`F2`).");
     }
   }
 
   const arma::vec y2 = arma::sum(arma::square(F2), 1);
   std::vector<arma::mat> out(static_cast<std::size_t>(n_jobs));
+  std::vector<unsigned char> worker_failed(static_cast<std::size_t>(n_jobs), 0);
+  std::vector<std::string> worker_errors(static_cast<std::size_t>(n_jobs));
 
 #ifdef _OPENMP
   const int max_threads = omp_get_max_threads();
@@ -5171,37 +5456,36 @@ Rcpp::List cpp_feature_cost_batch(
 #pragma omp parallel for schedule(runtime) num_threads(used_threads) if(n_jobs > 1 && used_threads > 1)
   for (int i = 0; i < n_jobs; ++i) {
     const std::size_t idx = static_cast<std::size_t>(i);
-    const Rcpp::NumericMatrix& F1ref = F1_refs[idx];
-    const arma::mat F1(
-      const_cast<double*>(F1ref.begin()),
-      static_cast<arma::uword>(F1ref.nrow()),
-      static_cast<arma::uword>(F1ref.ncol()),
-      false,
-      true
-    );
+    run_worker_guarded(idx, worker_failed, worker_errors, [&]() {
+    const arma::mat& F1 = F1_owned[idx];
     out[idx] = cross_feature_cost_matrix(F1, F2, y2, use_euclidean, rescale01);
+    });
   }
 #else
+  const int max_threads = 1;
   const int used_threads = 1;
   for (int i = 0; i < n_jobs; ++i) {
     const std::size_t idx = static_cast<std::size_t>(i);
-    const Rcpp::NumericMatrix& F1ref = F1_refs[idx];
-    const arma::mat F1(
-      const_cast<double*>(F1ref.begin()),
-      static_cast<arma::uword>(F1ref.nrow()),
-      static_cast<arma::uword>(F1ref.ncol()),
-      false,
-      true
-    );
+    const arma::mat& F1 = F1_owned[idx];
     out[idx] = cross_feature_cost_matrix(F1, F2, y2, use_euclidean, rescale01);
   }
 #endif
+
+  for (int i = 0; i < n_jobs; ++i) {
+    const std::size_t idx = static_cast<std::size_t>(i);
+    if (worker_failed[idx]) {
+      Rcpp::stop("Native feature-cost worker %d failed: %s", i + 1, worker_errors[idx].c_str());
+    }
+  }
 
   Rcpp::List out_list(n_jobs);
   for (int i = 0; i < n_jobs; ++i) {
     out_list[i] = std::move(out[static_cast<std::size_t>(i)]);
   }
   out_list.attr("used_threads") = used_threads;
+  out_list.attr("requested_threads") = n_threads;
+  out_list.attr("max_threads") = max_threads;
+  out_list.attr("nested_parallel") = false;
   return out_list;
 }
 
@@ -5263,6 +5547,9 @@ Rcpp::List cpp_fgw_exact_cg_square(
   int it = 0;
   bool lp_ok = true;
   int inner_iterations = 0;
+  double inner_residual = std::numeric_limits<double>::infinity();
+  double max_inner_residual = 0.0;
+  std::string inner_termination_reason = "not_run";
 
   arma::mat gG(C1.n_rows, C2.n_rows);
   arma::mat Mi(C1.n_rows, C2.n_rows);
@@ -5282,8 +5569,14 @@ Rcpp::List cpp_fgw_exact_cg_square(
     Mi = M_lin + alpha * gG;
 
     const TransportSimplexResult dir = transport_simplex_solve(Mi, p, q, lp_max_iter, lp_tol);
-    lp_ok = lp_ok && dir.converged;
+    lp_ok = lp_ok && dir.certified;
     inner_iterations += dir.iterations;
+    inner_residual = transport_certificate_error(dir);
+    max_inner_residual = std::max(max_inner_residual, inner_residual);
+    inner_termination_reason = rfugw::transport_termination_name(dir.termination);
+    if (!dir.certified) {
+      break;
+    }
     arma::mat Gc = dir.plan;
     deltaG = Gc - G;
 
@@ -5330,7 +5623,11 @@ Rcpp::List cpp_fgw_exact_cg_square(
     Rcpp::Named("rel_error") = rel_delta,
     Rcpp::Named("loss_trace") = loss_trace,
     Rcpp::Named("lp_ok") = lp_ok,
-    Rcpp::Named("inner_iterations") = inner_iterations
+    Rcpp::Named("inner_iterations") = inner_iterations,
+    Rcpp::Named("inner_residual") = inner_residual,
+    Rcpp::Named("max_inner_residual") = max_inner_residual,
+    Rcpp::Named("inner_converged") = lp_ok,
+    Rcpp::Named("inner_termination_reason") = inner_termination_reason
   );
 }
 
@@ -5374,12 +5671,17 @@ Rcpp::List cpp_fugw_kl_square(
   std::vector<int> inner_warm_samp;
   std::vector<int> inner_fallback_feat;
   std::vector<int> inner_fallback_samp;
+  std::vector<double> inner_errors;
   inner_iters_feat.reserve(static_cast<std::size_t>(std::max(0, max_iter)));
   inner_iters_samp.reserve(static_cast<std::size_t>(std::max(0, max_iter)));
   inner_warm_feat.reserve(static_cast<std::size_t>(std::max(0, max_iter)));
   inner_warm_samp.reserve(static_cast<std::size_t>(std::max(0, max_iter)));
   inner_fallback_feat.reserve(static_cast<std::size_t>(std::max(0, max_iter)));
   inner_fallback_samp.reserve(static_cast<std::size_t>(std::max(0, max_iter)));
+  inner_errors.reserve(static_cast<std::size_t>(std::max(0, 2 * max_iter)));
+  double inner_residual = std::numeric_limits<double>::infinity();
+  double max_inner_residual = 0.0;
+  bool inner_converged = true;
 
   if (!use_mixed_precision) {
     arma::mat pi_samp = init_pi;
@@ -5421,6 +5723,12 @@ Rcpp::List cpp_fugw_kl_square(
           fugw_enable_warm_start()
         );
         inner_iters_feat.push_back(su.iters);
+        inner_residual = su.err;
+        inner_errors.push_back(inner_residual);
+        max_inner_residual = std::max(max_inner_residual, inner_residual);
+        const bool this_inner_ok = su.plan.is_finite() && std::isfinite(inner_residual) &&
+          inner_residual <= tol_ot_eff;
+        inner_converged = inner_converged && this_inner_ok;
         inner_warm_feat.push_back(su.warm_started ? 1 : 0);
         inner_fallback_feat.push_back(su.warm_fallback ? 1 : 0);
         pi_feat = std::move(su.plan);
@@ -5453,6 +5761,12 @@ Rcpp::List cpp_fugw_kl_square(
           fugw_enable_warm_start()
         );
         inner_iters_samp.push_back(su.iters);
+        inner_residual = su.err;
+        inner_errors.push_back(inner_residual);
+        max_inner_residual = std::max(max_inner_residual, inner_residual);
+        const bool this_inner_ok = su.plan.is_finite() && std::isfinite(inner_residual) &&
+          inner_residual <= tol_ot_eff;
+        inner_converged = inner_converged && this_inner_ok;
         inner_warm_samp.push_back(su.warm_started ? 1 : 0);
         inner_fallback_samp.push_back(su.warm_fallback ? 1 : 0);
         arma::mat pi_next = std::move(su.plan);
@@ -5498,7 +5812,14 @@ Rcpp::List cpp_fugw_kl_square(
       Rcpp::Named("inner_warm_samp") = Rcpp::LogicalVector(inner_warm_samp.begin(), inner_warm_samp.end()),
       Rcpp::Named("inner_warm_fallback_feat") = Rcpp::LogicalVector(inner_fallback_feat.begin(), inner_fallback_feat.end()),
       Rcpp::Named("inner_warm_fallback_samp") = Rcpp::LogicalVector(inner_fallback_samp.begin(), inner_fallback_samp.end()),
-      Rcpp::Named("inner_iters_total") = inner_total
+      Rcpp::Named("inner_iters_total") = inner_total,
+      Rcpp::Named("inner_residuals") = inner_errors,
+      Rcpp::Named("inner_residual") = inner_residual,
+      Rcpp::Named("max_inner_residual") = max_inner_residual,
+      Rcpp::Named("inner_converged") = inner_converged,
+      Rcpp::Named("inner_status") = inner_converged ? "converged" : "max_iter",
+      Rcpp::Named("compute_precision") = "double",
+      Rcpp::Named("used_float_inner") = false
     );
   }
 
@@ -5558,6 +5879,12 @@ Rcpp::List cpp_fugw_kl_square(
         fugw_enable_warm_start()
       );
       inner_iters_feat.push_back(su.iters);
+      inner_residual = static_cast<double>(su.err);
+      inner_errors.push_back(inner_residual);
+      max_inner_residual = std::max(max_inner_residual, inner_residual);
+      const bool this_inner_ok = su.plan.is_finite() && std::isfinite(inner_residual) &&
+        inner_residual <= static_cast<double>(tol_ot_eff_f);
+      inner_converged = inner_converged && this_inner_ok;
       inner_warm_feat.push_back(su.warm_started ? 1 : 0);
       inner_fallback_feat.push_back(su.warm_fallback ? 1 : 0);
       pi_feat_f = std::move(su.plan);
@@ -5590,6 +5917,12 @@ Rcpp::List cpp_fugw_kl_square(
         fugw_enable_warm_start()
       );
       inner_iters_samp.push_back(su.iters);
+      inner_residual = static_cast<double>(su.err);
+      inner_errors.push_back(inner_residual);
+      max_inner_residual = std::max(max_inner_residual, inner_residual);
+      const bool this_inner_ok = su.plan.is_finite() && std::isfinite(inner_residual) &&
+        inner_residual <= static_cast<double>(tol_ot_eff_f);
+      inner_converged = inner_converged && this_inner_ok;
       inner_warm_samp.push_back(su.warm_started ? 1 : 0);
       inner_fallback_samp.push_back(su.warm_fallback ? 1 : 0);
       arma::fmat pi_next = std::move(su.plan);
@@ -5637,7 +5970,14 @@ Rcpp::List cpp_fugw_kl_square(
     Rcpp::Named("inner_warm_samp") = Rcpp::LogicalVector(inner_warm_samp.begin(), inner_warm_samp.end()),
     Rcpp::Named("inner_warm_fallback_feat") = Rcpp::LogicalVector(inner_fallback_feat.begin(), inner_fallback_feat.end()),
     Rcpp::Named("inner_warm_fallback_samp") = Rcpp::LogicalVector(inner_fallback_samp.begin(), inner_fallback_samp.end()),
-    Rcpp::Named("inner_iters_total") = inner_total
+    Rcpp::Named("inner_iters_total") = inner_total,
+    Rcpp::Named("inner_residuals") = inner_errors,
+    Rcpp::Named("inner_residual") = inner_residual,
+    Rcpp::Named("max_inner_residual") = max_inner_residual,
+    Rcpp::Named("inner_converged") = inner_converged,
+    Rcpp::Named("inner_status") = inner_converged ? "converged" : "max_iter",
+    Rcpp::Named("compute_precision") = "mixed",
+    Rcpp::Named("used_float_inner") = true
   );
 }
 
@@ -5853,32 +6193,38 @@ Rcpp::List cpp_fugw_kl_square_batch(
     n_threads = 1;
   }
 
-  std::vector<Rcpp::NumericMatrix> Cx_refs(static_cast<std::size_t>(n_jobs));
-  std::vector<Rcpp::NumericVector> wx_refs(static_cast<std::size_t>(n_jobs));
-  std::vector<Rcpp::NumericMatrix> M_refs(static_cast<std::size_t>(n_jobs));
-  std::vector<Rcpp::NumericMatrix> init_refs(static_cast<std::size_t>(n_jobs));
+  // Cross the R/C++ ownership boundary before entering a worker region.
+  std::vector<arma::mat> Cx_owned(static_cast<std::size_t>(n_jobs));
+  std::vector<arma::vec> wx_owned(static_cast<std::size_t>(n_jobs));
+  std::vector<arma::mat> M_owned(static_cast<std::size_t>(n_jobs));
+  std::vector<arma::mat> init_owned(static_cast<std::size_t>(n_jobs));
   std::vector<unsigned char> has_init(static_cast<std::size_t>(n_jobs), 0);
   for (int i = 0; i < n_jobs; ++i) {
-    Cx_refs[static_cast<std::size_t>(i)] = Rcpp::as<Rcpp::NumericMatrix>(Cx_list[i]);
-    wx_refs[static_cast<std::size_t>(i)] = Rcpp::as<Rcpp::NumericVector>(wx_list[i]);
-    M_refs[static_cast<std::size_t>(i)] = Rcpp::as<Rcpp::NumericMatrix>(M_list[i]);
+    const std::size_t idx = static_cast<std::size_t>(i);
+    const Rcpp::NumericMatrix Cx_r = Rcpp::as<Rcpp::NumericMatrix>(Cx_list[i]);
+    const Rcpp::NumericVector wx_r = Rcpp::as<Rcpp::NumericVector>(wx_list[i]);
+    const Rcpp::NumericMatrix M_r = Rcpp::as<Rcpp::NumericMatrix>(M_list[i]);
+    Cx_owned[idx] = arma::mat(Cx_r.begin(), Cx_r.nrow(), Cx_r.ncol());
+    wx_owned[idx] = arma::vec(wx_r.begin(), wx_r.size());
+    M_owned[idx] = arma::mat(M_r.begin(), M_r.nrow(), M_r.ncol());
     if (init_pi_list.size() == Cx_list.size()) {
       SEXP init_i = init_pi_list[i];
       if (init_i != R_NilValue) {
-        init_refs[static_cast<std::size_t>(i)] = Rcpp::as<Rcpp::NumericMatrix>(init_i);
-        has_init[static_cast<std::size_t>(i)] = 1;
+        const Rcpp::NumericMatrix init_r = Rcpp::as<Rcpp::NumericMatrix>(init_i);
+        init_owned[idx] = arma::mat(init_r.begin(), init_r.nrow(), init_r.ncol());
+        has_init[idx] = 1;
       }
     }
-    const Rcpp::NumericMatrix& Cxi = Cx_refs[static_cast<std::size_t>(i)];
-    const Rcpp::NumericVector& wxi = wx_refs[static_cast<std::size_t>(i)];
-    const Rcpp::NumericMatrix& Mi = M_refs[static_cast<std::size_t>(i)];
-    if (Cxi.nrow() != Cxi.ncol()) {
+    const arma::mat& Cxi = Cx_owned[idx];
+    const arma::vec& wxi = wx_owned[idx];
+    const arma::mat& Mi = M_owned[idx];
+    if (Cxi.n_rows != Cxi.n_cols) {
       Rcpp::stop("Every `Cx_list[[i]]` must be square.");
     }
-    if (static_cast<int>(wxi.size()) != Cxi.nrow()) {
+    if (wxi.n_elem != Cxi.n_rows) {
       Rcpp::stop("Each `wx_list[[i]]` must match `nrow(Cx_list[[i]])`.");
     }
-    if (Mi.nrow() != Cxi.nrow() || Mi.ncol() != static_cast<int>(Cy.n_rows)) {
+    if (Mi.n_rows != Cxi.n_rows || Mi.n_cols != Cy.n_rows) {
       Rcpp::stop("Each `M_list[[i]]` must have shape nrow(Cx_list[[i]]) x nrow(Cy).");
     }
   }
@@ -5892,6 +6238,8 @@ Rcpp::List cpp_fugw_kl_square_batch(
   std::vector<double> errs(static_cast<std::size_t>(n_jobs), NA_REAL);
   std::vector<int> iters(static_cast<std::size_t>(n_jobs), 0);
   std::vector<double> kernel_ms(static_cast<std::size_t>(n_jobs), 0.0);
+  std::vector<unsigned char> worker_failed(static_cast<std::size_t>(n_jobs), 0);
+  std::vector<std::string> worker_errors(static_cast<std::size_t>(n_jobs));
 
 #ifdef _OPENMP
   const int max_threads = omp_get_max_threads();
@@ -5900,16 +6248,13 @@ Rcpp::List cpp_fugw_kl_square_batch(
 #pragma omp parallel for schedule(runtime) num_threads(used_threads) if(n_jobs > 1 && used_threads > 1)
   for (int i = 0; i < n_jobs; ++i) {
     const std::size_t idx = static_cast<std::size_t>(i);
-    const Rcpp::NumericMatrix& Cxref = Cx_refs[idx];
-    const Rcpp::NumericVector& wxref = wx_refs[idx];
-    const Rcpp::NumericMatrix& Mref = M_refs[idx];
-    const arma::mat Cx(const_cast<double*>(Cxref.begin()), static_cast<arma::uword>(Cxref.nrow()), static_cast<arma::uword>(Cxref.ncol()), false, true);
-    const arma::vec wx(const_cast<double*>(wxref.begin()), static_cast<arma::uword>(wxref.size()), false, true);
-    const arma::mat M(const_cast<double*>(Mref.begin()), static_cast<arma::uword>(Mref.nrow()), static_cast<arma::uword>(Mref.ncol()), false, true);
+    run_worker_guarded(idx, worker_failed, worker_errors, [&]() {
+    const arma::mat& Cx = Cx_owned[idx];
+    const arma::vec& wx = wx_owned[idx];
+    const arma::mat& M = M_owned[idx];
     arma::mat init_i;
     if (has_init[idx]) {
-      const Rcpp::NumericMatrix& init_ref = init_refs[idx];
-      init_i = arma::mat(const_cast<double*>(init_ref.begin()), static_cast<arma::uword>(init_ref.nrow()), static_cast<arma::uword>(init_ref.ncol()), false, true);
+      init_i = init_owned[idx];
     } else {
       init_i = wx * wy.t();
     }
@@ -5926,21 +6271,19 @@ Rcpp::List cpp_fugw_kl_square_batch(
     errs[idx] = out.error;
     iters[idx] = out.iterations;
     kernel_ms[idx] = std::chrono::duration<double, std::milli>(t1 - t0).count();
+    });
   }
 #else
+  const int max_threads = 1;
   const int used_threads = 1;
   for (int i = 0; i < n_jobs; ++i) {
     const std::size_t idx = static_cast<std::size_t>(i);
-    const Rcpp::NumericMatrix& Cxref = Cx_refs[idx];
-    const Rcpp::NumericVector& wxref = wx_refs[idx];
-    const Rcpp::NumericMatrix& Mref = M_refs[idx];
-    const arma::mat Cx(const_cast<double*>(Cxref.begin()), static_cast<arma::uword>(Cxref.nrow()), static_cast<arma::uword>(Cxref.ncol()), false, true);
-    const arma::vec wx(const_cast<double*>(wxref.begin()), static_cast<arma::uword>(wxref.size()), false, true);
-    const arma::mat M(const_cast<double*>(Mref.begin()), static_cast<arma::uword>(Mref.nrow()), static_cast<arma::uword>(Mref.ncol()), false, true);
+    const arma::mat& Cx = Cx_owned[idx];
+    const arma::vec& wx = wx_owned[idx];
+    const arma::mat& M = M_owned[idx];
     arma::mat init_i;
     if (has_init[idx]) {
-      const Rcpp::NumericMatrix& init_ref = init_refs[idx];
-      init_i = arma::mat(const_cast<double*>(init_ref.begin()), static_cast<arma::uword>(init_ref.nrow()), static_cast<arma::uword>(init_ref.ncol()), false, true);
+      init_i = init_owned[idx];
     } else {
       init_i = wx * wy.t();
     }
@@ -5960,6 +6303,13 @@ Rcpp::List cpp_fugw_kl_square_batch(
   }
 #endif
 
+  for (int i = 0; i < n_jobs; ++i) {
+    const std::size_t idx = static_cast<std::size_t>(i);
+    if (worker_failed[idx]) {
+      Rcpp::stop("Native FUGW batch worker %d failed: %s", i + 1, worker_errors[idx].c_str());
+    }
+  }
+
   Rcpp::List out_plans(n_jobs);
   for (int i = 0; i < n_jobs; ++i) {
     out_plans[i] = pi_samp[static_cast<std::size_t>(i)];
@@ -5971,7 +6321,10 @@ Rcpp::List cpp_fugw_kl_square_batch(
     Rcpp::Named("linear_cost") = linear_cost,
     Rcpp::Named("iterations") = iters,
     Rcpp::Named("error") = errs,
+    Rcpp::Named("requested_threads") = n_threads,
     Rcpp::Named("used_threads") = used_threads,
+    Rcpp::Named("max_threads") = max_threads,
+    Rcpp::Named("nested_parallel") = false,
     Rcpp::Named("kernel_ms") = kernel_ms
   );
 }
@@ -6587,92 +6940,13 @@ arma::mat cpp_srfgw_row_min_direction(const arma::mat& Mi, const arma::vec& p) {
   return out;
 }
 
-struct GwSquareTermsResult {
-  double loss;
-  arma::mat grad;
-};
-
-inline GwSquareTermsResult gw_square_terms_exact(
-    const arma::mat& C1,
-    const arma::mat& C2,
-    const arma::mat& G,
-    bool symmetric) {
-  const arma::uword ns = C1.n_rows;
-  const arma::uword nt = C2.n_rows;
-  const arma::vec pG = arma::sum(G, 1);
-  const arma::vec qG = arma::sum(G, 0).t();
-
-  const arma::mat C1_sq = C1 % C1;
-  const arma::mat C2_sq = C2 % C2;
-  const arma::vec left = C1_sq * pG;
-  const arma::vec right = C2_sq.t() * qG;
-
-  arma::mat constC(ns, nt, arma::fill::zeros);
-  for (arma::uword j = 0; j < nt; ++j) {
-    constC.col(j) = left + right[j];
-  }
-
-  arma::mat scratch;
-  arma::mat Acur;
-  dgemm_nn(C1, G, scratch);
-  dgemm_nt(scratch, 2.0 * C2, Acur);
-  arma::mat tens = constC - Acur;
-
-  double loss = arma::accu(tens % G);
-  arma::mat grad = 2.0 * tens;
-
-  if (!symmetric) {
-    const arma::mat C1t = C1.t();
-    const arma::mat C2t = C2.t();
-    const arma::mat C1t_sq = C1t % C1t;
-    const arma::vec left_t = C1t_sq * pG;
-
-    arma::mat constCt(ns, nt, arma::fill::zeros);
-    for (arma::uword j = 0; j < nt; ++j) {
-      constCt.col(j) = left_t + right[j];
-    }
-
-    arma::mat Acurt;
-    dgemm_nn(C1t, G, scratch);
-    dgemm_nn(scratch, 2.0 * C2, Acurt);
-    arma::mat tenst = constCt - Acurt;
-
-    loss = 0.5 * (loss + arma::accu(tenst % G));
-    grad = 0.5 * (grad + 2.0 * tenst);
-  }
-
-  GwSquareTermsResult out;
-  out.loss = loss;
-  out.grad = std::move(grad);
-  return out;
-}
-
-// [[Rcpp::export]]
-Rcpp::List cpp_gw_square_terms_square(
-    const arma::mat& C1,
-    const arma::mat& C2,
-    const arma::mat& G,
-    bool symmetric = true) {
-  if (C1.n_rows != C1.n_cols || C2.n_rows != C2.n_cols) {
-    Rcpp::stop("`C1` and `C2` must be square.");
-  }
-  if (G.n_rows != C1.n_rows || G.n_cols != C2.n_rows) {
-    Rcpp::stop("`G` has incompatible shape.");
-  }
-
-  GwSquareTermsResult out = gw_square_terms_exact(C1, C2, G, symmetric);
-  return Rcpp::List::create(
-    Rcpp::Named("loss") = out.loss,
-    Rcpp::Named("grad") = out.grad
-  );
-}
-
 struct EntropicPartialOtResult {
   arma::mat plan;
   int iterations;
   double error;
   std::vector<double> err_trace;
   bool finite;
+  bool converged;
 };
 
 inline EntropicPartialOtResult entropic_partial_wasserstein_core(
@@ -6689,6 +6963,7 @@ inline EntropicPartialOtResult entropic_partial_wasserstein_core(
   out.iterations = 0;
   out.error = std::numeric_limits<double>::infinity();
   out.finite = true;
+  out.converged = false;
 
   const arma::uword ns = M.n_rows;
   const arma::uword nt = M.n_cols;
@@ -6817,9 +7092,19 @@ inline EntropicPartialOtResult entropic_partial_wasserstein_core(
     cpt += 1;
   }
 
+  if (out.finite && cpt > 0) {
+    const double update_residual = std::sqrt(arma::accu((Kprev - K) % (Kprev - K)));
+    const arma::vec final_rows = arma::sum(K, 1);
+    const arma::vec final_cols = arma::sum(K, 0).t();
+    const double row_violation = std::max(0.0, arma::max(final_rows - a));
+    const double col_violation = std::max(0.0, arma::max(final_cols - b));
+    const double mass_residual = std::abs(arma::accu(K) - m);
+    err = std::max({update_residual, row_violation, col_violation, mass_residual});
+  }
   out.plan = std::move(K);
   out.iterations = cpt;
   out.error = err;
+  out.converged = out.finite && cpt > 0 && std::isfinite(err) && err <= stopThr;
   out.err_trace = std::move(err_trace);
   return out;
 }
@@ -7538,14 +7823,30 @@ Rcpp::List cpp_ot_emd(
     int max_iter,
     double tol) {
   const TransportSimplexResult res = transport_simplex_solve(M, p, q, max_iter, tol);
-  const double ot_dist = arma::accu(M % res.plan);
-  return Rcpp::List::create(
-    Rcpp::Named("plan") = res.plan,
-    Rcpp::Named("ot_dist") = ot_dist,
-    Rcpp::Named("iterations") = res.iterations,
-    Rcpp::Named("error") = res.converged ? 0.0 : R_PosInf,
-    Rcpp::Named("lp_ok") = res.converged
+  Rcpp::List out = transport_result_list(res);
+  out["ot_dist"] = res.primal_objective;
+  return out;
+}
+
+// Internal deterministic harness for transport-simplex termination branches.
+// [[Rcpp::export]]
+Rcpp::List cpp_transport_simplex_test(
+    const arma::mat& M,
+    const arma::vec& p,
+    const arma::vec& q,
+    int max_iter,
+    double tol,
+    std::string inject_failure) {
+  if (M.n_rows != p.n_elem || M.n_cols != q.n_elem || p.n_elem == 0 || q.n_elem == 0) {
+    Rcpp::stop("Invalid transport-simplex test dimensions.");
+  }
+  const TransportTestFault fault = rfugw::parse_transport_test_fault(inject_failure);
+  const TransportSimplexResult res = transport_simplex_solve(
+    M, p, q, max_iter, tol, 1e-14, fault
   );
+  Rcpp::List out = transport_result_list(res);
+  out["ot_dist"] = res.primal_objective;
+  return out;
 }
 
 // [[Rcpp::export]]
@@ -7570,7 +7871,14 @@ Rcpp::List cpp_ot_sinkhorn_unbalanced(
     Rcpp::Named("ot_dist") = ot_dist,
     Rcpp::Named("iterations") = res.iters,
     Rcpp::Named("error") = res.err,
-    Rcpp::Named("mass") = arma::accu(res.plan)
+    Rcpp::Named("mass") = arma::accu(res.plan),
+    Rcpp::Named("inner_residual") = res.err,
+    Rcpp::Named("max_inner_residual") = res.err,
+    Rcpp::Named("inner_iterations") = res.iters,
+    Rcpp::Named("inner_converged") = res.plan.is_finite() &&
+      std::isfinite(res.err) && res.err <= tol,
+    Rcpp::Named("inner_status") = (res.plan.is_finite() &&
+      std::isfinite(res.err) && res.err <= tol) ? "converged" : "max_iter"
   );
 }
 
@@ -7582,14 +7890,20 @@ inline double partial_penalty_cost(const arma::mat& cost) {
   return ma_use + aa_use + 1.0;
 }
 
-inline arma::mat partial_transport_direction(
+struct PartialTransportDirectionResult {
+  arma::mat plan;
+  TransportSimplexResult solver;
+};
+
+inline PartialTransportDirectionResult partial_transport_direction(
     const arma::mat& cost,
     const arma::vec& a,
     const arma::vec& b,
     double m,
     int nb_dummies,
     int lp_max_iter,
-    double lp_tol) {
+    double lp_tol,
+    TransportTestFault test_fault = TransportTestFault::none) {
   if (nb_dummies < 1) {
     Rcpp::stop("`nb_dummies` must be >= 1.");
   }
@@ -7603,7 +7917,10 @@ inline arma::mat partial_transport_direction(
   const double dummy_a = (sum_b - m) / static_cast<double>(nb_dummies);
   const double dummy_b = (sum_a - m) / static_cast<double>(nb_dummies);
   if (dummy_a <= 1e-15 && dummy_b <= 1e-15) {
-    return transport_simplex_solve(cost, a, b, lp_max_iter, lp_tol).plan;
+    PartialTransportDirectionResult out;
+    out.solver = transport_simplex_solve(cost, a, b, lp_max_iter, lp_tol, 1e-14, test_fault);
+    out.plan = out.solver.plan;
+    return out;
   }
 
   const arma::uword ns_ext = ns + static_cast<arma::uword>(nb_dummies);
@@ -7621,9 +7938,12 @@ inline arma::mat partial_transport_direction(
   cost_ext.submat(ns, nt, ns_ext - 1, nt_ext - 1).fill(penalty);
 
   const TransportSimplexResult res = transport_simplex_solve(
-    cost_ext, a_ext, b_ext, lp_max_iter, lp_tol
+    cost_ext, a_ext, b_ext, lp_max_iter, lp_tol, 1e-14, test_fault
   );
-  return res.plan.submat(0, 0, ns - 1, nt - 1);
+  PartialTransportDirectionResult out;
+  out.solver = res;
+  out.plan = res.plan.submat(0, 0, ns - 1, nt - 1);
+  return out;
 }
 
 // [[Rcpp::export]]
@@ -7641,7 +7961,8 @@ Rcpp::List cpp_partial_fgw_exact_square(
     double tol,
     int nb_dummies,
     int lp_max_iter,
-    double lp_tol) {
+    double lp_tol,
+    std::string test_inner_failure = "none") {
   if (C1.n_rows != C1.n_cols || C2.n_rows != C2.n_cols) {
     Rcpp::stop("`C1` and `C2` must be square.");
   }
@@ -7670,7 +7991,7 @@ Rcpp::List cpp_partial_fgw_exact_square(
     Rcpp::stop("`init_plan` has incompatible shape.");
   }
 
-  GwSquareTermsResult gw = gw_square_terms_exact(C1, C2, G, symmetric);
+  rfugw::GwSquareTerms gw = rfugw::gw_square_terms(C1, C2, G, symmetric);
   double lin_loss = use_lin ? lin_w * arma::accu(M % G) : 0.0;
   double cost = lin_loss + quad_w * gw.loss;
 
@@ -7680,22 +8001,58 @@ Rcpp::List cpp_partial_fgw_exact_square(
 
   double rel_delta = std::numeric_limits<double>::infinity();
   double abs_delta = std::numeric_limits<double>::infinity();
+  bool inner_converged = true;
+  int inner_iterations = 0;
+  double inner_residual = std::numeric_limits<double>::infinity();
+  double max_inner_residual = 0.0;
+  std::string inner_termination_reason = "not_run";
   int it = 0;
 
+  TransportTestFault test_fault = TransportTestFault::none;
+  int effective_lp_max_iter = lp_max_iter;
+  if (test_inner_failure == "max_iter") {
+    effective_lp_max_iter = 0;
+  } else if (test_inner_failure == "numerical_failure") {
+    test_fault = TransportTestFault::numerical_failure;
+  } else if (test_inner_failure != "none" &&
+             test_inner_failure != "infeasible" &&
+             test_inner_failure != "nonfinite") {
+    Rcpp::stop("Unknown nested-solver test failure: %s.", test_inner_failure.c_str());
+  }
+
   for (int k = 0; k < max_iter; ++k) {
-    arma::mat Mi = quad_w * gw.grad;
+    arma::mat Mi = quad_w * gw.gradient;
     if (use_lin) {
       Mi += lin_w * M;
     }
-    const arma::mat Gc = partial_transport_direction(
-      Mi, p, q, m, nb_dummies, lp_max_iter, lp_tol
+    PartialTransportDirectionResult direction = partial_transport_direction(
+      Mi, p, q, m, nb_dummies, effective_lp_max_iter, lp_tol, test_fault
     );
+    if (test_inner_failure == "infeasible") {
+      direction.solver.primal_feasible = false;
+      direction.solver.row_residual = R_PosInf;
+      direction.solver.certified = false;
+      direction.solver.termination = TransportTermination::numerical_failure;
+    } else if (test_inner_failure == "nonfinite") {
+      direction.plan(0, 0) = std::numeric_limits<double>::quiet_NaN();
+      direction.solver.certified = false;
+      direction.solver.termination = TransportTermination::numerical_failure;
+    }
+    inner_iterations += direction.solver.iterations;
+    inner_residual = transport_certificate_error(direction.solver);
+    max_inner_residual = std::max(max_inner_residual, inner_residual);
+    inner_termination_reason = rfugw::transport_termination_name(direction.solver.termination);
+    inner_converged = inner_converged && direction.solver.certified && direction.plan.is_finite();
+    if (!inner_converged) {
+      break;
+    }
+    const arma::mat& Gc = direction.plan;
     const arma::mat delta = Gc - G;
-    const GwSquareTermsResult gw_c = gw_square_terms_exact(C1, C2, Gc, symmetric);
-    const arma::mat grad_delta = gw_c.grad - gw.grad;
+    const rfugw::GwSquareTerms gw_c = rfugw::gw_square_terms(C1, C2, Gc, symmetric);
+    const arma::mat grad_delta = gw_c.gradient - gw.gradient;
 
     const double a_ls = quad_w * 0.5 * arma::accu(grad_delta % delta);
-    double b_ls = quad_w * arma::accu(gw.grad % delta);
+    double b_ls = quad_w * arma::accu(gw.gradient % delta);
     if (use_lin) {
       b_ls += lin_w * arma::accu(M % delta);
     }
@@ -7704,7 +8061,7 @@ Rcpp::List cpp_partial_fgw_exact_square(
     const double new_cost = cost + a_ls * step * step + b_ls * step;
 
     G += step * delta;
-    gw.grad += step * grad_delta;
+    gw.gradient += step * grad_delta;
 
     abs_delta = std::abs(new_cost - cost);
     rel_delta = abs_delta / (std::abs(new_cost) + 1e-15);
@@ -7716,7 +8073,7 @@ Rcpp::List cpp_partial_fgw_exact_square(
     }
   }
 
-  gw = gw_square_terms_exact(C1, C2, G, symmetric);
+  gw = rfugw::gw_square_terms(C1, C2, G, symmetric);
   lin_loss = use_lin ? lin_w * arma::accu(M % G) : 0.0;
   const double quad_loss = quad_w * gw.loss;
 
@@ -7729,7 +8086,14 @@ Rcpp::List cpp_partial_fgw_exact_square(
     Rcpp::Named("iterations") = it,
     Rcpp::Named("error") = rel_delta,
     Rcpp::Named("abs_error") = abs_delta,
-    Rcpp::Named("loss_trace") = loss_trace
+    Rcpp::Named("loss_trace") = loss_trace,
+    Rcpp::Named("lp_ok") = inner_converged,
+    Rcpp::Named("inner_converged") = inner_converged,
+    Rcpp::Named("inner_iterations") = inner_iterations,
+    Rcpp::Named("inner_residual") = inner_residual,
+    Rcpp::Named("max_inner_residual") = max_inner_residual,
+    Rcpp::Named("inner_status") = inner_termination_reason,
+    Rcpp::Named("inner_termination_reason") = inner_termination_reason
   );
 }
 
@@ -7787,6 +8151,11 @@ Rcpp::List cpp_partial_fgw_entropic_square(
   double err = std::numeric_limits<double>::infinity();
   int it = 0;
   std::vector<double> err_trace;
+  double inner_residual = std::numeric_limits<double>::infinity();
+  double max_inner_residual = 0.0;
+  int inner_iterations = 0;
+  bool inner_converged = true;
+  std::string inner_status = "not_run";
 
   for (int k = 0; k < max_iter; ++k) {
     arma::mat Gprev;
@@ -7794,14 +8163,20 @@ Rcpp::List cpp_partial_fgw_entropic_square(
     if (do_check) {
       Gprev = G;
     }
-    const GwSquareTermsResult gw = gw_square_terms_exact(C1, C2, G, symmetric);
-    arma::mat M_entr = quad_w * gw.grad;
+    const rfugw::GwSquareTerms gw = rfugw::gw_square_terms(C1, C2, G, symmetric);
+    arma::mat M_entr = quad_w * gw.gradient;
     if (use_lin) {
       M_entr += lin_w * M;
     }
     const EntropicPartialOtResult inner = entropic_partial_wasserstein_core(
       p, q, M_entr, reg, m, inner_max_iter, inner_tol, false, false
     );
+    inner_residual = inner.error;
+    max_inner_residual = std::max(max_inner_residual, inner_residual);
+    inner_iterations += inner.iterations;
+    inner_converged = inner_converged && inner.converged;
+    inner_status = inner.converged ? "converged" :
+      (inner.finite ? "max_iter" : "numerical_failure");
     G = inner.plan;
     if (do_check) {
       err = std::sqrt(arma::accu((G - Gprev) % (G - Gprev)));
@@ -7814,7 +8189,7 @@ Rcpp::List cpp_partial_fgw_entropic_square(
     it = k + 1;
   }
 
-  const GwSquareTermsResult gw_end = gw_square_terms_exact(C1, C2, G, symmetric);
+  const rfugw::GwSquareTerms gw_end = rfugw::gw_square_terms(C1, C2, G, symmetric);
   const double lin_loss = use_lin ? lin_w * arma::accu(M % G) : 0.0;
   const double quad_loss = quad_w * gw_end.loss;
 
@@ -7826,7 +8201,12 @@ Rcpp::List cpp_partial_fgw_entropic_square(
     Rcpp::Named("gw_loss") = gw_end.loss,
     Rcpp::Named("iterations") = it,
     Rcpp::Named("error") = err,
-    Rcpp::Named("err_trace") = err_trace
+    Rcpp::Named("err_trace") = err_trace,
+    Rcpp::Named("inner_residual") = inner_residual,
+    Rcpp::Named("max_inner_residual") = max_inner_residual,
+    Rcpp::Named("inner_iterations") = inner_iterations,
+    Rcpp::Named("inner_converged") = inner_converged,
+    Rcpp::Named("inner_status") = inner_status
   );
 }
 
@@ -8008,6 +8388,11 @@ Rcpp::List cpp_ucoot_kl(
   inner_warm_samp.reserve(static_cast<std::size_t>(max_iter));
   inner_fallback_feat.reserve(static_cast<std::size_t>(max_iter));
   inner_fallback_samp.reserve(static_cast<std::size_t>(max_iter));
+  std::vector<double> inner_errors;
+  inner_errors.reserve(static_cast<std::size_t>(2 * max_iter));
+  double inner_residual = std::numeric_limits<double>::infinity();
+  double max_inner_residual = 0.0;
+  bool inner_converged = true;
 
   Rcpp::NumericVector err_trace;
   double err = std::numeric_limits<double>::infinity();
@@ -8031,6 +8416,12 @@ Rcpp::List cpp_ucoot_kl(
       max_iter_ot, tol_ot, pi_feat, ws_feat, use_warm_start
     );
     inner_iters_feat.push_back(su_feat.iters);
+    inner_residual = su_feat.err;
+    inner_errors.push_back(inner_residual);
+    max_inner_residual = std::max(max_inner_residual, inner_residual);
+    const bool feat_inner_ok = su_feat.plan.is_finite() && std::isfinite(inner_residual) &&
+      inner_residual <= tol_ot;
+    inner_converged = inner_converged && feat_inner_ok;
     inner_warm_feat.push_back(su_feat.warm_started ? 1 : 0);
     inner_fallback_feat.push_back(su_feat.warm_fallback ? 1 : 0);
     pi_feat = std::move(su_feat.plan);
@@ -8059,6 +8450,12 @@ Rcpp::List cpp_ucoot_kl(
       max_iter_ot, tol_ot, pi_samp, ws_samp, use_warm_start
     );
     inner_iters_samp.push_back(su_samp.iters);
+    inner_residual = su_samp.err;
+    inner_errors.push_back(inner_residual);
+    max_inner_residual = std::max(max_inner_residual, inner_residual);
+    const bool samp_inner_ok = su_samp.plan.is_finite() && std::isfinite(inner_residual) &&
+      inner_residual <= tol_ot;
+    inner_converged = inner_converged && samp_inner_ok;
     inner_warm_samp.push_back(su_samp.warm_started ? 1 : 0);
     inner_fallback_samp.push_back(su_samp.warm_fallback ? 1 : 0);
     arma::mat pi_next = std::move(su_samp.plan);
@@ -8108,6 +8505,11 @@ Rcpp::List cpp_ucoot_kl(
     Rcpp::Named("inner_warm_fallback_feat") = Rcpp::LogicalVector(inner_fallback_feat.begin(), inner_fallback_feat.end()),
     Rcpp::Named("inner_warm_fallback_samp") = Rcpp::LogicalVector(inner_fallback_samp.begin(), inner_fallback_samp.end()),
     Rcpp::Named("inner_iters_total") = inner_total,
+    Rcpp::Named("inner_residuals") = inner_errors,
+    Rcpp::Named("inner_residual") = inner_residual,
+    Rcpp::Named("max_inner_residual") = max_inner_residual,
+    Rcpp::Named("inner_converged") = inner_converged,
+    Rcpp::Named("inner_status") = inner_converged ? "converged" : "max_iter",
     Rcpp::Named("feat_ms") = feat_ms,
     Rcpp::Named("samp_ms") = samp_ms,
     Rcpp::Named("warm_start") = use_warm_start

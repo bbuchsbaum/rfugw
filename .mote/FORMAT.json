@@ -1,0 +1,9 @@
+{
+  "schema_version": 1,
+  "store_id": "st-01M05QK6B4FYY822FGAXZFD7Q3",
+  "created_at": "2026-08-16T16:48:33.636755Z",
+  "default_ttl_s": {
+    "claim": 1800,
+    "reservation": 3600
+  }
+}

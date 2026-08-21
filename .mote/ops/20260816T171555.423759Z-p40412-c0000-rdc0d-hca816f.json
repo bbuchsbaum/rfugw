@@ -1,0 +1,1 @@
+{"actor":"cursor-fugw-impl","entity":"bd-01M05QY4HP81RZTQ3D0DR870RB","kind":"reserve_open","mode":"exclusive","op":"20260816T171555.423759Z-p40412-c0000-rdc0d-hca816f","paths":["tests/testthat/test-solver-invariants.R"],"reservation_id":"rv-01M05S59MZ9MNFYAXPN9Q6TBR8","ts":"2026-08-16T17:15:55.423759Z","ttl_s":3600,"v":1}

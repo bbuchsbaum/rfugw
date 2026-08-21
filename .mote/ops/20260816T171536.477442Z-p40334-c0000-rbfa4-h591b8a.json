@@ -1,0 +1,1 @@
+{"actor":"cursor-fugw-impl","entity":"bd-01M05QY37G4BNPY5WNH9K387A4","kind":"note","note_kind":"note","op":"20260816T171536.477442Z-p40334-c0000-rbfa4-h591b8a","text":"Defaults use epsilon=1e-2 and succeed; l2/mm/lbfgsb rejected before compute; sinkhorn_log kept as documented alias; tests cover defaults and rejected choices.","ts":"2026-08-16T17:15:36.477442Z","v":1}

@@ -22,6 +22,12 @@ commit <- tryCatch(
   error = function(e) NA_character_
 )
 if (length(commit) != 1L) commit <- NA_character_
+dirty_lines <- tryCatch(
+  system2("git", c("status", "--porcelain"), stdout = TRUE, stderr = FALSE),
+  error = function(e) character()
+)
+working_tree_dirty <- length(dirty_lines) > 0L
+source_identity <- if (working_tree_dirty) paste0(commit, "+dirty") else commit
 
 gate_dir <- file.path(".gate")
 dir.create(gate_dir, showWarnings = FALSE)
@@ -76,6 +82,9 @@ run_script <- function(rel) {
 
 generated <- run_script("tools/check-generated.R")
 docs <- run_script("tools/check-docs.R")
+old_scope <- Sys.getenv("RFUGW_TRUST_SCOPE", unset = NA_character_)
+Sys.setenv(RFUGW_TRUST_SCOPE = "release")
+mutation <- run_script("tools/numerical-trust/run-mutation-proof.R")
 
 tarball <- sprintf("%s_%s.tar.gz", pkg, version)
 if (file.exists(tarball)) {
@@ -153,6 +162,8 @@ skips <- tryCatch(
     }
   }
 )
+if (is.na(old_scope)) Sys.unsetenv("RFUGW_TRUST_SCOPE") else
+  Sys.setenv(RFUGW_TRUST_SCOPE = old_scope)
 unreviewed <- skips
 for (pat in reviewed_skip_patterns) {
   unreviewed <- unreviewed[!grepl(pat, unreviewed)]
@@ -162,6 +173,7 @@ skips_ok <- !length(unreviewed)
 status <- if (
   isTRUE(generated$ok) &&
     isTRUE(docs$ok) &&
+    isTRUE(mutation$ok) &&
     isTRUE(build$ok) &&
     isTRUE(check$ok) &&
     skips_ok &&
@@ -176,6 +188,14 @@ report <- list(
   package = pkg,
   version = version,
   commit = commit,
+  source_identity = source_identity,
+  working_tree_dirty = working_tree_dirty,
+  build_environment = as.list(Sys.getenv(c(
+    "RFUGW_FAST_FLAGS", "RFUGW_EXTRA_CXXFLAGS", "RFUGW_EXTRA_LIBS",
+    "RFUGW_OPENMP_FLAGS", "RFUGW_OPENMP_LIBS", "OMP_NUM_THREADS",
+    "OPENBLAS_NUM_THREADS", "MKL_NUM_THREADS", "VECLIB_MAXIMUM_THREADS",
+    "BLIS_NUM_THREADS"
+  ), unset = NA_character_)),
   channel = channel,
   timestamp = stamp,
   tarball = if (file.exists(tarball)) tarball else NA_character_,
@@ -194,6 +214,16 @@ report <- list(
   missing_optional_suggests = missing_optional,
   generated = generated,
   docs = docs,
+  mutation = mutation,
+  runtime_provenance = tryCatch({
+    M_provenance <- matrix(c(0, 1, 1, 0), 2, 2)
+    fgw_entropic(
+      M_provenance, M_provenance, M_provenance,
+      epsilon = 0.1, max_iter = 20L, tol = 1e-7,
+      sinkhorn_tol = 1e-8, sinkhorn_method = "auto",
+      precision = "strict_double"
+    )$runtime_provenance
+  }, error = function(e) list(error = conditionMessage(e))),
   build = build,
   check = check,
   status = status
@@ -213,6 +243,8 @@ txt <- c(
   sprintf("rfugw release-quality gate: %s", status),
   sprintf("package: %s %s", pkg, version),
   sprintf("commit:  %s", commit),
+  sprintf("source:  %s", source_identity),
+  sprintf("dirty:   %s", working_tree_dirty),
   sprintf("channel: %s", channel),
   sprintf("tarball: %s", report$tarball),
   sprintf("md5:     %s", report$md5),
@@ -222,6 +254,7 @@ txt <- c(
   sprintf("unreviewed skips: %s", if (length(unreviewed)) paste(unreviewed, collapse = " | ") else "none"),
   sprintf("generated: %s", generated$detail),
   sprintf("docs: %s", docs$detail),
+  sprintf("mutation: %s", mutation$detail),
   sprintf("build: %s", build$detail),
   sprintf("check: %s", check$detail)
 )

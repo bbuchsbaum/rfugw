@@ -14,6 +14,7 @@ test_that("fgw_entropic log Sinkhorn matches scaling Sinkhorn", {
     sinkhorn_max_iter = fx$params$sinkhorn_numItermax,
     sinkhorn_tol = fx$params$sinkhorn_stopThr,
     sinkhorn_method = "scaling",
+    precision = "double",
     symmetric = TRUE,
     solver = "PGD"
   )
@@ -65,6 +66,10 @@ test_that("fgw_exact_cg decreases objective and satisfies marginals", {
 
 test_that("fgw_entropic mixed precision stays close to double precision", {
   fx <- read_fixture("fgw_entropic_square_fixture.json")
+  # Keep the explicit scaling comparison inside the stricter mixed-precision
+  # dynamic-range certificate. The fixture's original epsilon is deliberately
+  # routed to the log backend for mixed precision.
+  safe_epsilon <- 4 * fx$params$epsilon
 
   out_double <- rfugw::fgw_entropic(
     M = fx$inputs$M,
@@ -73,7 +78,7 @@ test_that("fgw_entropic mixed precision stays close to double precision", {
     p = fx$inputs$p,
     q = fx$inputs$q,
     alpha = fx$params$alpha,
-    epsilon = fx$params$epsilon,
+    epsilon = safe_epsilon,
     max_iter = fx$params$max_iter,
     tol = fx$params$tol,
     sinkhorn_max_iter = fx$params$sinkhorn_numItermax,
@@ -90,7 +95,7 @@ test_that("fgw_entropic mixed precision stays close to double precision", {
     p = fx$inputs$p,
     q = fx$inputs$q,
     alpha = fx$params$alpha,
-    epsilon = fx$params$epsilon,
+    epsilon = safe_epsilon,
     max_iter = fx$params$max_iter,
     tol = fx$params$tol,
     sinkhorn_max_iter = fx$params$sinkhorn_numItermax,

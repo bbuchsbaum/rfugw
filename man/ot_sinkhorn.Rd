@@ -9,7 +9,7 @@ ot_sinkhorn(
   p = NULL,
   q = NULL,
   epsilon = 0.05,
-  method = c("scaling", "log"),
+  method = c("scaling", "log", "auto"),
   max_iter = 1000L,
   tol = 1e-09
 )
@@ -23,7 +23,9 @@ ot_sinkhorn(
 
 \item{epsilon}{Positive entropic regularization.}
 
-\item{method}{\code{"scaling"} or \code{"log"}.}
+\item{method}{\code{"scaling"}, \code{"log"}, or \code{"auto"}. Auto uses scaling only
+when the maximum scaled exponent magnitude and span are at most 500;
+otherwise it selects the genuine log-domain implementation.}
 
 \item{max_iter}{Maximum Sinkhorn iterations.}
 

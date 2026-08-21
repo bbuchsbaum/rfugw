@@ -108,12 +108,14 @@ ot_entropy <- function(plan) {
   sum(z * log(z))
 }
 
-#' KL divergence of a plan from a product reference
+#' Generalized KL divergence of a plan from a product reference
 #'
 #' @param plan Coupling or `rfugw_result`.
-#' @param p Source reference weights.
-#' @param q Target reference weights.
-#' @return `KL(plan || p %o% q)`.
+#' @param p Finite nonnegative source reference weights.
+#' @param q Finite nonnegative target reference weights.
+#' @return Generalized `KL(plan || p %o% q)`, including the mass correction
+#'   `-sum(plan) + sum(p %o% q)`. Positive plan mass outside zero reference
+#'   support returns `Inf`; zero-over-zero contributes zero.
 #' @export
 ot_kl <- function(plan, p, q) {
   plan <- .as_plan(plan)
@@ -123,9 +125,27 @@ ot_kl <- function(plan, p, q) {
   if (!is.numeric(q) || length(q) != ncol(plan)) {
     stop("`q` must be numeric with length ncol(plan).", call. = FALSE)
   }
+  if (any(!is.finite(p))) {
+    stop("`p` must be finite.", call. = FALSE)
+  }
+  if (any(!is.finite(q))) {
+    stop("`q` must be finite.", call. = FALSE)
+  }
+  if (any(p < 0)) {
+    stop("`p` must be nonnegative.", call. = FALSE)
+  }
+  if (any(q < 0)) {
+    stop("`q` must be nonnegative.", call. = FALSE)
+  }
   ref <- tcrossprod(p, q)
+  if (any(!is.finite(ref))) {
+    stop("The product reference `p %o% q` must be finite.", call. = FALSE)
+  }
+  if (any(plan > 0 & ref == 0)) {
+    return(Inf)
+  }
   z <- plan > 0
-  sum(plan[z] * log(plan[z] / pmax(ref[z], 1e-300)))
+  sum(plan[z] * log(plan[z] / ref[z])) - sum(plan) + sum(ref)
 }
 
 #' Square-loss Gromov-Wasserstein objective

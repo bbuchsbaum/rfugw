@@ -44,6 +44,39 @@ bench_read_thresholds <- function(method = NULL) {
   all[[method]]
 }
 
+bench_threshold_history_path <- function() {
+  candidates <- c(
+    "inst/bench/threshold-history.json",
+    file.path(system.file(package = "rfugw"), "bench", "threshold-history.json")
+  )
+  hit <- candidates[file.exists(candidates)]
+  if (!length(hit)) {
+    stop("Could not find inst/bench/threshold-history.json.", call. = FALSE)
+  }
+  hit[[1]]
+}
+
+bench_validate_threshold_history <- function() {
+  history <- jsonlite::fromJSON(bench_threshold_history_path(), simplifyVector = FALSE)
+  entries <- history$entries %||% list()
+  if (!length(entries)) {
+    stop("Threshold history has no retained evidence entry.", call. = FALSE)
+  }
+  current <- unname(tools::md5sum(bench_thresholds_path())[[1]])
+  recorded <- entries[[length(entries)]]$thresholds_md5 %||% ""
+  if (!identical(current, recorded)) {
+    stop(
+      "thresholds.json changed without a matching reviewed evidence entry in threshold-history.json.",
+      call. = FALSE
+    )
+  }
+  if (!nzchar(entries[[length(entries)]]$evidence %||% "") ||
+      !nzchar(entries[[length(entries)]]$review_requirement %||% "")) {
+    stop("Latest threshold history entry lacks evidence or review requirements.", call. = FALSE)
+  }
+  invisible(TRUE)
+}
+
 bench_close <- function(actual, expected, atol, rtol) {
   actual <- as.numeric(actual)
   expected <- as.numeric(expected)
@@ -75,11 +108,26 @@ bench_capture_env <- function(seed, threads, warmup, reps, profile = "conservati
     error = function(e) NA_character_
   )
   si <- as.list(Sys.info())
+  runtime_provenance <- tryCatch(
+    rfugw:::.solver_runtime_provenance(),
+    error = function(e) list(error = conditionMessage(e))
+  )
+  r_config <- function(key) {
+    tryCatch(
+      system2(file.path(R.home("bin"), "R"), c("CMD", "config", key),
+              stdout = TRUE, stderr = FALSE)[1],
+      error = function(e) NA_character_
+    )
+  }
   list(
     package = unname(desc[1, "Package"]),
     version = unname(desc[1, "Version"]),
     commit = commit,
     r_version = paste(R.version$major, R.version$minor, sep = "."),
+    r_platform = R.version$platform,
+    compiler_cxx17 = r_config("CXX17"),
+    compiler_cxx17std = r_config("CXX17STD"),
+    blas = extSoftVersion()[["BLAS"]] %||% NA_character_,
     profile = profile,
     rfugw_fast_flags = Sys.getenv("RFUGW_FAST_FLAGS", ""),
     rfugw_extra_cxxflags = Sys.getenv("RFUGW_EXTRA_CXXFLAGS", ""),
@@ -90,6 +138,7 @@ bench_capture_env <- function(seed, threads, warmup, reps, profile = "conservati
     threads = as.integer(threads),
     warmup = as.integer(warmup),
     reps = as.integer(reps),
+    runtime_provenance = runtime_provenance,
     sysname = si$sysname,
     release = si$release,
     machine = si$machine,
@@ -141,12 +190,52 @@ bench_make_problem <- function(kind = c("linear", "fgw", "ucoot"), n, seed) {
        p = rep(1 / n, n), q = rep(1 / n, n))
 }
 
-bench_check_quality <- function(method, result, problem) {
-  spec <- bench_read_thresholds(method)$quality
+bench_check_quality <- function(
+    method,
+    result,
+    problem,
+    evidence_class = c("certified_comparison", "fixed_budget_performance")) {
+  evidence_class <- match.arg(evidence_class)
+  method_spec <- bench_read_thresholds(method)
+  certified <- identical(evidence_class, "certified_comparison")
+  spec <- if (certified) method_spec$quality else method_spec$performance_regression
+  if (is.null(spec)) {
+    return(list(
+      valid = FALSE,
+      certified = FALSE,
+      comparison_eligible = FALSE,
+      performance_regression_eligible = FALSE,
+      evidence_class = evidence_class,
+      reject_reason = paste0("no_", evidence_class, "_contract")
+    ))
+  }
   reasons <- character()
   status <- result$status
-  if (!is.null(spec$status) && !is.null(status) && !status %in% spec$status) {
+  if (is.null(status) || !length(status) || !nzchar(as.character(status)[1])) {
+    reasons <- c(reasons, "missing_status")
+  } else if (is.null(spec$status) || !status %in% spec$status) {
     reasons <- c(reasons, sprintf("status=%s", status))
+  }
+  if (certified) {
+    if (!identical(status, "converged")) {
+      reasons <- c(reasons, "not_converged")
+    }
+    required <- c(
+      converged = result$converged,
+      feasible = result$feasible,
+      objective_consistent = result$objective_consistent,
+      objective_components_consistent = result$objective_components_consistent
+    )
+    failed <- names(required)[vapply(required, function(x) !isTRUE(x), logical(1))]
+    if (length(failed)) {
+      reasons <- c(reasons, paste0("certificate_", failed))
+    }
+    if (!is.null(result$inner_converged) &&
+        length(result$inner_converged) &&
+        !is.na(result$inner_converged[[1]]) &&
+        !isTRUE(result$inner_converged)) {
+      reasons <- c(reasons, "certificate_inner_converged")
+    }
   }
   residual <- result$residual %||% result$error %||% NA_real_
   residual <- as.numeric(residual)[1]
@@ -268,7 +357,15 @@ bench_check_quality <- function(method, result, problem) {
       reasons <- c(reasons, "invalid_plan")
     }
   }
-  list(valid = !length(reasons), reject_reason = paste(reasons, collapse = ";"))
+  valid <- !length(reasons)
+  list(
+    valid = valid,
+    certified = certified && valid,
+    comparison_eligible = certified && valid,
+    performance_regression_eligible = !certified && valid,
+    evidence_class = evidence_class,
+    reject_reason = paste(unique(reasons), collapse = ";")
+  )
 }
 
 `%||%` <- function(x, y) if (is.null(x)) y else x
@@ -281,15 +378,23 @@ bench_time_ms <- function(fn) {
 }
 
 bench_run_split <- function(prepare_fn, solve_fn, warmup = 1L, reps = 3L,
-                            method, problem_for_quality = NULL) {
+                            method, problem_for_quality = NULL,
+                            evidence_class = "certified_comparison") {
   for (i in seq_len(warmup)) {
     dat <- prepare_fn()
     out <- solve_fn(dat)
     if (!is.null(method)) {
-      q <- bench_check_quality(method, out, problem_for_quality %||% dat)
+      q <- bench_check_quality(
+        method, out, problem_for_quality %||% dat,
+        evidence_class = evidence_class
+      )
       if (!q$valid) {
         return(list(
           valid = FALSE,
+          certified = FALSE,
+          comparison_eligible = FALSE,
+          performance_regression_eligible = FALSE,
+          evidence_class = evidence_class,
           reject_reason = paste0("warmup:", q$reject_reason),
           prepare_ms = NA_real_,
           solve_ms = NA_real_,
@@ -312,9 +417,16 @@ bench_run_split <- function(prepare_fn, solve_fn, warmup = 1L, reps = 3L,
     last <- s$value
   }
   q <- if (!is.null(method)) {
-    bench_check_quality(method, last, problem_for_quality %||% prepare_fn())
+    bench_check_quality(
+      method, last, problem_for_quality %||% prepare_fn(),
+      evidence_class = evidence_class
+    )
   } else {
-    list(valid = TRUE, reject_reason = "")
+    list(
+      valid = TRUE, certified = FALSE, comparison_eligible = FALSE,
+      performance_regression_eligible = FALSE,
+      evidence_class = "uncertified", reject_reason = ""
+    )
   }
   mem_solve <- NA_real_
   mem_e2e <- NA_real_
@@ -329,6 +441,10 @@ bench_run_split <- function(prepare_fn, solve_fn, warmup = 1L, reps = 3L,
   }
   list(
     valid = q$valid,
+    certified = q$certified,
+    comparison_eligible = q$comparison_eligible,
+    performance_regression_eligible = q$performance_regression_eligible,
+    evidence_class = q$evidence_class,
     reject_reason = q$reject_reason,
     prepare_ms = stats::median(prep),
     solve_ms = stats::median(solv),

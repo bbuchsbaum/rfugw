@@ -12,7 +12,8 @@ ot_sinkhorn_unbalanced(
   rho = 10,
   max_iter = 500L,
   tol = 1e-07,
-  init_plan = NULL
+  init_plan = NULL,
+  method = c("scaling", "log", "auto")
 )
 }
 \arguments{
@@ -31,6 +32,9 @@ ot_sinkhorn_unbalanced(
 \item{tol}{Marginal residual tolerance.}
 
 \item{init_plan}{Optional warm start.}
+
+\item{method}{\code{"scaling"}, genuine \code{"log"}, or \code{"auto"}. Auto uses the
+documented dynamic-range criterion from \code{ot_sinkhorn()}.}
 }
 \value{
 An \code{rfugw_result} with \code{plan}, \code{ot_dist}, \code{mass}, and status.
