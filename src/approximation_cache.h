@@ -2,6 +2,7 @@
 #define RFUGW_APPROXIMATION_CACHE_H
 
 #include <armadillo>
+#include <type_traits>
 
 namespace rfugw {
 
@@ -74,7 +75,22 @@ inline void init_matrices_square_from_cache_t(
     arma::Mat<T>& hC1) {
   const arma::Mat<T> fC1 = C1 % C1;
   hC1 = C1;
-  const arma::Col<T> left = fC1 * p;
+  arma::Col<T> left;
+#ifdef RFUGW_NO_SINGLE_BLAS
+  if constexpr (std::is_same_v<T, float>) {
+    left.zeros(C1.n_rows);
+    for (arma::uword j = 0; j < fC1.n_cols; ++j) {
+      const T weight = p[j];
+      for (arma::uword i = 0; i < fC1.n_rows; ++i) {
+        left[i] += fC1(i, j) * weight;
+      }
+    }
+  } else {
+    left = fC1 * p;
+  }
+#else
+  left = fC1 * p;
+#endif
   constC.set_size(C1.n_rows, cache.hC2.n_rows);
   for (arma::uword j = 0; j < cache.hC2.n_rows; ++j) {
     constC.col(j) = left;

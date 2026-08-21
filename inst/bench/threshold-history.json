@@ -7,6 +7,13 @@
       "evidence": "inst/bench/threshold-separation-evidence.md",
       "review_requirement": "Any threshold or cap change must retain same-commit protocol artifacts and an explicit reviewer note.",
       "comparability": "schema v2 starts a new certified-comparison series; legacy max_iter rows remain performance-only historical data"
+    },
+    {
+      "effective_date": "2026-08-21",
+      "thresholds_md5": "72cf9329081170806a14a10b9c15832e",
+      "evidence": "inst/bench/threshold-separation-evidence.md",
+      "review_requirement": "Retain the same-commit nightly protocol artifacts and review the fixed-point stopping regression before changing these budgets.",
+      "comparability": "same schema-v2 evidence classes; corrected deterministic budgets and aligned UCOOT inner stopping with its public certificate"
     }
   ]
 }

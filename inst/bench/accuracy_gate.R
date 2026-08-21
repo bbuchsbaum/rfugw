@@ -54,43 +54,11 @@ run_accuracy_gate <- function(
     idx <<- idx + 1L
   }
 
-  # 1) FGW entropic vs POT fixture.
+  # 1) FGW entropic vs POT fixture. The fixture's original regularization is
+  # outside the certified scaling-domain envelope, so use the log backend for
+  # the reference comparison.
   fx <- .read_fixture("fgw_entropic_square_fixture.json", fixture_dir = fixture_dir)
-  out_scaling <- rfugw::fgw_entropic(
-    M = fx$inputs$M,
-    C1 = fx$inputs$C1,
-    C2 = fx$inputs$C2,
-    p = fx$inputs$p,
-    q = fx$inputs$q,
-    alpha = fx$params$alpha,
-    epsilon = fx$params$epsilon,
-    max_iter = fx$params$max_iter,
-    tol = fx$params$tol,
-    sinkhorn_max_iter = fx$params$sinkhorn_numItermax,
-    sinkhorn_tol = fx$params$sinkhorn_stopThr,
-    sinkhorn_method = "scaling",
-    symmetric = TRUE,
-    solver = fx$params$solver
-  )
-  push(cbind(
-    check = "fgw_scaling_vs_pot_obj",
-    as.data.frame(.check_close(out_scaling$fgw_dist, fx$outputs$fgw_dist, 1e-6, "fgw_dist"), stringsAsFactors = FALSE)
-  ))
-  push(cbind(
-    check = "fgw_scaling_vs_pot_plan",
-    as.data.frame(.check_close(out_scaling$plan, fx$outputs$plan, 1e-5, "plan"), stringsAsFactors = FALSE)
-  ))
-  push(cbind(
-    check = "fgw_scaling_marginals_row",
-    as.data.frame(.check_close(rowSums(out_scaling$plan), fx$inputs$p, 1e-7, "row_marg"), stringsAsFactors = FALSE)
-  ))
-  push(cbind(
-    check = "fgw_scaling_marginals_col",
-    as.data.frame(.check_close(colSums(out_scaling$plan), fx$inputs$q, 1e-7, "col_marg"), stringsAsFactors = FALSE)
-  ))
-
-  # 2) FGW log-sinkhorn should remain close to scaling output.
-  out_log <- rfugw::fgw_entropic(
+  out_reference <- rfugw::fgw_entropic(
     M = fx$inputs$M,
     C1 = fx$inputs$C1,
     C2 = fx$inputs$C2,
@@ -103,6 +71,71 @@ run_accuracy_gate <- function(
     sinkhorn_max_iter = fx$params$sinkhorn_numItermax,
     sinkhorn_tol = fx$params$sinkhorn_stopThr,
     sinkhorn_method = "log",
+    precision = "double",
+    symmetric = TRUE,
+    solver = fx$params$solver
+  )
+  push(cbind(
+    check = "fgw_log_vs_pot_obj",
+    as.data.frame(.check_close(out_reference$fgw_dist, fx$outputs$fgw_dist, 1e-6, "fgw_dist"), stringsAsFactors = FALSE)
+  ))
+  push(cbind(
+    check = "fgw_log_vs_pot_plan",
+    as.data.frame(.check_close(out_reference$plan, fx$outputs$plan, 1e-5, "plan"), stringsAsFactors = FALSE)
+  ))
+  push(cbind(
+    check = "fgw_log_marginals_row",
+    as.data.frame(.check_close(rowSums(out_reference$plan), fx$inputs$p, 1e-7, "row_marg"), stringsAsFactors = FALSE)
+  ))
+  push(cbind(
+    check = "fgw_log_marginals_col",
+    as.data.frame(.check_close(colSums(out_reference$plan), fx$inputs$q, 1e-7, "col_marg"), stringsAsFactors = FALSE)
+  ))
+
+  # 2) FGW log Sinkhorn should remain close to scaling inside scaling's
+  # certified envelope. Relax the stopping tolerances as well so section 3
+  # exercises the actual mixed-precision path instead of automatic promotion.
+  safe_epsilon <- 4 * fx$params$epsilon
+  safe_tol <- 1e-6
+  out_scaling <- rfugw::fgw_entropic(
+    M = fx$inputs$M,
+    C1 = fx$inputs$C1,
+    C2 = fx$inputs$C2,
+    p = fx$inputs$p,
+    q = fx$inputs$q,
+    alpha = fx$params$alpha,
+    epsilon = safe_epsilon,
+    max_iter = fx$params$max_iter,
+    tol = safe_tol,
+    sinkhorn_max_iter = fx$params$sinkhorn_numItermax,
+    sinkhorn_tol = safe_tol,
+    sinkhorn_method = "scaling",
+    precision = "double",
+    symmetric = TRUE,
+    solver = fx$params$solver
+  )
+  push(cbind(
+    check = "fgw_scaling_marginals_row",
+    as.data.frame(.check_close(rowSums(out_scaling$plan), fx$inputs$p, 2e-6, "row_marg"), stringsAsFactors = FALSE)
+  ))
+  push(cbind(
+    check = "fgw_scaling_marginals_col",
+    as.data.frame(.check_close(colSums(out_scaling$plan), fx$inputs$q, 2e-6, "col_marg"), stringsAsFactors = FALSE)
+  ))
+  out_log <- rfugw::fgw_entropic(
+    M = fx$inputs$M,
+    C1 = fx$inputs$C1,
+    C2 = fx$inputs$C2,
+    p = fx$inputs$p,
+    q = fx$inputs$q,
+    alpha = fx$params$alpha,
+    epsilon = safe_epsilon,
+    max_iter = fx$params$max_iter,
+    tol = safe_tol,
+    sinkhorn_max_iter = fx$params$sinkhorn_numItermax,
+    sinkhorn_tol = safe_tol,
+    sinkhorn_method = "log",
+    precision = "double",
     symmetric = TRUE,
     solver = fx$params$solver
   )
@@ -111,12 +144,8 @@ run_accuracy_gate <- function(
     as.data.frame(.check_close(out_log$fgw_dist, out_scaling$fgw_dist, 1e-6, "fgw_dist"), stringsAsFactors = FALSE)
   ))
   push(cbind(
-    check = "fgw_log_marginals_row",
-    as.data.frame(.check_close(rowSums(out_log$plan), fx$inputs$p, 1e-7, "row_marg"), stringsAsFactors = FALSE)
-  ))
-  push(cbind(
-    check = "fgw_log_marginals_col",
-    as.data.frame(.check_close(colSums(out_log$plan), fx$inputs$q, 1e-7, "col_marg"), stringsAsFactors = FALSE)
+    check = "fgw_log_vs_scaling_plan",
+    as.data.frame(.check_close(out_log$plan, out_scaling$plan, 1e-5, "plan"), stringsAsFactors = FALSE)
   ))
 
   # 3) FGW mixed precision should remain close to double precision.
@@ -127,11 +156,11 @@ run_accuracy_gate <- function(
     p = fx$inputs$p,
     q = fx$inputs$q,
     alpha = fx$params$alpha,
-    epsilon = fx$params$epsilon,
+    epsilon = safe_epsilon,
     max_iter = fx$params$max_iter,
-    tol = fx$params$tol,
+    tol = safe_tol,
     sinkhorn_max_iter = fx$params$sinkhorn_numItermax,
-    sinkhorn_tol = fx$params$sinkhorn_stopThr,
+    sinkhorn_tol = safe_tol,
     sinkhorn_method = "scaling",
     precision = "mixed",
     symmetric = TRUE,
@@ -163,7 +192,7 @@ run_accuracy_gate <- function(
     tol = fx$params$tol,
     sinkhorn_max_iter = fx$params$sinkhorn_numItermax,
     sinkhorn_tol = fx$params$sinkhorn_stopThr,
-    sinkhorn_method = "scaling",
+    sinkhorn_method = "log",
     precision = "double",
     symmetric = TRUE,
     solver = fx$params$solver,
@@ -171,11 +200,11 @@ run_accuracy_gate <- function(
   )
   push(cbind(
     check = "fgw_lowrank_fullrank_obj",
-    as.data.frame(.check_close(out_lowrank_full$fgw_dist, out_scaling$fgw_dist, 1e-6, "fgw_dist"), stringsAsFactors = FALSE)
+    as.data.frame(.check_close(out_lowrank_full$fgw_dist, out_reference$fgw_dist, 1e-6, "fgw_dist"), stringsAsFactors = FALSE)
   ))
   push(cbind(
     check = "fgw_lowrank_fullrank_plan",
-    as.data.frame(.check_close(out_lowrank_full$plan, out_scaling$plan, 1e-5, "plan"), stringsAsFactors = FALSE)
+    as.data.frame(.check_close(out_lowrank_full$plan, out_reference$plan, 1e-5, "plan"), stringsAsFactors = FALSE)
   ))
 
   # 5) Multiset FGW mixed precision should remain close to double.
