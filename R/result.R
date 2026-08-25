@@ -1,11 +1,27 @@
 #' Extract the coupling from an rfugw result
 #'
-#' @param x An `rfugw_result` or a list with `plan` / `pi_samp`.
-#' @return The coupling matrix.
+#' @param x An `rfugw_result`, transport plan, or a list with `plan` /
+#'   `pi_samp`.
+#' @param materialize If `TRUE`, explicitly convert a transport-plan
+#'   representation to a dense matrix. Dense legacy results are unchanged.
+#' @return The stored coupling matrix/representation, or a dense matrix when
+#'   explicitly requested.
 #' @export
-rfugw_plan <- function(x) {
+rfugw_plan <- function(x, materialize = FALSE) {
+  if (!is.logical(materialize) || length(materialize) != 1L ||
+      is.na(materialize)) {
+    stop("`materialize` must be TRUE or FALSE.", call. = FALSE)
+  }
+  if (.is_transport_plan(x)) {
+    return(if (materialize) transport_plan_materialize(x) else x)
+  }
   if (!is.null(x$plan)) {
-    return(x$plan)
+    plan <- x$plan
+    return(if (materialize && .is_transport_plan(plan)) {
+      transport_plan_materialize(plan)
+    } else {
+      plan
+    })
   }
   if (!is.null(x$pi_samp)) {
     return(x$pi_samp)
@@ -19,6 +35,25 @@ rfugw_plan <- function(x) {
 #' @return Numeric scalar objective.
 #' @export
 rfugw_value <- function(x) {
+  if (!is.null(x$barycenter_objective)) {
+    return(as.numeric(x$barycenter_objective)[1])
+  }
+  if (identical(x$formulation, "ot_sinkhorn_unbalanced_ti") &&
+      !is.null(x$regularized_objective)) {
+    return(as.numeric(x$regularized_objective)[1])
+  }
+  if (!is.null(x$partial_sinkhorn_objective)) {
+    return(as.numeric(x$partial_sinkhorn_objective)[1])
+  }
+  if (!is.null(x$penalized_partial_objective)) {
+    return(as.numeric(x$penalized_partial_objective)[1])
+  }
+  if (!is.null(x$sinkhorn_divergence)) {
+    return(as.numeric(x$sinkhorn_divergence)[1])
+  }
+  if (!is.null(x$wasserstein_value)) {
+    return(as.numeric(x$wasserstein_value)[1])
+  }
   for (nm in c("ot_dist", "fgw_dist", "gw_dist", "fugw_cost", "ucoot_cost",
                "srgw_dist", "srfgw_dist", "partial_gw_dist", "partial_fgw_dist")) {
     if (!is.null(x[[nm]])) {
@@ -47,6 +82,10 @@ rfugw_status <- function(x) {
 #'   solver certificate fields.
 #' @export
 rfugw_residuals <- function(x) {
+  plan_representation <- tryCatch(
+    transport_plan_representation(rfugw_plan(x)),
+    error = function(e) NULL
+  )
   list(
     residual = x$residual %||% x$error,
     row_residual = x$row_residual,
@@ -56,6 +95,58 @@ rfugw_residuals <- function(x) {
     mass_target = x$mass_target,
     mass_certified = x$mass_certified,
     mass_certification = x$mass_certification,
+    transported_mass = x$transported_mass,
+    original_source_mass = x$original_source_mass,
+    original_target_mass = x$original_target_mass,
+    effective_source_mass = x$effective_source_mass,
+    effective_target_mass = x$effective_target_mass,
+    normalization = x$measure_normalization,
+    source_marginal_kl = x$source_marginal_kl,
+    target_marginal_kl = x$target_marginal_kl,
+    plan_product_kl = x$plan_product_kl,
+    regularized_objective = x$regularized_objective,
+    uot_certificate = x$uot_certificate,
+    fixed_point_residual = x$fixed_point_residual,
+    fixed_point_tolerance = x$fixed_point_tolerance,
+    fixed_point_consistent = x$fixed_point_consistent,
+    source_kkt_residual = x$source_kkt_residual,
+    target_kkt_residual = x$target_kkt_residual,
+    kkt_residual = x$kkt_residual,
+    kkt_tolerance = x$kkt_tolerance,
+    kkt_consistent = x$kkt_consistent,
+    primal_dual_gap = x$primal_dual_gap,
+    gauge_residual = x$gauge_residual,
+    gauge_invariant = x$gauge_invariant,
+    support_certificate = x$support_certificate,
+    wasserstein_power = x$wasserstein_power,
+    input_cost_power = x$input_cost_power,
+    effective_cost_power = x$effective_cost_power,
+    value_kind = x$value_kind,
+    value_certified = x$value_certified,
+    value_certification = x$value_certification,
+    sinkhorn_divergence = x$sinkhorn_divergence,
+    component_status = x$component_status,
+    component_residuals = x$component_residuals,
+    component_converged = x$component_converged,
+    discarded_source_mass = x$discarded_source_mass,
+    discarded_target_mass = x$discarded_target_mass,
+    discard_penalty_term = x$discard_penalty_term,
+    entropy_minus_one = x$entropy_minus_one,
+    weighted_entropy_minus_one = x$weighted_entropy_minus_one,
+    stationarity_residual = x$stationarity_residual,
+    complementarity_residual = x$complementarity_residual,
+    dual_feasibility_residual = x$dual_feasibility_residual,
+    kkt_tolerance = x$kkt_tolerance,
+    frank_wolfe_gap = x$frank_wolfe_gap,
+    frank_wolfe_gap_tolerance = x$frank_wolfe_gap_tolerance,
+    stationarity_consistent = x$stationarity_consistent,
+    line_search_residual = x$line_search_residual,
+    line_search_tolerance = x$line_search_tolerance,
+    line_search_consistent = x$line_search_consistent,
+    plan_representation = x$plan_representation %||% plan_representation,
+    pruning_lost_mass = x$pruning_lost_mass,
+    certificate_invalidated_by_pruning =
+      x$certificate_invalidated_by_pruning,
     feasibility = x$feasibility,
     feasibility_residual = x$feasibility_residual,
     feasibility_tolerance = x$feasibility_tolerance,
@@ -84,6 +175,14 @@ print.rfugw_result <- function(x, ...) {
   cat(sprintf("  formulation: %s\n", x$formulation %||% "unknown"))
   cat(sprintf("  backend:     %s\n", x$backend %||% "unknown"))
   cat(sprintf("  status:      %s\n", x$status %||% "unknown"))
+  representation <- tryCatch(
+    transport_plan_representation(rfugw_plan(x))$representation,
+    error = function(e) NULL
+  )
+  if (!is.null(representation) &&
+      !identical(representation, "dense_materialized")) {
+    cat(sprintf("  plan:        %s\n", representation))
+  }
   cat(sprintf("  value:       %s\n", format(value, digits = 6)))
   cat(sprintf("  iterations:  %s / %s\n", x$iterations %||% NA, x$max_iter %||% NA))
   cat(sprintf("  residual:    %s\n", format(x$residual %||% x$error, digits = 4)))

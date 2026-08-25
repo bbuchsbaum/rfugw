@@ -351,8 +351,8 @@ BEGIN_RCPP
 END_RCPP
 }
 // cpp_ot_sinkhorn
-Rcpp::List cpp_ot_sinkhorn(const arma::mat& M, const arma::vec& p, const arma::vec& q, double epsilon, int max_iter, double tol, bool use_log);
-RcppExport SEXP _rfugw_cpp_ot_sinkhorn(SEXP MSEXP, SEXP pSEXP, SEXP qSEXP, SEXP epsilonSEXP, SEXP max_iterSEXP, SEXP tolSEXP, SEXP use_logSEXP) {
+Rcpp::List cpp_ot_sinkhorn(const arma::mat& M, const arma::vec& p, const arma::vec& q, double epsilon, int max_iter, double tol, bool use_log, const arma::vec& init_source_potential, const arma::vec& init_target_potential);
+RcppExport SEXP _rfugw_cpp_ot_sinkhorn(SEXP MSEXP, SEXP pSEXP, SEXP qSEXP, SEXP epsilonSEXP, SEXP max_iterSEXP, SEXP tolSEXP, SEXP use_logSEXP, SEXP init_source_potentialSEXP, SEXP init_target_potentialSEXP) {
 BEGIN_RCPP
     Rcpp::RObject rcpp_result_gen;
     Rcpp::RNGScope rcpp_rngScope_gen;
@@ -363,7 +363,9 @@ BEGIN_RCPP
     Rcpp::traits::input_parameter< int >::type max_iter(max_iterSEXP);
     Rcpp::traits::input_parameter< double >::type tol(tolSEXP);
     Rcpp::traits::input_parameter< bool >::type use_log(use_logSEXP);
-    rcpp_result_gen = Rcpp::wrap(cpp_ot_sinkhorn(M, p, q, epsilon, max_iter, tol, use_log));
+    Rcpp::traits::input_parameter< const arma::vec& >::type init_source_potential(init_source_potentialSEXP);
+    Rcpp::traits::input_parameter< const arma::vec& >::type init_target_potential(init_target_potentialSEXP);
+    rcpp_result_gen = Rcpp::wrap(cpp_ot_sinkhorn(M, p, q, epsilon, max_iter, tol, use_log, init_source_potential, init_target_potential));
     return rcpp_result_gen;
 END_RCPP
 }
@@ -496,6 +498,48 @@ BEGIN_RCPP
     return rcpp_result_gen;
 END_RCPP
 }
+// cpp_ot_sinkhorn_unbalanced_ti_sparse
+Rcpp::List cpp_ot_sinkhorn_unbalanced_ti_sparse(const Rcpp::IntegerVector& row_ptr, const Rcpp::IntegerVector& col_idx, const Rcpp::NumericVector& row_cost, const Rcpp::IntegerVector& col_ptr, const Rcpp::IntegerVector& row_idx, const Rcpp::NumericVector& col_cost, int n_source, int n_target, const arma::vec& source_measure, const arma::vec& target_measure, double epsilon, double rho_source, double rho_target, int max_iter, double tol);
+RcppExport SEXP _rfugw_cpp_ot_sinkhorn_unbalanced_ti_sparse(SEXP row_ptrSEXP, SEXP col_idxSEXP, SEXP row_costSEXP, SEXP col_ptrSEXP, SEXP row_idxSEXP, SEXP col_costSEXP, SEXP n_sourceSEXP, SEXP n_targetSEXP, SEXP source_measureSEXP, SEXP target_measureSEXP, SEXP epsilonSEXP, SEXP rho_sourceSEXP, SEXP rho_targetSEXP, SEXP max_iterSEXP, SEXP tolSEXP) {
+BEGIN_RCPP
+    Rcpp::RObject rcpp_result_gen;
+    Rcpp::RNGScope rcpp_rngScope_gen;
+    Rcpp::traits::input_parameter< const Rcpp::IntegerVector& >::type row_ptr(row_ptrSEXP);
+    Rcpp::traits::input_parameter< const Rcpp::IntegerVector& >::type col_idx(col_idxSEXP);
+    Rcpp::traits::input_parameter< const Rcpp::NumericVector& >::type row_cost(row_costSEXP);
+    Rcpp::traits::input_parameter< const Rcpp::IntegerVector& >::type col_ptr(col_ptrSEXP);
+    Rcpp::traits::input_parameter< const Rcpp::IntegerVector& >::type row_idx(row_idxSEXP);
+    Rcpp::traits::input_parameter< const Rcpp::NumericVector& >::type col_cost(col_costSEXP);
+    Rcpp::traits::input_parameter< int >::type n_source(n_sourceSEXP);
+    Rcpp::traits::input_parameter< int >::type n_target(n_targetSEXP);
+    Rcpp::traits::input_parameter< const arma::vec& >::type source_measure(source_measureSEXP);
+    Rcpp::traits::input_parameter< const arma::vec& >::type target_measure(target_measureSEXP);
+    Rcpp::traits::input_parameter< double >::type epsilon(epsilonSEXP);
+    Rcpp::traits::input_parameter< double >::type rho_source(rho_sourceSEXP);
+    Rcpp::traits::input_parameter< double >::type rho_target(rho_targetSEXP);
+    Rcpp::traits::input_parameter< int >::type max_iter(max_iterSEXP);
+    Rcpp::traits::input_parameter< double >::type tol(tolSEXP);
+    rcpp_result_gen = Rcpp::wrap(cpp_ot_sinkhorn_unbalanced_ti_sparse(row_ptr, col_idx, row_cost, col_ptr, row_idx, col_cost, n_source, n_target, source_measure, target_measure, epsilon, rho_source, rho_target, max_iter, tol));
+    return rcpp_result_gen;
+END_RCPP
+}
+// cpp_bipartite_transport_max_flow
+Rcpp::List cpp_bipartite_transport_max_flow(int n_source, int n_target, const Rcpp::IntegerVector& source, const Rcpp::IntegerVector& target, const arma::vec& source_measure, const arma::vec& target_measure, double tolerance);
+RcppExport SEXP _rfugw_cpp_bipartite_transport_max_flow(SEXP n_sourceSEXP, SEXP n_targetSEXP, SEXP sourceSEXP, SEXP targetSEXP, SEXP source_measureSEXP, SEXP target_measureSEXP, SEXP toleranceSEXP) {
+BEGIN_RCPP
+    Rcpp::RObject rcpp_result_gen;
+    Rcpp::RNGScope rcpp_rngScope_gen;
+    Rcpp::traits::input_parameter< int >::type n_source(n_sourceSEXP);
+    Rcpp::traits::input_parameter< int >::type n_target(n_targetSEXP);
+    Rcpp::traits::input_parameter< const Rcpp::IntegerVector& >::type source(sourceSEXP);
+    Rcpp::traits::input_parameter< const Rcpp::IntegerVector& >::type target(targetSEXP);
+    Rcpp::traits::input_parameter< const arma::vec& >::type source_measure(source_measureSEXP);
+    Rcpp::traits::input_parameter< const arma::vec& >::type target_measure(target_measureSEXP);
+    Rcpp::traits::input_parameter< double >::type tolerance(toleranceSEXP);
+    rcpp_result_gen = Rcpp::wrap(cpp_bipartite_transport_max_flow(n_source, n_target, source, target, source_measure, target_measure, tolerance));
+    return rcpp_result_gen;
+END_RCPP
+}
 // cpp_gw_square_terms_square
 Rcpp::List cpp_gw_square_terms_square(const arma::mat& C1, const arma::mat& C2, const arma::mat& G, bool symmetric);
 RcppExport SEXP _rfugw_cpp_gw_square_terms_square(SEXP C1SEXP, SEXP C2SEXP, SEXP GSEXP, SEXP symmetricSEXP) {
@@ -541,13 +585,15 @@ static const R_CallMethodDef CallEntries[] = {
     {"_rfugw_cpp_entropic_partial_wasserstein", (DL_FUNC) &_rfugw_cpp_entropic_partial_wasserstein, 9},
     {"_rfugw_cpp_semirelaxed_fgw_exact_square", (DL_FUNC) &_rfugw_cpp_semirelaxed_fgw_exact_square, 10},
     {"_rfugw_cpp_semirelaxed_fgw_cg_square_fast", (DL_FUNC) &_rfugw_cpp_semirelaxed_fgw_cg_square_fast, 11},
-    {"_rfugw_cpp_ot_sinkhorn", (DL_FUNC) &_rfugw_cpp_ot_sinkhorn, 7},
+    {"_rfugw_cpp_ot_sinkhorn", (DL_FUNC) &_rfugw_cpp_ot_sinkhorn, 9},
     {"_rfugw_cpp_ot_emd", (DL_FUNC) &_rfugw_cpp_ot_emd, 5},
     {"_rfugw_cpp_transport_simplex_test", (DL_FUNC) &_rfugw_cpp_transport_simplex_test, 6},
     {"_rfugw_cpp_ot_sinkhorn_unbalanced", (DL_FUNC) &_rfugw_cpp_ot_sinkhorn_unbalanced, 9},
     {"_rfugw_cpp_partial_fgw_exact_square", (DL_FUNC) &_rfugw_cpp_partial_fgw_exact_square, 15},
     {"_rfugw_cpp_partial_fgw_entropic_square", (DL_FUNC) &_rfugw_cpp_partial_fgw_entropic_square, 15},
     {"_rfugw_cpp_ucoot_kl", (DL_FUNC) &_rfugw_cpp_ucoot_kl, 19},
+    {"_rfugw_cpp_ot_sinkhorn_unbalanced_ti_sparse", (DL_FUNC) &_rfugw_cpp_ot_sinkhorn_unbalanced_ti_sparse, 15},
+    {"_rfugw_cpp_bipartite_transport_max_flow", (DL_FUNC) &_rfugw_cpp_bipartite_transport_max_flow, 7},
     {"_rfugw_cpp_gw_square_terms_square", (DL_FUNC) &_rfugw_cpp_gw_square_terms_square, 4},
     {"_rfugw_cpp_thread_kernel_probe", (DL_FUNC) &_rfugw_cpp_thread_kernel_probe, 4},
     {NULL, NULL, 0}

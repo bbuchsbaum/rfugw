@@ -290,10 +290,63 @@ stopifnot(
 )
 ```
 
+## What if the support is already fixed?
+
+That is an ordinary linear-Wasserstein problem, not a GW barycenter. If every
+input already has a meaningful cross-cost to the same support and only the
+support weights are unknown, use `ot_barycenter_weights()`. The returned
+object contains one barycenter weight vector and one component coupling per
+input; it does not learn coordinates, features, or a structure matrix.
+
+```{r fixed-support-wasserstein}
+fixed_support <- c(-1, 0, 1)
+fixed_cost <- outer(
+  fixed_support, fixed_support,
+  function(x, y) (x - y)^2
+)
+fixed_cost <- fixed_cost / max(fixed_cost)
+
+linear_bary <- ot_barycenter_weights(
+  costs = list(fixed_cost, fixed_cost),
+  measures = list(c(0.2, 0.5, 0.3), c(0.4, 0.2, 0.4)),
+  coefficients = c(0.6, 0.4),
+  mode = "regularized",
+  support_cost = fixed_cost,
+  epsilon = 0.1,
+  tol = 3e-6,
+  sinkhorn_tol = 1e-9
+)
+data.frame(
+  support = fixed_support,
+  weight = linear_bary$weights
+)
+```
+
+```{r check-fixed-support-wasserstein, include=FALSE}
+stopifnot(
+  identical(linear_bary$status, "converged"),
+  isTRUE(linear_bary$converged),
+  isTRUE(linear_bary$feasible),
+  isTRUE(linear_bary$kkt_consistent),
+  isTRUE(linear_bary$objective_monotone),
+  abs(sum(linear_bary$weights) - 1) < 1e-12
+)
+```
+
+Regularized mode reports a semi-debiased product-reference-KL Sinkhorn
+objective: weighted source-to-support terms minus half the support self term.
+Source self terms are constant in the optimized weights and are omitted
+explicitly. Exact mode instead minimizes the weighted sum of unregularized
+transport costs through a joint LP; it requires the suggested `lpSolve`
+package. Exact weights may be zero. Regularized weights obey the reported
+`min_weight` numerical interior. Neither objective should be compared as if it
+were the GW/FGW objective above.
+
 ## Which barycenter function should you use?
 
 | Available information | Function | Returned result |
 |---|---|---|
+| Cross-costs to a fixed common support; optimize only its weights | `ot_barycenter_weights()` | Weight vector, component transports, objective and KKT certificates |
 | Structure and node features | `fgw_barycenters()` | Full list with structure, features, couplings, and history |
 | Structure only | `entropic_gromov_barycenters()` | Structure matrix by default; full list with `log = TRUE` |
 | POT-style entropic FGW interface | `entropic_fused_gromov_barycenters()` | List containing features and structure; adds diagnostics with `log = TRUE` |

@@ -53,10 +53,14 @@ Unusable budgets:
   `(ns, nb %/% ns)`; if that target count exceeds `nt`, it warns and
   clamps
 
-## Rank approximation
+## Dense-plan SVD approximation
 
-`lowrank_gromov_wasserstein_samples()` factorizes a dense entropic GW
-plan by truncated SVD. It is not a factorized solver.
+`dense_gromov_wasserstein_plan_svd()` factorizes a completed dense entropic GW
+plan by truncated SVD. It is not a factorized GW solver. Its result records
+`representation = "posthoc_svd_of_dense_gw_plan"`,
+`dense_plan_materialized = TRUE`, the byte sizes of the dense structures and
+plan, and `solve_memory_order = "O(ns^2 + nt^2 + ns*nt)"`.
+`lowrank_gromov_wasserstein_samples()` is a deprecated compatibility wrapper.
 
 | rank | relative Frobenius error | SVD ms |
 |---|---|---|
@@ -72,15 +76,19 @@ clamps. SVD time at `n = 16` is not a speed claim.
 
 ## Memory scaling
 
-The returned plan is always dense (`n x n`). The certified input-memory
-claim is only about structure storage. Bytes are `object.size()` of the
-inputs, not peak allocator traffic.
+The solve and returned logged plan are dense (`n x n`). The coordinate and
+graph figures below certify only input representation, not solver peak memory.
+Bytes are `object.size()` of the inputs, not peak allocator traffic. For the
+dense-plan SVD API, the lower-bound materialized payload is the two dense
+structure costs plus the dense plan; temporary solver and SVD workspaces can
+increase the actual peak above that bound. Consequently no memory or runtime
+claim depends on output rank.
 
-| n | dense C1+C2 | coords X1+X2 | sparse 6-NN graphs | 8-D embeddings | plan |
-|---|---|---|---|---|---|
-| 32 | 25552 | 1968 | 6656 | 2264 | 8408 |
-| 64 | 82896 | 3504 | 10176 | 4312 | 32984 |
-| 96 | 173008 | 5040 | 13624 | 6360 | 73944 |
+| n | dense C1+C2 | coords X1+X2 | sparse 6-NN graphs | 8-D embeddings | plan | dense-SVD minimum materialized |
+|---|---|---|---|---|---|---|
+| 32 | 25552 | 1968 | 6656 | 2264 | 8408 | 33960 |
+| 64 | 82896 | 3504 | 10176 | 4312 | 32984 | 115880 |
+| 96 | 173008 | 5040 | 13624 | 6360 | 73944 | 246952 |
 
 - Dense sampled GW stores two `n x n` costs plus the plan
 - Coordinate-native sampled GW stores two `n x d` point clouds plus the
@@ -92,10 +100,19 @@ At `n = 96`, coordinates are about 3% of two dense costs, and a sparse
 graph plus 8-D embeddings is about 12%. The plan still grows as `n^2`
 and already exceeds the coordinate inputs at `n = 32`.
 
+The final column is the exact sum of objects the dense-plan SVD path must
+materialize, not a process-RSS or allocator-peak measurement. Actual peak
+memory is higher because solver and SVD workspaces are temporary and
+implementation-dependent. No empirical peak-memory scaling claim is made;
+the supported claim is the fail-closed one that the path cannot have
+rank-bounded peak memory while these dense objects are simultaneously live.
+
 ## What is not claimed
 
 - Sampled GW is not a certified match to POT or to dense GW at a fixed
   intermediate budget
 - Quality does not improve at every budget increment
 - Speed versus POT is out of scope here
-- `lowrank_gromov_wasserstein_samples()` is not a low-rank solver
+- `dense_gromov_wasserstein_plan_svd()` is not an end-to-end low-rank solver
+- the deprecated `lowrank_gromov_wasserstein_samples()` name carries no
+  low-memory or low-complexity guarantee

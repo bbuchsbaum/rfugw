@@ -78,7 +78,7 @@ verified_support <- c(
 )
 experimental_boundaries <- c(
   "Sampled dense/coordinate/graph GW paths remain experimental and require exact-baseline quality evidence",
-  "Post-hoc low-rank GW remains experimental; rank/budget rows are performance evidence, not convergence certification",
+  "Dense-plan GW SVD remains experimental; rank/budget rows are performance evidence, not convergence certification",
   "Entropic partial linear OT, Sinkhorn divergence, and fixed-support Wasserstein barycenters remain deferred until formulation-specific certificates exist"
 )
 working_tree_dirty <- nzchar(git_value("status", "--porcelain"))

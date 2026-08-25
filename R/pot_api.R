@@ -1,5 +1,17 @@
 .check_square_loss <- function(loss_fun) {
   loss_fun <- as.character(loss_fun)[1]
+  if (identical(loss_fun, "kl_loss")) {
+    stop(
+      paste0(
+        "`loss_fun = \"kl_loss\"` is deliberately unsupported: the directed ",
+        "KL structural loss is infinite on ordinary zero-diagonal distance ",
+        "costs unless an estimand-changing floor is chosen. Use ",
+        "`loss_fun = \"square_loss\"`; see ",
+        "`inst/kl-structural-loss-decision.md`."
+      ),
+      call. = FALSE
+    )
+  }
   if (!identical(loss_fun, "square_loss")) {
     stop("Only `loss_fun = \"square_loss\"` is currently supported.", call. = FALSE)
   }

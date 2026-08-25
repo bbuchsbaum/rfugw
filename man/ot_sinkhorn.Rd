@@ -11,7 +11,9 @@ ot_sinkhorn(
   epsilon = 0.05,
   method = c("scaling", "log", "auto"),
   max_iter = 1000L,
-  tol = 1e-09
+  tol = 1e-09,
+  init_plan = NULL,
+  init_duals = NULL
 )
 }
 \arguments{
@@ -30,13 +32,27 @@ otherwise it selects the genuine log-domain implementation.}
 \item{max_iter}{Maximum Sinkhorn iterations.}
 
 \item{tol}{Marginal residual tolerance.}
+
+\item{init_plan}{Optional strictly positive entropic plan warm start. It must
+have the requested shape and be zero outside any zero-weight support.}
+
+\item{init_duals}{Optional reusable dual state, either a prior
+\code{rfugw_result} or a list with numeric \code{source} and \code{target} potentials.
+When both initialization forms are supplied, \code{init_duals} takes precedence
+after both inputs are validated.}
 }
 \value{
-An \code{rfugw_result} with \code{plan}, \code{ot_dist}, \code{status}, and residuals.
+An \code{rfugw_result} with \code{plan}, \code{ot_dist}, \code{status}, residuals,
+canonical \code{source_potential} / \code{target_potential}, and reusable
+\code{dual_state}. The gauge is fixed by a zero source-weighted mean. The
+regularized primal, dual, product-reference KL, constant offset, and gap
+certificate are also returned.
 }
 \description{
 Scaling or log-domain Sinkhorn for a linear cost. Reported \code{ot_dist} is
-the unregularized \verb{<M, plan>} cost.
+the unregularized \verb{<M, plan>} cost. \code{regularized_objective} uses the explicit
+convention \verb{<M, plan> + epsilon * KL(plan || p \%o\% q)}; its independently
+derived dual and gap are returned without changing the legacy field.
 }
 \examples{
 M <- matrix(c(0, 1, 1, 0), 2, 2)

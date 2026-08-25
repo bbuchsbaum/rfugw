@@ -1,6 +1,138 @@
-# rfugw 0.0.1.9000
+# rfugw 0.1.0
 
-Development version toward the focused 0.1 release.
+Initial focused release.
+
+- The scalable relational-OT admission review closes with a measured deferral:
+  no sampled, graph, operator, or low-rank candidate currently avoids both
+  dense structure and dense coupling materialization while meeting a certified
+  quality envelope. Coordinate inputs reduce input storage, but the native
+  sampled kernel retains at least five dense coupling-sized matrices and its
+  measured 400-to-800 runtime slope is 1.936. The experimental labels remain;
+  `inst/scalable-relational-ot-decision.md` records target sizes, rejected
+  alternatives, exact workspace lower bounds, and promotion thresholds.
+
+- `ot_barycenter_weights()` now optimizes probability weights on a fixed
+  user-supplied support without relabeling a GW/FGW support-learning update.
+  Exact mode solves one joint LP and re-certifies every component with exact
+  EMD. Regularized mode minimizes a semi-debiased product-reference-KL
+  Sinkhorn objective with analytic dual gradients, safeguarded descent,
+  projected-simplex KKT, a declared numerical weight floor, and reusable
+  component state. Independent LP/convex optimizers, finite differences,
+  identity/permutation laws, zero weights, duplicate support, imbalanced
+  coefficients, tiny entropy, warm reuse, and retained solve/allocation
+  evidence guard the two distinct objective contracts.
+
+- A versioned solver-client protocol now lets downstream packages construct
+  explicit balanced entropic, exact balanced, exact/entropic fixed-mass
+  partial, and finite-measure KL-unbalanced problems, solve them through one
+  validated boundary, and consume stable problem, mass, provenance, plan,
+  value, status, residual, and state accessors. Mass policy is mandatory and
+  formulation-specific. Balanced dual state supports scaling/log/auto and
+  epsilon continuation; partial Dykstra state remains bound to the identical
+  problem/backend. Structured fail-closed rejection, cold fallback, RDS/fresh-
+  session reuse, a capability matrix, a public-only generic client, live DKGE
+  differential tests, and a matched-quality continuation benchmark define v1.
+
+- `ot_sinkhorn_unbalanced_ti()` now provides translation-invariant KL-UOT on
+  dense costs and validated sparse edge support. The default result is an
+  implicit transport operator; explicit edge or dense plans are opt-in.
+  Canonical translated potentials, independent fixed-point and KKT residuals,
+  generalized-KL primal/dual components, gauge invariance, transported mass,
+  exact balanced-support max-flow diagnostics, and runtime/support provenance
+  are reported. Analytic, direct-optimization, dense/sparse, stiff, unequal-
+  mass, zero-entry, dynamic-range, Hall-deficiency, operator, serialization,
+  installed-client, and manifoldalign differential evidence guard the path.
+
+- `as_transport_plan()` and `transport_operator()` now provide dense,
+  Matrix-CSC sparse, canonical edge-list, and implicit coupling contracts.
+  Sparse-safe shape, total/row/column mass, forward and adjoint application,
+  barycentric projection, validation, linear objective, entropy, and KL avoid
+  hidden dense plan allocation; `transport_plan_materialize()` is explicit.
+  Zero transported rows/columns abstain rather than becoming uniform matches,
+  and adjoint/reverse barycentric actions are documented as non-inverses.
+  Pruning reports lost mass and invalidates every stale result certificate.
+  Dense/sparse/operator parity, malformed support, representative allocation,
+  saveRDS/readRDS, installed-package, and legacy dense-result tests define the
+  boundary.
+
+- `ot_partial_sinkhorn()` now provides certified entropy-regularized
+  fixed-mass partial linear OT under the explicit counting-measure
+  entropy-minus-one convention. Moderate scaling and genuine log-domain
+  Dykstra paths agree; unsafe scaling fails and auto dispatch selects log.
+  Results expose the full objective, capacity/mass feasibility, capacity and
+  mass duals, stationarity, complementarity, primal-dual gap, trace, and a
+  backend-bound warm state. Independent constrained-dual, zero/full-mass,
+  tiny-entropy, zero-weight, rectangular, constant/duplicate-cost, warm-state,
+  and dispatch tests certify the boundary. Entropic partial GW and FGW now
+  reuse this public primitive and propagate every required inner certificate.
+
+- `penalized_partial_fused_gromov_wasserstein()` now optimizes square-loss FGW
+  over the variable-mass subcoupling domain with an explicit linear penalty on
+  unmatched source and target mass. The penalty is present in the full
+  derivative, certified `ot_partial_penalized()` direction solves, exact
+  line-search polynomial, and reported unrooted objective. Results expose
+  transported/discarded mass, every objective term, trace feasibility, nested
+  solver status, and a Frank-Wolfe stationarity gap. Independent continuous,
+  derivative, line-search, fixed-mass-limit, permutation, scaling, asymmetric,
+  and downstream fail-closed fixtures distinguish it from fixed-mass partial
+  FGW and generalized-KL FUGW.
+
+- `ot_partial_penalized()` now provides certified exact variable-mass partial
+  linear OT for finite, potentially unequal measures. Its `discard_penalty`
+  has explicit cost-per-discarded-unit semantics on both marginals, so larger
+  values weakly favor more transport. A symmetric dummy reduction uses the
+  declared penalty directly—no hidden big-M—and returns transported/discarded
+  masses, objective components, and scaled augmented primal/dual certificates.
+  Independent original-variable LP and direction-mutation tests guard against
+  the historical reversed-penalty and accidentally fixed-mass defects.
+
+- `ot_sinkhorn()` now exposes a regularized primal and dual under the explicit
+  convention `<M,T> + epsilon * KL(T || p %o% q)`, their gap certificate, and
+  the exact constant offset from the entropy-minus-one convention, while
+  preserving legacy `ot_dist` as the linear plan cost. The new
+  `ot_sinkhorn_divergence()` debiases one cross and two self objectives, retains
+  every component result/status/residual/runtime, supports reusable component
+  dual states, and fails closed on component or nonnegativity failure.
+
+- `ot_wasserstein_cost()` and `ot_wasserstein_distance()` now make the ground
+  power and root convention explicit. They accept raw supports with a declared
+  metric or a nonnegative cost matrix with an explicit existing power, retain
+  scale and probability-normalization provenance, distinguish exact values
+  from entropic-plan estimates, and fail closed on uncertified solver output.
+  Analytic and independent one-dimensional p=1/p=2 oracles, permutation,
+  symmetry, scaling, duplicates, zero weights, and rectangular fixtures guard
+  the semantic boundary.
+
+- KL structural loss remains deliberately unsupported after an explicit scope
+  evaluation. An independent four-index prototype matches the factorized
+  formula on positive inputs, while ordinary zero-diagonal distance costs make
+  the unfloored directed-KL objective infinite and common logarithm floors
+  materially change it. Public GW-family APIs now name this decision in their
+  rejection; `inst/kl-structural-loss-decision.md` records the evidence and the
+  gate for reconsideration.
+
+- The misleading experimental name `lowrank_gromov_wasserstein_samples()` is
+  deprecated in favor of `dense_gromov_wasserstein_plan_svd()`. The replacement
+  makes its lifecycle explicit: it materializes two dense structure costs and
+  a dense GW plan before truncated SVD, reports those memory semantics in its
+  result, and makes no end-to-end low-rank scaling claim. Legacy POT-shaped
+  factorized-cost, Dykstra, seed, and warning parameters were never operational
+  and are now rejected when supplied.
+
+- `ot_sinkhorn()` now accepts reusable `init_duals` and `init_plan` warm starts
+  and returns canonical source/target potentials plus serializable `dual_state`.
+  Scaling and log backends share the source-weighted-mean-zero gauge, duals take
+  documented precedence over a simultaneously supplied plan, and every warm
+  solve must satisfy a fresh marginal certificate. A deterministic continuation
+  baseline and a public-API-only manifoldalign OT-Procrustes fixture guard the
+  downstream contract.
+
+- `ot_sinkhorn_unbalanced()` now has explicit finite-measure semantics through
+  `normalization = "none"`, `"joint"`, or `"separate"`. Results retain original
+  and effective measures/masses, transported mass, generalized-KL objective
+  terms, and a fixed-point certificate. The backward-compatible 0.1 default is
+  still separate probability normalization; absolute-mass callers should opt
+  into `"none"` explicitly.
 
 ## Compatibility
 
@@ -138,10 +270,11 @@ Development version toward the focused 0.1 release.
   inner entropic projection keeps a finite plan at high transported mass.
 - UCOOT and across-spaces KL Sinkhorn now run their BCD loop in C++ with
   reusable sample/feature workspaces and inner warm-start telemetry.
-- Sampled and low-rank GW stay experimental. The certified envelope is
-  tiny-versus-full budget quality, rank reconstruction, and input-memory
-  scaling only; unusable budgets and ranks warn or error instead of
-  silently clamping. See `inst/bench/sampled-budget-curves.md`.
+- Sampled GW and dense-plan SVD compression stay experimental. The certified
+  envelope is tiny-versus-full budget quality, rank reconstruction, and the
+  explicitly separated input/solve-memory evidence only; unusable budgets and
+  ranks warn or error instead of silently clamping. See
+  `inst/bench/sampled-budget-curves.md`.
 - Threading is certified only on the batched multiset kernels:
   1-thread and N-thread plans match, BLAS is pinned to avoid
   oversubscription, and `structure_knn` is documented as a metric

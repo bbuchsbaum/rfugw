@@ -19,7 +19,7 @@ test_that("fractional public count parameters are rejected instead of truncated"
     sampled_iterations = function() sampled_gromov_wasserstein(
       C, C, max_iter = 2.5
     ),
-    lowrank_rank = function() lowrank_gromov_wasserstein_samples(
+    lowrank_rank = function() dense_gromov_wasserstein_plan_svd(
       X, X, rank = 1.5
     ),
     ucoot_inner = function() unbalanced_co_optimal_transport(

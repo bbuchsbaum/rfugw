@@ -252,7 +252,7 @@ test_that("experimental adapters make no convergence claim", {
     C1, C2, nb_samples_grad = c(3L, 2L), epsilon = 0.1,
     max_iter = 4L, random_state = 45L, log = TRUE
   )
-  approximate <- lowrank_gromov_wasserstein_samples(
+  approximate <- dense_gromov_wasserstein_plan_svd(
     X1, X2, reg = 0.1, rank = 2L, numItermax = 10L, log = TRUE
   )
   for (out in list(sampled = sampled, approximate = approximate)) {

@@ -1,7 +1,7 @@
 Package: rfugw
 Type: Package
 Title: Fast Fused (Unbalanced) Gromov-Wasserstein in R
-Version: 0.0.1.9000
+Version: 0.1.0
 Authors@R: c(
     person("Bradley", "Buchsbaum",
            email = "brad.buchsbaum@gmail.com",
@@ -12,14 +12,15 @@ Description: High-performance fused Gromov-Wasserstein and fused unbalanced
     linear optimal transport, GW/FGW, unbalanced alignment, and selected
     scalable variants rather than the full POT surface.
 License: MIT + file LICENSE
-URL: https://github.com/bbuchsbaum/rfugw
+URL: https://bbuchsbaum.github.io/rfugw/, https://github.com/bbuchsbaum/rfugw
 BugReports: https://github.com/bbuchsbaum/rfugw/issues
 Encoding: UTF-8
 Roxygen: list(markdown = TRUE)
 RoxygenNote: 7.3.3
 Imports:
     methods,
-    Rcpp
+    Rcpp,
+    utils
 LinkingTo:
     Rcpp,
     RcppArmadillo

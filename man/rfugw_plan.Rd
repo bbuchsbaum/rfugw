@@ -4,13 +4,18 @@
 \alias{rfugw_plan}
 \title{Extract the coupling from an rfugw result}
 \usage{
-rfugw_plan(x)
+rfugw_plan(x, materialize = FALSE)
 }
 \arguments{
-\item{x}{An \code{rfugw_result} or a list with \code{plan} / \code{pi_samp}.}
+\item{x}{An \code{rfugw_result}, transport plan, or a list with \code{plan} /
+\code{pi_samp}.}
+
+\item{materialize}{If \code{TRUE}, explicitly convert a transport-plan
+representation to a dense matrix. Dense legacy results are unchanged.}
 }
 \value{
-The coupling matrix.
+The stored coupling matrix/representation, or a dense matrix when
+explicitly requested.
 }
 \description{
 Extract the coupling from an rfugw result

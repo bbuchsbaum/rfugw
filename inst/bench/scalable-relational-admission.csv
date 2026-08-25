@@ -1,0 +1,5 @@
+"candidate","evidence_type","n_source","n_target","budget_source","budget_target","median_seconds","r_visible_allocated_bytes","relative_objective_gap_to_dense_sampled","returned_plan_logical_bytes","minimum_simultaneous_dense_workspaces","dense_workspace_lower_bound_bytes","runtime_doubling_slope","workspace_doubling_slope","decision"
+"coordinate_native_sampled_gw","measured_local",400,400,16,2,2.31389117002254,3681952,4.25930957118075e-05,1280000,5,6400000,1.935555,2,"defer"
+"coordinate_native_sampled_gw","measured_local",800,800,16,2,8.85122046602191,10273080,9.5933650148235e-06,5120000,5,25600000,1.935555,2,"defer"
+"coordinate_native_sampled_gw","source_audit_projection",5000,5000,16,2,NA,NA,NA,200000000,5,1000000000,NA,2,"defer"
+"coordinate_native_sampled_gw","source_audit_projection",10000,10000,16,2,NA,NA,NA,800000000,5,4000000000,NA,2,"defer"

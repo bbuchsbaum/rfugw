@@ -1,0 +1,4 @@
+"tolerance","warm_iterations","cold_iterations","warm_elapsed_seconds","cold_elapsed_seconds","max_plan_difference","regularized_objective_difference","warm_residual","cold_residual","warm_state_accepted"
+1e-05,40,40,0.006,0.003,0,0,8.4897526444333e-06,8.4897526444333e-06,FALSE
+1e-07,30,70,0.003,0.005,2.42861286636753e-17,4.44089209850063e-16,2.94350715260294e-08,2.94350715190905e-08,TRUE
+1e-09,20,90,0.003,0.006,2.77555756156289e-17,4.44089209850063e-16,6.7483603427565e-10,6.74836048153438e-10,TRUE

@@ -1,6 +1,10 @@
 ^.*\.Rproj$
 ^\.Rproj\.user$
+^\.git$
 ^\.github$
+^_pkgdown\.yml$
+^CONTRIBUTING\.md$
+^pkgdown$
 ^\.mote$
 ^\.omc$
 ^\.venv

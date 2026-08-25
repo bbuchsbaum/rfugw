@@ -1,0 +1,4 @@
+"mode","status","converged","objective","simplex_residual","kkt_residual","kkt_tolerance","outer_iterations","component_solves","component_iterations","warm_reuse_count","elapsed_seconds","allocated_bytes"
+"exact_joint_lp","converged",TRUE,0.0125,2.22044604925031e-16,0,1e-08,1,3,0,0,0.01,1633576
+"regularized_cold","converged",TRUE,0.0517715346633901,0,1.96620482702248e-05,2e-05,83,336,6175,332,0.312,17080904
+"regularized_warm","converged",TRUE,0.0517715346633901,0,1.96620482702248e-05,2e-05,0,4,0,4,0.004,228960

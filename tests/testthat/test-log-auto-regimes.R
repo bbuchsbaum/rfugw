@@ -75,7 +75,7 @@ test_that("balanced auto dispatch is shift-aware and never returns clipping", {
   )
 })
 
-test_that("partial auto is explicitly bounded and unsupported log is truthful", {
+test_that("partial auto reuses certified scaling and genuine log backends", {
   C <- matrix(c(0, 1, 1, 0), 2, 2)
   safe <- entropic_partial_gromov_wasserstein(
     C, C, reg = 1, numItermax = 3L, inner_max_iter = 50L,
@@ -84,18 +84,24 @@ test_that("partial auto is explicitly bounded and unsupported log is truthful", 
   expect_identical(safe$effective_sinkhorn_method, "scaling")
   expect_identical(
     safe$sinkhorn_dispatch_reason,
-    "dynamic_range_within_scaling_threshold"
+    "certified_public_partial_sinkhorn_per_outer_iteration"
   )
-  expect_error(
-    entropic_partial_gromov_wasserstein(
-      1e4 * C, 1e4 * C, reg = 1e-3, method = "auto"
-    ),
-    "genuine log-domain Dykstra"
+  M <- matrix(c(0, 120, 90, 0), 2)
+  unsafe <- entropic_partial_fused_gromov_wasserstein(
+    M, C, C, reg = 0.1, m = 0.7, alpha = 0.2,
+    numItermax = 2L, tol = 1, inner_max_iter = 5000L,
+    inner_tol = 1e-8, method = "auto", log = TRUE
   )
-  expect_error(
-    entropic_partial_gromov_wasserstein(C, C, method = "log"),
-    "genuine log-domain Dykstra"
+  explicit_log <- entropic_partial_fused_gromov_wasserstein(
+    M, C, C, reg = 0.1, m = 0.7, alpha = 0.2,
+    numItermax = 2L, tol = 1, inner_max_iter = 5000L,
+    inner_tol = 1e-8, method = "log", log = TRUE
   )
+  expect_true(unsafe$converged)
+  expect_true(explicit_log$converged)
+  expect_identical(unsafe$effective_sinkhorn_method, "log")
+  expect_identical(explicit_log$effective_sinkhorn_method, "log")
+  expect_equal(unsafe$plan, explicit_log$plan, tolerance = 1e-10)
 })
 
 test_that("UCOOT no longer aliases sinkhorn_log to scaling", {

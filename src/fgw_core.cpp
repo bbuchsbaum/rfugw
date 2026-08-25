@@ -1551,6 +1551,8 @@ inline SinkhornBalancedResult sinkhorn_balanced(
   const bool use_blas = (K.n_elem >= gemv_min_work_d());
   const bool use_blocked = (!use_blas && K.n_elem >= matvec_blocked_min_work_d());
   const int check_interval = (K.n_elem <= 160000) ? 5 : 10;
+  const bool has_initial_scaling =
+    u.n_elem == p.n_elem && v.n_elem == q.n_elem;
   if (u.n_elem != p.n_elem) {
     u = arma::ones<arma::vec>(p.n_elem);
   }
@@ -1570,8 +1572,24 @@ inline SinkhornBalancedResult sinkhorn_balanced(
   Ktu += kTiny;
 
   double err = std::numeric_limits<double>::infinity();
+  if (has_initial_scaling) {
+    if (use_blas) {
+      dgemv_n(K, v, Kv);
+    } else if (use_blocked) {
+      matvec_colmajor_blocked(K, v, Kv);
+    } else {
+      matvec_colmajor(K, v, Kv);
+    }
+    Kv += kTiny;
+    const arma::vec row_marg = u % Kv;
+    const arma::vec col_marg = v % Ktu;
+    err = std::max(
+      arma::max(arma::abs(row_marg - p)),
+      arma::max(arma::abs(col_marg - q))
+    );
+  }
   int it = 0;
-  for (; it < max_iter; ++it) {
+  for (; it < max_iter && !(has_initial_scaling && err < tol); ++it) {
     if (use_blas) {
       dgemv_n(K, v, Kv);
     } else if (use_blocked) {
@@ -1708,6 +1726,7 @@ inline SinkhornBalancedResult sinkhorn_balanced_log(
     arma::vec g) {
   const arma::uword ns = p.n_elem;
   const arma::uword nt = q.n_elem;
+  const bool has_initial_potentials = f.n_elem == ns && g.n_elem == nt;
   if (f.n_elem != ns) {
     f = arma::zeros<arma::vec>(ns);
   }
@@ -1719,8 +1738,24 @@ inline SinkhornBalancedResult sinkhorn_balanced_log(
   const arma::vec logq = arma::log(q + kTiny);
 
   double err = std::numeric_limits<double>::infinity();
+  if (has_initial_potentials) {
+    arma::vec row_marg(ns);
+    arma::vec col_marg(nt);
+    for (arma::uword i = 0; i < ns; ++i) {
+      const arma::vec z = (g - cost.row(i).t()) / epsilon;
+      row_marg(i) = std::exp((f(i) / epsilon) + logsumexp_vec(z));
+    }
+    for (arma::uword j = 0; j < nt; ++j) {
+      const arma::vec z = (f - cost.col(j)) / epsilon;
+      col_marg(j) = std::exp((g(j) / epsilon) + logsumexp_vec(z));
+    }
+    err = std::max(
+      arma::max(arma::abs(row_marg - p)),
+      arma::max(arma::abs(col_marg - q))
+    );
+  }
   int it = 0;
-  for (; it < max_iter; ++it) {
+  for (; it < max_iter && !(has_initial_potentials && err < tol); ++it) {
     for (arma::uword i = 0; i < ns; ++i) {
       const arma::vec z = (g - cost.row(i).t()) / epsilon;
       f(i) = epsilon * (logp(i) - logsumexp_vec(z));
@@ -7988,18 +8023,94 @@ Rcpp::List cpp_ot_sinkhorn(
     double epsilon,
     int max_iter,
     double tol,
-    bool use_log) {
+    bool use_log,
+    const arma::vec& init_source_potential,
+    const arma::vec& init_target_potential) {
+  const bool has_initial_potentials =
+    init_source_potential.n_elem > 0 || init_target_potential.n_elem > 0;
+  if (has_initial_potentials &&
+      (init_source_potential.n_elem != p.n_elem ||
+       init_target_potential.n_elem != q.n_elem)) {
+    Rcpp::stop("Initial Sinkhorn potentials have incompatible dimensions.");
+  }
+  if (has_initial_potentials &&
+      (!init_source_potential.is_finite() || !init_target_potential.is_finite())) {
+    Rcpp::stop("Initial Sinkhorn potentials must be finite.");
+  }
+
   arma::vec u;
   arma::vec v;
+  arma::vec f;
+  arma::vec g;
+  if (has_initial_potentials) {
+    if (use_log) {
+      f = init_source_potential;
+      g = init_target_potential;
+    } else {
+      u = arma::exp(init_source_potential / epsilon);
+      v = arma::exp(init_target_potential / epsilon);
+      if (!u.is_finite() || !v.is_finite()) {
+        Rcpp::stop(
+          "Initial Sinkhorn potentials overflow the scaling backend; use the log backend."
+        );
+      }
+    }
+  }
   const SinkhornBalancedResult res = use_log
-    ? sinkhorn_balanced_log(p, q, M, epsilon, max_iter, tol, u, v)
+    ? sinkhorn_balanced_log(p, q, M, epsilon, max_iter, tol, f, g)
     : sinkhorn_balanced(p, q, M, epsilon, max_iter, tol, u, v);
   const double ot_dist = arma::accu(M % res.plan);
+
+  arma::vec source_potential(p.n_elem, arma::fill::zeros);
+  arma::vec target_potential(q.n_elem, arma::fill::zeros);
+  if (use_log) {
+    source_potential = res.f;
+    target_potential = res.g;
+  } else {
+    for (arma::uword i = 0; i < p.n_elem; ++i) {
+      if (p(i) > 0.0) {
+        if (!(res.u(i) > 0.0) || !std::isfinite(res.u(i))) {
+          Rcpp::stop("Scaling backend produced a nonpositive source scaling.");
+        }
+        source_potential(i) = epsilon * std::log(res.u(i));
+      }
+    }
+    for (arma::uword j = 0; j < q.n_elem; ++j) {
+      if (q(j) > 0.0) {
+        if (!(res.v(j) > 0.0) || !std::isfinite(res.v(j))) {
+          Rcpp::stop("Scaling backend produced a nonpositive target scaling.");
+        }
+        target_potential(j) = epsilon * std::log(res.v(j));
+      }
+    }
+  }
+  for (arma::uword i = 0; i < p.n_elem; ++i) {
+    if (p(i) == 0.0) source_potential(i) = 0.0;
+  }
+  for (arma::uword j = 0; j < q.n_elem; ++j) {
+    if (q(j) == 0.0) target_potential(j) = 0.0;
+  }
+  const double source_mass = arma::accu(p);
+  const double gauge_shift = source_mass > 0.0
+    ? arma::dot(p, source_potential) / source_mass
+    : 0.0;
+  source_potential -= gauge_shift;
+  target_potential += gauge_shift;
+  for (arma::uword i = 0; i < p.n_elem; ++i) {
+    if (p(i) == 0.0) source_potential(i) = 0.0;
+  }
+  for (arma::uword j = 0; j < q.n_elem; ++j) {
+    if (q(j) == 0.0) target_potential(j) = 0.0;
+  }
   return Rcpp::List::create(
     Rcpp::Named("plan") = res.plan,
     Rcpp::Named("ot_dist") = ot_dist,
     Rcpp::Named("iterations") = res.iters,
-    Rcpp::Named("error") = res.err
+    Rcpp::Named("error") = res.err,
+    Rcpp::Named("source_potential") = source_potential,
+    Rcpp::Named("target_potential") = target_potential,
+    Rcpp::Named("potential_gauge") = "weighted_source_mean_zero",
+    Rcpp::Named("warm_started") = has_initial_potentials
   );
 }
 
@@ -8701,5 +8812,409 @@ Rcpp::List cpp_ucoot_kl(
     Rcpp::Named("feat_ms") = feat_ms,
     Rcpp::Named("samp_ms") = samp_ms,
     Rcpp::Named("warm_start") = use_warm_start
+  );
+}
+
+namespace {
+
+inline double ti_neg_inf() {
+  return -std::numeric_limits<double>::infinity();
+}
+
+inline arma::vec ti_safe_log(const arma::vec& weights) {
+  arma::vec out(weights.n_elem);
+  for (arma::uword i = 0; i < weights.n_elem; ++i) {
+    out(i) = weights(i) > 0.0 ? std::log(weights(i)) : ti_neg_inf();
+  }
+  return out;
+}
+
+inline double ti_logsumexp_affine(
+    const arma::vec& log_weights,
+    const arma::vec& values,
+    double scale) {
+  double maximum = ti_neg_inf();
+  for (arma::uword i = 0; i < values.n_elem; ++i) {
+    if (!std::isfinite(log_weights(i))) continue;
+    maximum = std::max(maximum, log_weights(i) + scale * values(i));
+  }
+  if (!std::isfinite(maximum)) return ti_neg_inf();
+  double total = 0.0;
+  for (arma::uword i = 0; i < values.n_elem; ++i) {
+    if (!std::isfinite(log_weights(i))) continue;
+    total += std::exp(log_weights(i) + scale * values(i) - maximum);
+  }
+  return maximum + std::log(total);
+}
+
+inline double ti_softmin(
+    const arma::vec& log_weights,
+    const arma::vec& values,
+    double temperature) {
+  const double value = ti_logsumexp_affine(
+    log_weights, values, -1.0 / temperature
+  );
+  return std::isfinite(value)
+    ? -temperature * value
+    : std::numeric_limits<double>::infinity();
+}
+
+inline double ti_max_abs_difference(
+    const arma::vec& left,
+    const arma::vec& right) {
+  double out = 0.0;
+  for (arma::uword i = 0; i < left.n_elem; ++i) {
+    out = std::max(out, std::abs(left(i) - right(i)));
+  }
+  return out;
+}
+
+struct TiFlowEdge {
+  int to;
+  int reverse;
+  double capacity;
+};
+
+class TiDinic {
+ public:
+  explicit TiDinic(int n)
+      : graph_(static_cast<std::size_t>(n)), level_(static_cast<std::size_t>(n)),
+        next_(static_cast<std::size_t>(n)) {}
+
+  void add_edge(int from, int to, double capacity) {
+    TiFlowEdge forward{to, static_cast<int>(graph_[to].size()), capacity};
+    TiFlowEdge reverse{from, static_cast<int>(graph_[from].size()), 0.0};
+    graph_[from].push_back(forward);
+    graph_[to].push_back(reverse);
+  }
+
+  double max_flow(int source, int sink, double tolerance) {
+    double flow = 0.0;
+    while (bfs(source, sink, tolerance)) {
+      std::fill(next_.begin(), next_.end(), 0);
+      while (true) {
+        const double pushed = dfs(
+          source, sink, std::numeric_limits<double>::infinity(), tolerance
+        );
+        if (pushed <= tolerance) break;
+        flow += pushed;
+      }
+    }
+    return flow;
+  }
+
+ private:
+  bool bfs(int source, int sink, double tolerance) {
+    std::fill(level_.begin(), level_.end(), -1);
+    std::queue<int> queue;
+    level_[source] = 0;
+    queue.push(source);
+    while (!queue.empty()) {
+      const int vertex = queue.front();
+      queue.pop();
+      for (const TiFlowEdge& edge : graph_[vertex]) {
+        if (edge.capacity > tolerance && level_[edge.to] < 0) {
+          level_[edge.to] = level_[vertex] + 1;
+          queue.push(edge.to);
+        }
+      }
+    }
+    return level_[sink] >= 0;
+  }
+
+  double dfs(int vertex, int sink, double flow, double tolerance) {
+    if (vertex == sink) return flow;
+    for (int& index = next_[vertex];
+         index < static_cast<int>(graph_[vertex].size()); ++index) {
+      TiFlowEdge& edge = graph_[vertex][index];
+      if (edge.capacity <= tolerance || level_[edge.to] != level_[vertex] + 1) {
+        continue;
+      }
+      const double pushed = dfs(
+        edge.to, sink, std::min(flow, edge.capacity), tolerance
+      );
+      if (pushed > tolerance) {
+        edge.capacity -= pushed;
+        graph_[edge.to][edge.reverse].capacity += pushed;
+        return pushed;
+      }
+    }
+    return 0.0;
+  }
+
+  std::vector<std::vector<TiFlowEdge>> graph_;
+  std::vector<int> level_;
+  std::vector<int> next_;
+};
+
+}  // namespace
+
+// [[Rcpp::export]]
+Rcpp::List cpp_ot_sinkhorn_unbalanced_ti_sparse(
+    const Rcpp::IntegerVector& row_ptr,
+    const Rcpp::IntegerVector& col_idx,
+    const Rcpp::NumericVector& row_cost,
+    const Rcpp::IntegerVector& col_ptr,
+    const Rcpp::IntegerVector& row_idx,
+    const Rcpp::NumericVector& col_cost,
+    int n_source,
+    int n_target,
+    const arma::vec& source_measure,
+    const arma::vec& target_measure,
+    double epsilon,
+    double rho_source,
+    double rho_target,
+    int max_iter,
+    double tol) {
+  if (n_source < 1 || n_target < 1) {
+    Rcpp::stop("Sparse TI-UOT dimensions must be positive.");
+  }
+  if (row_ptr.size() != n_source + 1 || col_ptr.size() != n_target + 1) {
+    Rcpp::stop("Sparse TI-UOT pointer dimensions are inconsistent.");
+  }
+  if (col_idx.size() != row_cost.size() || row_idx.size() != col_cost.size() ||
+      col_idx.size() != row_idx.size()) {
+    Rcpp::stop("Sparse TI-UOT CSR and CSC arrays must have identical support size.");
+  }
+  if (source_measure.n_elem != static_cast<arma::uword>(n_source) ||
+      target_measure.n_elem != static_cast<arma::uword>(n_target)) {
+    Rcpp::stop("Sparse TI-UOT measure dimensions are inconsistent.");
+  }
+  if (!(epsilon > 0.0) || !(rho_source > 0.0) || !(rho_target > 0.0) ||
+      max_iter < 1 || !(tol > 0.0)) {
+    Rcpp::stop("Sparse TI-UOT controls must be positive.");
+  }
+
+  const int nnz = col_idx.size();
+  if (row_ptr[0] != 0 || row_ptr[n_source] != nnz ||
+      col_ptr[0] != 0 || col_ptr[n_target] != nnz) {
+    Rcpp::stop("Sparse TI-UOT pointers must be zero-based and span all edges.");
+  }
+  for (int i = 0; i < n_source; ++i) {
+    if (row_ptr[i] > row_ptr[i + 1]) {
+      Rcpp::stop("Sparse TI-UOT row pointers must be nondecreasing.");
+    }
+  }
+  for (int j = 0; j < n_target; ++j) {
+    if (col_ptr[j] > col_ptr[j + 1]) {
+      Rcpp::stop("Sparse TI-UOT column pointers must be nondecreasing.");
+    }
+  }
+
+  const arma::vec log_source = ti_safe_log(source_measure);
+  const arma::vec log_target = ti_safe_log(target_measure);
+  arma::vec source_bar(n_source, arma::fill::zeros);
+  arma::vec target_bar(n_target, arma::fill::zeros);
+  arma::vec source_tmp(n_source);
+  arma::vec target_tmp(n_target);
+  arma::vec source_next(n_source);
+  arma::vec target_next(n_target);
+
+  const double denominator = epsilon + rho_source + rho_target;
+  const double xi_source_target =
+    epsilon * rho_target / (rho_source * denominator);
+  const double xi_target_source =
+    epsilon * rho_source / (rho_target * denominator);
+  const double k_source =
+    (epsilon / (epsilon + rho_source)) *
+    (rho_source / (rho_source + rho_target));
+  const double k_target =
+    (epsilon / (epsilon + rho_target)) *
+    (rho_target / (rho_source + rho_target));
+  const double source_contraction = rho_source / (rho_source + epsilon);
+  const double target_contraction = rho_target / (rho_target + epsilon);
+  const double inverse_epsilon = 1.0 / epsilon;
+
+  bool converged = false;
+  bool numerical_ok = true;
+  double residual = std::numeric_limits<double>::infinity();
+  int iterations = 0;
+  const auto started = std::chrono::steady_clock::now();
+
+  for (int iteration = 0; iteration < max_iter; ++iteration) {
+    const double target_scalar = ti_softmin(
+      log_target, target_bar, rho_target
+    );
+    for (int i = 0; i < n_source; ++i) {
+      double maximum = ti_neg_inf();
+      double total = 0.0;
+      for (int edge = row_ptr[i]; edge < row_ptr[i + 1]; ++edge) {
+        const int j = col_idx[edge] - 1;
+        if (j < 0 || j >= n_target || !std::isfinite(row_cost[edge])) {
+          Rcpp::stop("Sparse TI-UOT CSR edge is invalid.");
+        }
+        if (!std::isfinite(log_target(j))) continue;
+        const double value = log_target(j) +
+          (target_bar(j) - row_cost[edge]) * inverse_epsilon;
+        if (value > maximum) {
+          total = total * (std::isfinite(maximum)
+            ? std::exp(maximum - value) : 0.0) + 1.0;
+          maximum = value;
+        } else {
+          total += std::exp(value - maximum);
+        }
+      }
+      if (source_measure(i) == 0.0) {
+        source_tmp(i) = 0.0;
+      } else {
+        const double softmin = total > 0.0
+          ? -epsilon * (maximum + std::log(total))
+          : std::numeric_limits<double>::infinity();
+        source_tmp(i) = source_contraction * softmin - k_source * target_scalar;
+      }
+    }
+    const double source_scalar_tmp = ti_softmin(
+      log_source, source_tmp, rho_source
+    );
+    source_next = source_tmp + xi_source_target * source_scalar_tmp;
+    for (int i = 0; i < n_source; ++i) {
+      if (source_measure(i) == 0.0) source_next(i) = 0.0;
+    }
+
+    const double source_scalar = ti_softmin(
+      log_source, source_next, rho_source
+    );
+    for (int j = 0; j < n_target; ++j) {
+      double maximum = ti_neg_inf();
+      double total = 0.0;
+      for (int edge = col_ptr[j]; edge < col_ptr[j + 1]; ++edge) {
+        const int i = row_idx[edge] - 1;
+        if (i < 0 || i >= n_source || !std::isfinite(col_cost[edge])) {
+          Rcpp::stop("Sparse TI-UOT CSC edge is invalid.");
+        }
+        if (!std::isfinite(log_source(i))) continue;
+        const double value = log_source(i) +
+          (source_next(i) - col_cost[edge]) * inverse_epsilon;
+        if (value > maximum) {
+          total = total * (std::isfinite(maximum)
+            ? std::exp(maximum - value) : 0.0) + 1.0;
+          maximum = value;
+        } else {
+          total += std::exp(value - maximum);
+        }
+      }
+      if (target_measure(j) == 0.0) {
+        target_tmp(j) = 0.0;
+      } else {
+        const double softmin = total > 0.0
+          ? -epsilon * (maximum + std::log(total))
+          : std::numeric_limits<double>::infinity();
+        target_tmp(j) = target_contraction * softmin - k_target * source_scalar;
+      }
+    }
+    const double target_scalar_tmp = ti_softmin(
+      log_target, target_tmp, rho_target
+    );
+    target_next = target_tmp + xi_target_source * target_scalar_tmp;
+    for (int j = 0; j < n_target; ++j) {
+      if (target_measure(j) == 0.0) target_next(j) = 0.0;
+    }
+
+    residual = std::max(
+      ti_max_abs_difference(source_next, source_bar),
+      ti_max_abs_difference(target_next, target_bar)
+    );
+    source_bar.swap(source_next);
+    target_bar.swap(target_next);
+    iterations = iteration + 1;
+    numerical_ok = source_bar.is_finite() && target_bar.is_finite() &&
+      std::isfinite(residual);
+    if (!numerical_ok) break;
+    if (residual <= tol) {
+      converged = true;
+      break;
+    }
+  }
+
+  double translation = NA_REAL;
+  arma::vec source_potential(n_source);
+  arma::vec target_potential(n_target);
+  source_potential.fill(NA_REAL);
+  target_potential.fill(NA_REAL);
+  if (numerical_ok) {
+    const double source_log_partition = ti_logsumexp_affine(
+      log_source, source_bar, -1.0 / rho_source
+    );
+    const double target_log_partition = ti_logsumexp_affine(
+      log_target, target_bar, -1.0 / rho_target
+    );
+    translation = rho_source * rho_target / (rho_source + rho_target) *
+      (source_log_partition - target_log_partition);
+    source_potential = source_bar + translation;
+    target_potential = target_bar - translation;
+    numerical_ok = std::isfinite(translation) && source_potential.is_finite() &&
+      target_potential.is_finite();
+  }
+
+  const double solve_seconds = std::chrono::duration<double>(
+    std::chrono::steady_clock::now() - started
+  ).count();
+  return Rcpp::List::create(
+    Rcpp::Named("source_bar") = source_bar,
+    Rcpp::Named("target_bar") = target_bar,
+    Rcpp::Named("translation") = translation,
+    Rcpp::Named("source_potential") = source_potential,
+    Rcpp::Named("target_potential") = target_potential,
+    Rcpp::Named("iterations") = iterations,
+    Rcpp::Named("residual") = residual,
+    Rcpp::Named("converged") = converged,
+    Rcpp::Named("numerical_ok") = numerical_ok,
+    Rcpp::Named("solve_seconds") = solve_seconds,
+    Rcpp::Named("backend") = "cpp_sparse_csr_csc_ti"
+  );
+}
+
+// [[Rcpp::export]]
+Rcpp::List cpp_bipartite_transport_max_flow(
+    int n_source,
+    int n_target,
+    const Rcpp::IntegerVector& source,
+    const Rcpp::IntegerVector& target,
+    const arma::vec& source_measure,
+    const arma::vec& target_measure,
+    double tolerance) {
+  if (n_source < 1 || n_target < 1 ||
+      source_measure.n_elem != static_cast<arma::uword>(n_source) ||
+      target_measure.n_elem != static_cast<arma::uword>(n_target) ||
+      source.size() != target.size() || !(tolerance > 0.0)) {
+    Rcpp::stop("Invalid bipartite max-flow input.");
+  }
+  const double source_total = arma::accu(source_measure);
+  const double target_total = arma::accu(target_measure);
+  const int source_vertex = 0;
+  const int source_offset = 1;
+  const int target_offset = source_offset + n_source;
+  const int sink_vertex = target_offset + n_target;
+  TiDinic graph(sink_vertex + 1);
+  for (int i = 0; i < n_source; ++i) {
+    graph.add_edge(source_vertex, source_offset + i, source_measure(i));
+  }
+  const double edge_capacity = std::max(source_total, target_total);
+  for (R_xlen_t edge = 0; edge < source.size(); ++edge) {
+    const int i = source[edge] - 1;
+    const int j = target[edge] - 1;
+    if (i < 0 || i >= n_source || j < 0 || j >= n_target) {
+      Rcpp::stop("Bipartite max-flow edge index is out of range.");
+    }
+    graph.add_edge(source_offset + i, target_offset + j, edge_capacity);
+  }
+  for (int j = 0; j < n_target; ++j) {
+    graph.add_edge(target_offset + j, sink_vertex, target_measure(j));
+  }
+  const double flow = graph.max_flow(source_vertex, sink_vertex, tolerance);
+  const double target_flow = std::max(source_total, target_total);
+  const bool equal_total = std::abs(source_total - target_total) <= tolerance;
+  const bool feasible = equal_total &&
+    std::abs(flow - source_total) <= tolerance &&
+    std::abs(flow - target_total) <= tolerance;
+  return Rcpp::List::create(
+    Rcpp::Named("max_flow") = flow,
+    Rcpp::Named("source_total") = source_total,
+    Rcpp::Named("target_total") = target_total,
+    Rcpp::Named("equal_total") = equal_total,
+    Rcpp::Named("feasible") = feasible,
+    Rcpp::Named("deficit") = std::max(0.0, target_flow - flow),
+    Rcpp::Named("tolerance") = tolerance,
+    Rcpp::Named("method") = "dinic_exact_bipartite_flow"
   );
 }
