@@ -39,6 +39,8 @@ test_that("evidence collection separates hosted and publication status", {
   expect_match(collector, "representative_certificates")
   expect_match(collector, "sha256")
   expect_match(collector, "exact_commit_evidence")
+  expect_match(collector, "git_status_lines")
+  expect_match(collector, "length\\(git_status_lines\\) > 0L")
   expect_match(collector, "experimental_boundaries")
   expect_match(collector, "release-dossier")
   expect_match(gate, "run-mutation-proof.R", fixed = TRUE)

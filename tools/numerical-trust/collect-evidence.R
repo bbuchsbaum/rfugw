@@ -20,9 +20,13 @@ if (installed) {
   library(rfugw)
 }
 
-git_value <- function(...) {
+git_output <- function(...) {
   out <- tryCatch(system2("git", c(...), stdout = TRUE, stderr = FALSE),
-                  error = function(e) NA_character_)
+                  error = function(e) character())
+  out
+}
+git_value <- function(...) {
+  out <- git_output(...)
   if (!length(out)) NA_character_ else paste(out, collapse = "\n")
 }
 digest_file <- function(path) {
@@ -83,7 +87,9 @@ selected_env <- c(
 )
 verified_support <- support_evidence$verified_support
 experimental_boundaries <- support_evidence$experimental_boundaries
-working_tree_dirty <- nzchar(git_value("status", "--porcelain"))
+git_status_lines <- git_output("status", "--porcelain")
+working_tree_dirty <- length(git_status_lines) > 0L &&
+  any(nzchar(git_status_lines))
 exact_commit_evidence <- !working_tree_dirty
 limitations <- c(
   if (identical(channel, "local"))
