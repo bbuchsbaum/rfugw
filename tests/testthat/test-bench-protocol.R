@@ -45,15 +45,17 @@ test_that("invalid-quality timings cannot be treated as a baseline row", {
 
 test_that("split timing records prepare, solve, and e2e separately", {
   M <- matrix(c(0, 1, 1, 0), 2, 2)
-  timing <- bench_run_split(
-    prepare_fn = function() {
-      Sys.sleep(0.01)
-      list(M = M, p = c(0.5, 0.5), q = c(0.5, 0.5))
-    },
-    solve_fn = function(d) ot_sinkhorn(d$M, d$p, d$q, epsilon = 0.1, max_iter = 200L),
-    warmup = 1L,
-    reps = 1L,
-    method = "ot_sinkhorn"
+  expect_no_warning(
+    timing <- bench_run_split(
+      prepare_fn = function() {
+        Sys.sleep(0.01)
+        list(M = M, p = c(0.5, 0.5), q = c(0.5, 0.5))
+      },
+      solve_fn = function(d) ot_sinkhorn(d$M, d$p, d$q, epsilon = 0.1, max_iter = 200L),
+      warmup = 1L,
+      reps = 1L,
+      method = "ot_sinkhorn"
+    )
   )
   expect_true(timing$valid)
   expect_true(timing$certified)

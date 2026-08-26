@@ -19,4 +19,5 @@
 ^\.tmp-lib$
 ^inst/bench/__pycache__
 ^\.gitignore$
+^\.gitattributes$
 ^\.cursor
