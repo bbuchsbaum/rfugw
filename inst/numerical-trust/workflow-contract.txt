@@ -28,6 +28,13 @@ gcc -print-file-name=libasan.so
 collect-evidence.R
 upload-artifact@v4
 
+Sanitizer workflow: .github/workflows/sanitizer.yml
+fsanitize=address,undefined
+LD_PRELOAD
+gcc -print-file-name=libasan.so
+-Wall -Wextra -Werror
+-Wno-cast-function-type
+
 Evidence fields:
 evidence_channel
 publication_status

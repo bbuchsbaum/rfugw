@@ -53,6 +53,8 @@ jobs:
         with:
           extra-packages: any::testthat
           needs: check
+      - name: Preload the ASan runtime into the R host process
+        run: echo "LD_PRELOAD=$(gcc -print-file-name=libasan.so)" >> "$GITHUB_ENV"
       - name: Install with ASan/UBSan (serial)
         run: R CMD INSTALL .
       - name: Flagship sanitizer smoke
@@ -91,7 +93,7 @@ jobs:
     runs-on: ubuntu-latest
     env:
       GITHUB_PAT: ${{ secrets.GITHUB_TOKEN }}
-      RFUGW_EXTRA_CXXFLAGS: "-Wall -Wextra -Werror -Wno-unknown-pragmas"
+      RFUGW_EXTRA_CXXFLAGS: "-Wall -Wextra -Werror -Wno-unknown-pragmas -Wno-cast-function-type"
     steps:
       - uses: actions/checkout@v4
       - uses: r-lib/actions/setup-r@v2

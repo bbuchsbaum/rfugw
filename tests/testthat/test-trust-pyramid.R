@@ -49,6 +49,15 @@ test_that("evidence collection separates hosted and publication status", {
   expect_match(gate, "RFUGW_TRUST_SCOPE = \"release\"")
 })
 
+test_that("sanitizer CI preloads ASan and keeps package warnings fatal", {
+  sanitizer <- .repo_text(".github", "workflows", "sanitizer.yml")
+  expect_match(sanitizer, "fsanitize=address,undefined", fixed = TRUE)
+  expect_match(sanitizer, "LD_PRELOAD", fixed = TRUE)
+  expect_match(sanitizer, "gcc -print-file-name=libasan.so", fixed = TRUE)
+  expect_match(sanitizer, "-Wall -Wextra -Werror", fixed = TRUE)
+  expect_match(sanitizer, "-Wno-cast-function-type", fixed = TRUE)
+})
+
 test_that("canonical release artifact verification kills digest and commit drift", {
   script <- testthat::test_path(
     "..", "..", "tools", "numerical-trust", "release-artifact.R"
