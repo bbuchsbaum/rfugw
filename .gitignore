@@ -7,6 +7,7 @@ src/*.gcno
 src/*.gcda
 *.Rcheck/
 *.tar.gz
+release-artifact.json
 
 # local tooling/state
 .omc/
