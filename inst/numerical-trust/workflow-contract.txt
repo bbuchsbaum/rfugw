@@ -33,6 +33,8 @@ not_evaluated_by_numerical_trust_job
 representative_certificates
 sha256
 exact_commit_evidence
+git_status_lines
+length(git_status_lines) > 0L
 experimental_boundaries
 release-dossier
 
