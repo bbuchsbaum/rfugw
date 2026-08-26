@@ -48,7 +48,8 @@ test_that("split timing records prepare, solve, and e2e separately", {
   expect_no_warning(
     timing <- bench_run_split(
       prepare_fn = function() {
-        Sys.sleep(0.01)
+        # Stay safely above the coarse elapsed-clock quantum on Windows.
+        Sys.sleep(0.05)
         list(M = M, p = c(0.5, 0.5), q = c(0.5, 0.5))
       },
       solve_fn = function(d) ot_sinkhorn(d$M, d$p, d$q, epsilon = 0.1, max_iter = 200L),
@@ -61,7 +62,7 @@ test_that("split timing records prepare, solve, and e2e separately", {
   expect_true(timing$certified)
   expect_true(timing$comparison_eligible)
   expect_false(timing$performance_regression_eligible)
-  expect_gt(timing$prepare_ms, 5)
+  expect_gt(timing$prepare_ms, 20)
   expect_true(is.finite(timing$solve_ms))
   expect_gte(timing$solve_ms, 0)
   expect_equal(timing$e2e_ms, timing$prepare_ms + timing$solve_ms, tolerance = 1e-8)
