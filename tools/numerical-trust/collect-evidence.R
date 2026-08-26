@@ -27,12 +27,14 @@ git_value <- function(...) {
 }
 digest_file <- function(path) {
   if (!file.exists(path)) return(NULL)
-  sha <- if (nzchar(Sys.which("shasum"))) {
+  sha <- if (requireNamespace("digest", quietly = TRUE)) {
+    digest::digest(path, algo = "sha256", file = TRUE)
+  } else if (nzchar(Sys.which("shasum"))) {
     sub("\\s.*$", "", system2("shasum", c("-a", "256", path), stdout = TRUE)[1])
   } else if (nzchar(Sys.which("sha256sum"))) {
     sub("\\s.*$", "", system2("sha256sum", path, stdout = TRUE)[1])
   } else {
-    unname(tools::md5sum(path))
+    stop("SHA-256 evidence requires digest, shasum, or sha256sum.", call. = FALSE)
   }
   list(path = path, sha256 = sha)
 }
@@ -60,27 +62,27 @@ certificate_fields <- function(x) {
 }
 
 tarballs <- list.files(pattern = "^rfugw_[^/]+\\.tar\\.gz$", full.names = TRUE)
-path_matrix <- if (file.exists("inst/numerical-path-matrix.csv")) {
-  utils::read.csv("inst/numerical-path-matrix.csv", stringsAsFactors = FALSE)
-} else NULL
+path_matrix_file <- if (file.exists("inst/numerical-path-matrix.csv")) {
+  "inst/numerical-path-matrix.csv"
+} else {
+  system.file("numerical-path-matrix.csv", package = "rfugw")
+}
+if (!nzchar(path_matrix_file)) {
+  stop("Cannot locate the installed numerical-path matrix.", call. = FALSE)
+}
+path_matrix <- utils::read.csv(path_matrix_file, stringsAsFactors = FALSE)
+capabilities <- transport_capabilities()
+support_evidence <- getFromNamespace(
+  ".release_support_evidence", "rfugw"
+)(capabilities, path_matrix)
 selected_env <- c(
   "RFUGW_TRUST_SCOPE", "OMP_NUM_THREADS", "OPENBLAS_NUM_THREADS",
   "MKL_NUM_THREADS", "VECLIB_MAXIMUM_THREADS", "RFUGW_OPENMP_FLAGS",
   "BLIS_NUM_THREADS", "RFUGW_FAST_FLAGS", "RFUGW_EXTRA_CXXFLAGS",
   "RFUGW_EXTRA_LIBS", "RFUGW_OPENMP_LIBS"
 )
-verified_support <- c(
-  "Balanced linear OT: scaling/log/auto Sinkhorn and certificate-backed exact EMD",
-  "Exact partial linear OT with transported-mass, feasibility, and objective certificates",
-  "Balanced GW/FGW: exact conditional-gradient and entropic PGD/PPA paths, symmetric/general algebra, declared precision, and dense/low-rank execution",
-  "Partial and semirelaxed GW/FGW with explicit feasible-set and nested-solver certificates",
-  "KL-unbalanced linear OT, FUGW, UCOOT/across-spaces, barycenter, and multialign paths covered by their declared contracts"
-)
-experimental_boundaries <- c(
-  "Sampled dense/coordinate/graph GW paths remain experimental and require exact-baseline quality evidence",
-  "Dense-plan GW SVD remains experimental; rank/budget rows are performance evidence, not convergence certification",
-  "Entropic partial linear OT, Sinkhorn divergence, and fixed-support Wasserstein barycenters remain deferred until formulation-specific certificates exist"
-)
+verified_support <- support_evidence$verified_support
+experimental_boundaries <- support_evidence$experimental_boundaries
 working_tree_dirty <- nzchar(git_value("status", "--porcelain"))
 exact_commit_evidence <- !working_tree_dirty
 limitations <- c(
@@ -113,6 +115,7 @@ report <- list(
   session = capture.output(sessionInfo()),
   representative_certificates = list(exact_transport = certificate_fields(emd),
                                      entropic_fgw = certificate_fields(fgw)),
+  capabilities = capabilities,
   verified_support = verified_support,
   experimental_boundaries = experimental_boundaries,
   limitations = limitations,

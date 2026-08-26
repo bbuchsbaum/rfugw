@@ -769,55 +769,267 @@ rfugw_provenance <- function(x) {
 #'   the row for its estimand.
 #' @return A data frame with one row per distinct estimand family. Comma-
 #'   separated fields enumerate methods and plan representations; they are
-#'   descriptive, not accepted as solver-selection strings.
+#'   descriptive, not accepted as solver-selection strings. `maturity` and
+#'   `coverage_family` link every row to the executable numerical-path matrix
+#'   used by release evidence.
 #' @export
 transport_capabilities <- function(problem = NULL) {
-  out <- data.frame(
-    estimand = c(
-      "balanced_entropic_linear_ot", "exact_balanced_linear_ot",
-      "exact_fixed_mass_partial_linear_ot",
-      "entropic_fixed_mass_partial_linear_ot",
-      "penalized_variable_mass_partial_linear_ot",
-      "kl_unbalanced_entropic_linear_ot",
+  capability <- function(
+      estimand, public_solver, protocol_constructor, mass_policy, warm_state,
+      state_compatibility, plan_representation, exact_certificate,
+      relational_costs, maturity, coverage_family) {
+    data.frame(
+      estimand = estimand,
+      public_solver = public_solver,
+      protocol_constructor = protocol_constructor,
+      mass_policy = mass_policy,
+      warm_state = warm_state,
+      state_compatibility = state_compatibility,
+      plan_representation = plan_representation,
+      exact_certificate = exact_certificate,
+      relational_costs = relational_costs,
+      maturity = maturity,
+      coverage_family = coverage_family,
+      stringsAsFactors = FALSE
+    )
+  }
+  out <- do.call(rbind, list(
+    capability(
+      "balanced_entropic_linear_ot", "ot_sinkhorn", TRUE,
+      "probability|normalize", TRUE,
+      "dual potentials: scaling/log/auto and epsilon continuation", "dense",
+      FALSE, FALSE, "flagship", "balanced_linear_ot"
+    ),
+    capability(
+      "sinkhorn_divergence", "ot_sinkhorn_divergence", FALSE,
+      "probability", FALSE, "component solves only", "dense", FALSE, FALSE,
+      "supported", "sinkhorn_divergence"
+    ),
+    capability(
+      "exact_balanced_linear_ot", "ot_emd", TRUE,
+      "probability|normalize", FALSE, "none", "dense", TRUE, FALSE,
+      "flagship", "balanced_linear_ot"
+    ),
+    capability(
+      "exact_fixed_mass_partial_linear_ot", "ot_partial_emd", TRUE,
+      "probability|normalize", FALSE, "none", "dense", TRUE, FALSE,
+      "supported", "partial_linear_ot"
+    ),
+    capability(
+      "entropic_fixed_mass_partial_linear_ot", "ot_partial_sinkhorn", TRUE,
+      "probability|normalize", TRUE,
+      "identical problem and effective Dykstra method", "dense", FALSE,
+      FALSE, "supported", "partial_linear_ot"
+    ),
+    capability(
+      "penalized_variable_mass_partial_linear_ot", "ot_partial_penalized",
+      FALSE, "finite_measure", FALSE, "none", "dense", TRUE, FALSE,
+      "supported", "penalized_partial_ot"
+    ),
+    capability(
+      "kl_unbalanced_entropic_linear_ot", "ot_sinkhorn_unbalanced", TRUE,
+      "finite_measure|joint|separate_probability", FALSE, "none", "dense",
+      FALSE, FALSE, "flagship", "kl_uot"
+    ),
+    capability(
       "translation_invariant_kl_unbalanced_linear_ot",
-      "gromov_wasserstein", "fused_gromov_wasserstein",
-      "fused_unbalanced_gromov_wasserstein"
+      "ot_sinkhorn_unbalanced_ti", FALSE, "finite_measure", FALSE, "none",
+      "implicit|sparse_edges|dense", FALSE, FALSE, "supported", "ti_kl_uot"
     ),
-    public_solver = c(
-      "ot_sinkhorn", "ot_emd", "ot_partial_emd", "ot_partial_sinkhorn",
-      "ot_partial_penalized", "ot_sinkhorn_unbalanced",
-      "ot_sinkhorn_unbalanced_ti", "gromov_wasserstein",
-      "fgw_entropic|fgw_exact_cg", "fugw_kl"
+    capability(
+      "classical_wasserstein_summary",
+      "ot_wasserstein_cost|ot_wasserstein_distance", FALSE, "probability",
+      FALSE, "underlying solver only", "dense", FALSE, FALSE, "supported",
+      "wasserstein_summary"
     ),
-    protocol_constructor = c(
-      TRUE, TRUE, TRUE, TRUE, FALSE, TRUE, FALSE, FALSE, FALSE, FALSE
+    capability(
+      "fixed_support_wasserstein_barycenter_weights", "ot_barycenter_weights",
+      FALSE, "probability", TRUE, "component Sinkhorn states", "dense", TRUE,
+      FALSE, "supported", "fixed_support_barycenter"
     ),
-    mass_policy = c(
-      "probability|normalize", "probability|normalize",
-      "probability|normalize", "probability|normalize", "finite_measure",
-      "finite_measure|joint|separate_probability", "finite_measure",
-      "probability", "probability", "finite_measure"
+    capability(
+      "gromov_wasserstein", "gromov_wasserstein|fgw_exact_cg", FALSE,
+      "probability", FALSE, "plan starts only", "dense", FALSE, TRUE,
+      "flagship", "balanced_fgw"
     ),
-    warm_state = c(TRUE, FALSE, FALSE, TRUE, FALSE, FALSE, FALSE,
-                   FALSE, FALSE, FALSE),
-    state_compatibility = c(
-      "dual potentials: scaling/log/auto and epsilon continuation",
-      "none", "none", "identical problem and effective Dykstra method",
-      "none", "none", "none", "none", "plan starts only",
-      "plan starts only"
+    capability(
+      "fused_gromov_wasserstein", "fgw_entropic|fgw_exact_cg", FALSE,
+      "probability", FALSE, "plan starts only", "dense", FALSE, TRUE,
+      "flagship", "balanced_fgw"
     ),
-    plan_representation = c(
-      rep("dense", 6), "implicit|sparse_edges|dense", "dense", "dense",
-      "dense"
+    capability(
+      "fixed_mass_partial_gromov_wasserstein",
+      "partial_gromov_wasserstein|entropic_partial_gromov_wasserstein",
+      FALSE, "probability", FALSE, "plan starts only", "dense", FALSE, TRUE,
+      "supported", "partial_fgw"
     ),
-    exact_certificate = c(FALSE, TRUE, TRUE, FALSE, TRUE, FALSE, FALSE,
-                          FALSE, FALSE, FALSE),
-    relational_costs = c(rep(FALSE, 7), TRUE, TRUE, TRUE),
-    stringsAsFactors = FALSE
-  )
+    capability(
+      "fixed_mass_partial_fused_gromov_wasserstein",
+      "partial_fused_gromov_wasserstein|entropic_partial_fused_gromov_wasserstein",
+      FALSE, "probability", FALSE, "plan starts only", "dense", FALSE, TRUE,
+      "supported", "partial_fgw"
+    ),
+    capability(
+      "penalized_variable_mass_partial_fused_gromov_wasserstein",
+      "penalized_partial_fused_gromov_wasserstein", FALSE, "finite_measure",
+      FALSE, "plan starts only", "dense", FALSE, TRUE, "supported",
+      "penalized_partial_fgw"
+    ),
+    capability(
+      "semirelaxed_gromov_wasserstein",
+      "semirelaxed_gromov_wasserstein|entropic_semirelaxed_gromov_wasserstein",
+      FALSE, "fixed_source_probability", FALSE, "plan starts only", "dense",
+      FALSE, TRUE, "supported", "semirelaxed_fgw"
+    ),
+    capability(
+      "semirelaxed_fused_gromov_wasserstein",
+      "semirelaxed_fused_gromov_wasserstein|entropic_semirelaxed_fused_gromov_wasserstein",
+      FALSE, "fixed_source_probability", FALSE, "plan starts only", "dense",
+      FALSE, TRUE, "supported", "semirelaxed_fgw"
+    ),
+    capability(
+      "fused_unbalanced_gromov_wasserstein", "fugw_kl", FALSE,
+      "finite_measure", FALSE, "plan starts only", "dense", FALSE, TRUE,
+      "flagship", "fugw"
+    ),
+    capability(
+      "across_spaces_unbalanced_ot",
+      "fused_unbalanced_across_spaces_divergence", FALSE, "finite_measure",
+      FALSE, "none", "dense", FALSE, TRUE, "supported", "ucoot"
+    ),
+    capability(
+      "unbalanced_co_optimal_transport", "unbalanced_co_optimal_transport",
+      FALSE, "finite_measure", FALSE, "none", "dense", FALSE, TRUE,
+      "supported", "ucoot"
+    ),
+    capability(
+      "fixed_support_gromov_wasserstein_barycenter", "fgw_barycenters", FALSE,
+      "probability", TRUE, "constituent plan starts", "dense", FALSE, TRUE,
+      "supported", "barycenter"
+    ),
+    capability(
+      "multi_collection_alignment", "multialign_fit", FALSE, "probability",
+      TRUE, "constituent plan starts", "dense", FALSE, TRUE, "supported",
+      "multialign"
+    ),
+    capability(
+      "sampled_gromov_wasserstein",
+      "sampled_gromov_wasserstein|sampled_gromov_wasserstein_coords|sampled_gw_from_graphs",
+      FALSE, "probability", FALSE, "none", "dense", FALSE, TRUE,
+      "experimental", "sampled_gw"
+    ),
+    capability(
+      "dense_plan_gromov_wasserstein_approximation",
+      "dense_gromov_wasserstein_plan_svd|lowrank_gromov_wasserstein_samples",
+      FALSE, "probability", FALSE, "none", "dense_input_low_rank_output",
+      FALSE, TRUE, "experimental", "lowrank_gw"
+    )
+  ))
+  row.names(out) <- NULL
   if (is.null(problem)) return(out)
   problem <- .revalidate_transport_problem(problem)
   out[out$estimand == problem$estimand, , drop = FALSE]
+}
+
+.validate_capability_path_matrix <- function(
+    capabilities = transport_capabilities(), path_matrix) {
+  capability_fields <- c("estimand", "maturity", "coverage_family")
+  path_fields <- c(
+    "family", "dimension", "path", "comparison", "scope", "maturity"
+  )
+  missing_capability <- setdiff(capability_fields, names(capabilities))
+  missing_path <- setdiff(path_fields, names(path_matrix))
+  if (length(missing_capability)) {
+    stop(
+      "Capability inventory is missing: ",
+      paste(missing_capability, collapse = ", "), call. = FALSE
+    )
+  }
+  if (length(missing_path)) {
+    stop(
+      "Numerical-path matrix is missing: ",
+      paste(missing_path, collapse = ", "), call. = FALSE
+    )
+  }
+  if (anyDuplicated(capabilities$estimand)) {
+    stop("Capability estimands must be unique.", call. = FALSE)
+  }
+  if (anyDuplicated(path_matrix[c("family", "dimension", "path")])) {
+    stop("Numerical-path entries must be unique.", call. = FALSE)
+  }
+  maturity_levels <- c("flagship", "supported", "experimental")
+  if (any(!capabilities$maturity %in% maturity_levels) ||
+      any(!path_matrix$maturity %in% maturity_levels)) {
+    stop("Unknown capability or path maturity.", call. = FALSE)
+  }
+  missing_families <- setdiff(
+    unique(capabilities$coverage_family), unique(path_matrix$family)
+  )
+  if (length(missing_families)) {
+    stop(
+      "Capabilities lack numerical-path evidence: ",
+      paste(missing_families, collapse = ", "), call. = FALSE
+    )
+  }
+  unowned_families <- setdiff(
+    unique(path_matrix$family), unique(capabilities$coverage_family)
+  )
+  if (length(unowned_families)) {
+    stop(
+      "Numerical-path families lack capability ownership: ",
+      paste(unowned_families, collapse = ", "), call. = FALSE
+    )
+  }
+  families <- unique(capabilities$coverage_family)
+  for (family in families) {
+    declared <- unique(capabilities$maturity[
+      capabilities$coverage_family == family
+    ])
+    evidenced <- unique(path_matrix$maturity[path_matrix$family == family])
+    if (length(declared) != 1L || length(evidenced) != 1L ||
+        !identical(declared, evidenced)) {
+      stop(
+        sprintf(
+          "Maturity mismatch for `%s`: capability=%s, path=%s.", family,
+          paste(declared, collapse = "|"), paste(evidenced, collapse = "|")
+        ),
+        call. = FALSE
+      )
+    }
+  }
+  invisible(TRUE)
+}
+
+.release_support_evidence <- function(
+    capabilities = transport_capabilities(), path_matrix) {
+  .validate_capability_path_matrix(capabilities, path_matrix)
+  describe <- function(rows) {
+    sprintf(
+      "%s via `%s` (%s; coverage family `%s`)",
+      gsub("_", " ", rows$estimand, fixed = TRUE), rows$public_solver,
+      rows$maturity, rows$coverage_family
+    )
+  }
+  verified <- capabilities[
+    capabilities$maturity %in% c("flagship", "supported"), , drop = FALSE
+  ]
+  experimental <- capabilities[
+    capabilities$maturity == "experimental", , drop = FALSE
+  ]
+  list(
+    verified_support = describe(verified),
+    experimental_boundaries = c(
+      describe(experimental),
+      paste0(
+        "Directed-KL structural GW/FGW loss is deferred because an implicit ",
+        "logarithm floor changes the estimand"
+      ),
+      paste0(
+        "No end-to-end scalable relational-OT path is promoted; sampled and ",
+        "dense-plan compression paths retain experimental maturity"
+      )
+    )
+  )
 }
 
 #' Print a transport-problem contract

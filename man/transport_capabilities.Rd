@@ -13,7 +13,9 @@ the row for its estimand.}
 \value{
 A data frame with one row per distinct estimand family. Comma-
 separated fields enumerate methods and plan representations; they are
-descriptive, not accepted as solver-selection strings.
+descriptive, not accepted as solver-selection strings. \code{maturity} and
+\code{coverage_family} link every row to the executable numerical-path matrix
+used by release evidence.
 }
 \description{
 Query public transport-solver capabilities

@@ -14,6 +14,12 @@ collect-evidence.R
 upload-artifact@v4
 
 Release workflow: .github/workflows/numerical-trust-release.yml
+one canonical source artifact and manifest
+build-artifact:
+release-artifact.R --mode=manifest
+release-artifact.R --mode=verify
+needs: build-artifact
+R CMD INSTALL rfugw_*.tar.gz
 ubuntu-latest, macos-latest, windows-latest
 --family=all --scope=release --installed
 fsanitize=address,undefined

@@ -18,6 +18,12 @@ test_that("PR, nightly, and release trust scopes are distinct and replayable", {
   expect_match(release, "ubuntu-latest, macos-latest, windows-latest", fixed = TRUE)
   expect_match(release, "--family=all --scope=release --installed")
   expect_match(release, "fsanitize=address,undefined", fixed = TRUE)
+  expect_match(release, "build-artifact:", fixed = TRUE)
+  expect_match(release, "release-artifact.R --mode=manifest", fixed = TRUE)
+  expect_match(release, "release-artifact.R --mode=verify", fixed = TRUE)
+  expect_match(release, "needs: build-artifact", fixed = TRUE)
+  expect_match(release, "R CMD INSTALL rfugw_*.tar.gz", fixed = TRUE)
+  expect_false(grepl("R CMD INSTALL .\\n", release))
   for (workflow in list(pr, nightly, release)) {
     expect_match(workflow, "collect-evidence.R")
     expect_match(workflow, "upload-artifact@v4", fixed = TRUE)
@@ -37,6 +43,46 @@ test_that("evidence collection separates hosted and publication status", {
   expect_match(collector, "release-dossier")
   expect_match(gate, "run-mutation-proof.R", fixed = TRUE)
   expect_match(gate, "RFUGW_TRUST_SCOPE = \"release\"")
+})
+
+test_that("canonical release artifact verification kills digest and commit drift", {
+  script <- testthat::test_path(
+    "..", "..", "tools", "numerical-trust", "release-artifact.R"
+  )
+  skip_if_not(file.exists(script), "release tooling is excluded from tarballs")
+  scratch <- tempfile("rfugw-artifact-proof-")
+  dir.create(scratch)
+  on.exit(unlink(scratch, recursive = TRUE, force = TRUE), add = TRUE)
+  artifact <- file.path(scratch, "rfugw_0.1.0.tar.gz")
+  manifest <- file.path(scratch, "release-artifact.json")
+  writeBin(charToRaw("canonical artifact bytes"), artifact)
+  rscript <- file.path(R.home("bin"), "Rscript")
+  run <- function(extra) {
+    suppressWarnings(system2(
+      rscript,
+      c(script, extra),
+      stdout = FALSE, stderr = FALSE
+    ))
+  }
+
+  expect_identical(run(c(
+    "--mode=manifest", paste0("--artifact=", artifact),
+    paste0("--manifest=", manifest), "--commit=abc123"
+  )), 0L)
+  expect_identical(run(c(
+    "--mode=verify", paste0("--artifact=", artifact),
+    paste0("--manifest=", manifest), "--commit=abc123"
+  )), 0L)
+  expect_false(identical(run(c(
+    "--mode=verify", paste0("--artifact=", artifact),
+    paste0("--manifest=", manifest), "--commit=wrong-commit"
+  )), 0L))
+
+  writeBin(charToRaw("tampered artifact bytes"), artifact)
+  expect_false(identical(run(c(
+    "--mode=verify", paste0("--artifact=", artifact),
+    paste0("--manifest=", manifest), "--commit=abc123"
+  )), 0L))
 })
 
 test_that("performance workflows run correctness gates first", {

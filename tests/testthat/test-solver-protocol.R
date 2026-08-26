@@ -375,15 +375,17 @@ test_that("capability matrix keeps scientific formulations distinct", {
   expect_true(all(c(
     "estimand", "public_solver", "protocol_constructor", "mass_policy",
     "warm_state", "plan_representation", "exact_certificate",
-    "relational_costs"
+    "relational_costs", "maturity", "coverage_family"
   ) %in% names(capabilities)))
   expect_identical(anyDuplicated(capabilities$estimand), 0L)
   expect_true(all(c(
     "balanced_entropic_linear_ot", "exact_balanced_linear_ot",
     "exact_fixed_mass_partial_linear_ot",
     "entropic_fixed_mass_partial_linear_ot",
-    "kl_unbalanced_entropic_linear_ot", "gromov_wasserstein",
-    "fused_gromov_wasserstein", "fused_unbalanced_gromov_wasserstein"
+    "kl_unbalanced_entropic_linear_ot", "sinkhorn_divergence",
+    "fixed_support_wasserstein_barycenter_weights",
+    "gromov_wasserstein", "fused_gromov_wasserstein",
+    "fused_unbalanced_gromov_wasserstein", "sampled_gromov_wasserstein"
   ) %in% capabilities$estimand))
   expect_true(capabilities$warm_state[
     capabilities$estimand == "balanced_entropic_linear_ot"
@@ -391,4 +393,73 @@ test_that("capability matrix keeps scientific formulations distinct", {
   expect_false(capabilities$protocol_constructor[
     capabilities$estimand == "gromov_wasserstein"
   ])
+  expect_identical(
+    capabilities$maturity[
+      capabilities$estimand == "balanced_entropic_linear_ot"
+    ],
+    "flagship"
+  )
+  expect_identical(
+    capabilities$maturity[
+      capabilities$estimand == "sampled_gromov_wasserstein"
+    ],
+    "experimental"
+  )
+})
+
+test_that("capability evidence fails closed when maturity or ownership drifts", {
+  paths <- utils::read.csv(
+    trust_test_resource("numerical-path-matrix.csv"),
+    stringsAsFactors = FALSE
+  )
+  capabilities <- transport_capabilities()
+  expect_true(rfugw:::.validate_capability_path_matrix(capabilities, paths))
+
+  missing <- paths[paths$family != "sinkhorn_divergence", , drop = FALSE]
+  expect_error(
+    rfugw:::.validate_capability_path_matrix(capabilities, missing),
+    "lack numerical-path evidence.*sinkhorn_divergence"
+  )
+
+  drifted <- paths
+  drifted$maturity[drifted$family == "balanced_linear_ot"] <- "supported"
+  expect_error(
+    rfugw:::.validate_capability_path_matrix(capabilities, drifted),
+    "Maturity mismatch.*balanced_linear_ot"
+  )
+
+  unowned <- rbind(
+    paths,
+    data.frame(
+      family = "invented", dimension = "backend", path = "a",
+      comparison = "b", scope = "pr", maturity = "supported"
+    )
+  )
+  expect_error(
+    rfugw:::.validate_capability_path_matrix(capabilities, unowned),
+    "lack capability ownership.*invented"
+  )
+})
+
+test_that("release support prose is derived from accepted capability maturity", {
+  paths <- utils::read.csv(
+    trust_test_resource("numerical-path-matrix.csv"),
+    stringsAsFactors = FALSE
+  )
+  evidence <- rfugw:::.release_support_evidence(
+    transport_capabilities(), paths
+  )
+  verified <- paste(evidence$verified_support, collapse = "\n")
+  boundaries <- paste(evidence$experimental_boundaries, collapse = "\n")
+
+  expect_match(verified, "sinkhorn divergence")
+  expect_match(verified, "entropic fixed mass partial linear ot")
+  expect_match(verified, "fixed support wasserstein barycenter weights")
+  expect_false(grepl("sinkhorn divergence", boundaries, fixed = TRUE))
+  expect_false(grepl(
+    "fixed support wasserstein barycenter weights", boundaries, fixed = TRUE
+  ))
+  expect_match(boundaries, "sampled gromov wasserstein")
+  expect_match(boundaries, "Directed-KL structural GW/FGW loss is deferred")
+  expect_match(boundaries, "No end-to-end scalable relational-OT path")
 })

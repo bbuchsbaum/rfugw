@@ -20,8 +20,9 @@ Use GW when only within-collection geometry is comparable, FGW when the
 collections also share features, and partial or unbalanced formulations when
 not all mass should be matched.
 
-> **Status:** Pre-release and currently installed from source. The project is
-> working toward 0.1, and APIs may still change before that release.
+> **Status:** Version 0.1.0 defines the first supported solver and diagnostic
+> contract. Sampled GW and dense-plan SVD remain explicitly experimental, and
+> no end-to-end scalable relational-OT path is claimed.
 
 ## Install
 
