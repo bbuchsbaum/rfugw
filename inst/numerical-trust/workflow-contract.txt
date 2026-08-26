@@ -23,6 +23,8 @@ R CMD INSTALL rfugw_*.tar.gz
 ubuntu-latest, macos-latest, windows-latest
 --family=all --scope=release --installed
 fsanitize=address,undefined
+LD_PRELOAD
+gcc -print-file-name=libasan.so
 collect-evidence.R
 upload-artifact@v4
 

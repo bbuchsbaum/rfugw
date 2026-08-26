@@ -129,6 +129,8 @@ jobs:
         with:
           name: rfugw-source-${{ github.sha }}
           path: "."
+      - name: Preload the ASan runtime into the R host process
+        run: echo "LD_PRELOAD=$(gcc -print-file-name=libasan.so)" >> "$GITHUB_ENV"
       - name: Verify and install canonical artifact under ASan/UBSan
         run: |
           Rscript tools/numerical-trust/release-artifact.R --mode=verify --commit=${{ github.sha }}

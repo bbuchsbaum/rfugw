@@ -18,6 +18,8 @@ test_that("PR, nightly, and release trust scopes are distinct and replayable", {
   expect_match(release, "ubuntu-latest, macos-latest, windows-latest", fixed = TRUE)
   expect_match(release, "--family=all --scope=release --installed")
   expect_match(release, "fsanitize=address,undefined", fixed = TRUE)
+  expect_match(release, "LD_PRELOAD", fixed = TRUE)
+  expect_match(release, "gcc -print-file-name=libasan.so", fixed = TRUE)
   expect_match(release, "build-artifact:", fixed = TRUE)
   expect_match(release, "release-artifact.R --mode=manifest", fixed = TRUE)
   expect_match(release, "release-artifact.R --mode=verify", fixed = TRUE)
