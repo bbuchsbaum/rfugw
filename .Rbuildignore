@@ -12,6 +12,7 @@
 ^tools$
 ^docs$
 ^rfugw_.*\.tar\.gz$
+^release-artifact\.json$
 ^rfugw$
 ^inst/bench/results
 ^\.gate$
