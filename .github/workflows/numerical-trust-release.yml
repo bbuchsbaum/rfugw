@@ -6,8 +6,39 @@ on:
   workflow_dispatch:
 
 jobs:
+  build-artifact:
+    name: canonical-source-artifact
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    env:
+      GITHUB_PAT: ${{ secrets.GITHUB_TOKEN }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: r-lib/actions/setup-r@v2
+        with:
+          use-public-rspm: true
+      - uses: r-lib/actions/setup-r-dependencies@v2
+        with:
+          extra-packages: |
+            any::digest
+            any::jsonlite
+          needs: check
+      - name: Build one canonical source artifact and manifest
+        run: |
+          R CMD build . --md5
+          Rscript tools/numerical-trust/release-artifact.R --mode=manifest --commit=${{ github.sha }}
+      - name: Upload canonical source artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: rfugw-source-${{ github.sha }}
+          if-no-files-found: error
+          path: |
+            rfugw_*.tar.gz
+            release-artifact.json
+
   release-matrix:
     name: release-${{ matrix.os }}
+    needs: build-artifact
     runs-on: ${{ matrix.os }}
     timeout-minutes: 150
     strategy:
@@ -28,17 +59,21 @@ jobs:
       - uses: r-lib/actions/setup-r-dependencies@v2
         with:
           extra-packages: |
-            local::.
             any::devtools
+            any::digest
             any::jsonlite
             any::lpSolve
             any::Matrix
             any::testthat
           needs: check
-      - name: Build and check exact source artifact
+      - uses: actions/download-artifact@v4
+        with:
+          name: rfugw-source-${{ github.sha }}
+          path: "."
+      - name: Verify, check, and install the canonical source artifact
         shell: Rscript {0}
         run: |
-          status <- system2(file.path(R.home("bin"), "R"), c("CMD", "build", ".", "--md5"))
+          status <- system2("Rscript", c("tools/numerical-trust/release-artifact.R", "--mode=verify", "--commit=${{ github.sha }}"))
           stopifnot(status == 0L)
           tarball <- list.files(pattern = "^rfugw_[^/]+\\.tar\\.gz$", full.names = TRUE)
           stopifnot(length(tarball) == 1L)
@@ -61,9 +96,11 @@ jobs:
           path: |
             .gate/numerical-trust
             rfugw_*.tar.gz
+            release-artifact.json
             rfugw.Rcheck/00check.log
 
   release-sanitizers:
+    needs: build-artifact
     runs-on: ubuntu-latest
     timeout-minutes: 90
     env:
@@ -82,11 +119,22 @@ jobs:
           use-public-rspm: true
       - uses: r-lib/actions/setup-r-dependencies@v2
         with:
-          extra-packages: any::testthat, any::jsonlite, any::lpSolve
+          extra-packages: |
+            any::testthat
+            any::digest
+            any::jsonlite
+            any::lpSolve
           needs: check
-      - name: Install and run sanitizer trust subset
+      - uses: actions/download-artifact@v4
+        with:
+          name: rfugw-source-${{ github.sha }}
+          path: "."
+      - name: Preload the ASan runtime into the R host process
+        run: echo "LD_PRELOAD=$(gcc -print-file-name=libasan.so)" >> "$GITHUB_ENV"
+      - name: Verify and install canonical artifact under ASan/UBSan
         run: |
-          R CMD INSTALL .
+          Rscript tools/numerical-trust/release-artifact.R --mode=verify --commit=${{ github.sha }}
+          R CMD INSTALL rfugw_*.tar.gz
           Rscript tools/smoke-flagship.R
           Rscript tools/numerical-trust/run-mutation-proof.R .gate/numerical-trust
       - name: Upload sanitizer evidence
@@ -95,4 +143,6 @@ jobs:
         with:
           name: numerical-trust-release-sanitizers
           if-no-files-found: warn
-          path: .gate/numerical-trust
+          path: |
+            .gate/numerical-trust
+            release-artifact.json

@@ -109,6 +109,32 @@ The marginal residual measures how closely the row and column sums reproduce
 `print(sink)` and `summary(sink)` offer compact diagnostics without printing
 the full coupling.
 
+When solving a sequence of nearby regularization values, reuse the returned
+dual state instead of restarting from scratch. The state has a stable gauge
+(the source-weighted potential mean is zero), works across scaling and log
+backends, and contains no native pointer.
+
+```{r sinkhorn-continuation}
+sink_finer <- ot_sinkhorn(
+  M, p, q,
+  epsilon = 0.05,
+  method = "auto",
+  init_duals = sink$dual_state
+)
+data.frame(
+  status = sink_finer$status,
+  initialization = sink_finer$initialization,
+  iterations = sink_finer$iterations,
+  residual = sink_finer$residual
+)
+```
+
+You may instead pass a previous entropic plan through `init_plan`. If both are
+provided, both are validated and `init_duals` takes precedence. A warm start
+never carries over convergence: the new solve must satisfy its requested
+marginal certificate. Because `dual_state` is an ordinary named list, it can be
+saved with `saveRDS()` and reused in an installed package from a fresh session.
+
 ## How do you use the coupling?
 
 A barycentric projection replaces each source point by the weighted average of
@@ -168,7 +194,10 @@ every cost or geometry.
 | Balanced, exact linear OT | `ot_emd()` | Sparse exact plan, best suited to small or moderate problems |
 | Balanced, entropic linear OT | `ot_sinkhorn()` | Faster dense plan; `epsilon` changes the solution |
 | Exact transport of a specified fraction | `ot_partial_emd()` | Enforces a transported mass in `[0, 1]` |
+| Entropic transport of a specified fraction | `ot_partial_sinkhorn()` | Dense fixed-mass subcoupling with certified scaling/log Dykstra |
+| Exact transport with optimized mass | `ot_partial_penalized()` | A linear discard penalty selects how much mass to transport |
 | Marginals may change softly | `ot_sinkhorn_unbalanced()` | KL penalties control the cost of creating or removing mass |
+| Marginals change on sparse support | `ot_sinkhorn_unbalanced_ti()` | Certified TI potentials and operator application avoid a dense plan |
 
 For example, the exact solver satisfies the same marginals without entropic
 regularization.
@@ -191,6 +220,264 @@ The exact and entropic costs are useful summaries of their respective plans,
 but comparing them alone is not a convergence test. Inspect the solver status
 and validate the returned marginals.
 
+## How do sparse plans remain operators?
+
+Exact transport plans often have few nonzero edges. Converting those edges to
+an `rfugw_transport_plan` preserves mass, linear application, objectives, and
+barycentric projection without allocating a dense source-by-target matrix.
+
+```{r sparse-plan}
+edge_index <- which(exact$plan > 1e-12, arr.ind = TRUE)
+exact_edges <- as_transport_plan(
+  data.frame(
+    source = edge_index[, 1],
+    target = edge_index[, 2],
+    weight = exact$plan[edge_index]
+  ),
+  n_source = nrow(exact$plan),
+  n_target = ncol(exact$plan)
+)
+data.frame(
+  representation = transport_plan_representation(exact_edges)$representation,
+  stored_edges = nrow(exact_edges$data),
+  transported_mass = transport_plan_mass(exact_edges),
+  linear_cost = ot_linear_cost(M, exact_edges)
+)
+```
+
+```{r check-sparse-plan, include = FALSE}
+stopifnot(
+  identical(transport_plan_shape(exact_edges),
+            c(source = nrow(M), target = ncol(M))),
+  abs(transport_plan_mass(exact_edges) - sum(exact$plan)) < 1e-12,
+  max(abs(transport_plan_apply(exact_edges, Y) - exact$plan %*% Y)) < 1e-12,
+  max(abs(transport_plan_barycentric(exact_edges, Y) -
+          ot_barycentric_project(exact, Y))) < 1e-12
+)
+```
+
+`transport_plan_apply()` computes the forward linear action;
+`transport_plan_adjoint()` computes the transpose action. The adjoint is not an
+inverse. Likewise, target-to-source barycentric projection normalizes the
+adjoint by transported column mass and should not be called an inverse map.
+Rows or columns with no transported mass return `NaN` by default, an explicit
+abstention rather than a fabricated uniform match. Materialization is available
+only by calling `transport_plan_materialize()` (or
+`rfugw_plan(x, materialize = TRUE)`) explicitly. Pruning reports lost mass and
+removes convergence certificates from a result until the changed plan is
+separately revalidated.
+
+## What if only a fixed fraction should match?
+
+When the overlap is known but not all mass should participate,
+`ot_partial_sinkhorn()` transports exactly the requested `mass` while treating
+the supplied weights as row and column capacities. It uses the explicit
+regularized objective
+
+```text
+sum(M * plan) + epsilon * sum(plan * (log(plan) - 1)).
+```
+
+This counting-measure entropy convention differs from the product-reference KL
+reported by balanced `ot_sinkhorn()`, so their regularized values should not be
+mixed.
+
+```{r fit-entropic-partial}
+partial_sink <- ot_partial_sinkhorn(
+  M, p, q, mass = 0.7, epsilon = 0.08,
+  method = "auto", tol = 1e-9
+)
+data.frame(
+  status = partial_sink$status,
+  backend = partial_sink$effective_sinkhorn_method,
+  transported_mass = partial_sink$transported_mass,
+  transport_term = partial_sink$transport_objective,
+  entropy_term = partial_sink$weighted_entropy_minus_one,
+  regularized_objective = rfugw_value(partial_sink),
+  primal_dual_gap = partial_sink$duality_gap
+)
+```
+
+```{r check-entropic-partial, include = FALSE}
+stopifnot(
+  isTRUE(partial_sink$converged), isTRUE(partial_sink$feasible),
+  isTRUE(partial_sink$objective_consistent),
+  isTRUE(partial_sink$objective_components_consistent),
+  abs(partial_sink$transported_mass - 0.7) < 1e-9,
+  max(rowSums(partial_sink$plan) - p) <=
+    partial_sink$feasibility_tolerance,
+  max(colSums(partial_sink$plan) - q) <=
+    partial_sink$feasibility_tolerance,
+  abs(partial_sink$duality_gap) <= partial_sink$duality_gap_tolerance
+)
+```
+
+Auto dispatch uses bounded scaling when safe and genuine log Dykstra for large
+cost-to-entropy range. A raw plan is not a valid warm start because Dykstra
+also needs its correction state; pass a prior certified result or its
+`warm_state` only for the identical problem.
+
+## When is the result a Wasserstein distance?
+
+A linear transport cost becomes a Wasserstein p-cost only after the ground
+metric power is declared. `ot_wasserstein_cost()` computes
+`sum(d^p * plan)`; `ot_wasserstein_distance()` returns its `1 / p` root. This
+distinction prevents accidentally taking a square root of W1 or treating a
+squared structural loss as a ground distance.
+
+For supports in a common coordinate system, supply the points directly. Rows
+are observations and columns are features.
+
+```{r wasserstein-raw-supports}
+w2 <- ot_wasserstein_distance(
+  source = X,
+  target = Y,
+  p = 2,
+  source_weights = p,
+  target_weights = q,
+  metric = "euclidean",
+  solver = "exact"
+)
+data.frame(
+  p_cost = w2$wasserstein_p_cost,
+  p_distance = rfugw_value(w2),
+  power = w2$wasserstein_power,
+  certification = w2$value_certification
+)
+```
+
+If a cost matrix already exists, declare its current power. For example, if
+`M2` stores squared Euclidean distances, use `cost_power = 2`. The helper can
+then transform it consistently when the requested `p` differs.
+
+```{r wasserstein-declared-cost}
+M_raw <- as.matrix(dist(rbind(X, Y)))[1:8, 9:18]
+M2 <- M_raw^2
+w2_from_cost <- ot_wasserstein_distance(
+  cost = M2,
+  cost_power = 2,
+  p = 2,
+  source_weights = p,
+  target_weights = q
+)
+stopifnot(abs(rfugw_value(w2) - rfugw_value(w2_from_cost)) < 1e-10)
+```
+
+A user-supplied nonnegative matrix is accepted as a declared dissimilarity,
+but `metric_certified` is `FALSE`: rfugw does not infer symmetry or the triangle
+inequality from its values. The helpers normalize each positive-mass weight
+vector to a probability measure and retain original/effective mass provenance.
+
+With `solver = "sinkhorn"`, the result is labeled `estimate_kind =
+"entropic_plan"`. It is the unregularized p-cost of a certified entropic plan,
+not the exact Wasserstein optimum and not the entropy-regularized objective.
+Nonconverged solves fail by default. `allow_uncertified = TRUE` exists only for
+explicit diagnostic inspection and leaves `value_certified = FALSE`.
+
+## What is the regularized objective and Sinkhorn divergence?
+
+`ot_sinkhorn()` keeps `ot_dist = sum(M * plan)` for compatibility. It now also
+reports the full regularized primal
+
+```text
+sum(M * plan) + epsilon * KL(plan || p %o% q),
+```
+
+plus an independently evaluated dual, their gap, and the exact constant offset
+from the alternative `sum(plan * (log(plan) - 1))` entropy convention. This
+matters when comparing epsilon values: the linear term alone is not the
+regularized optimum, and conventions that differ by constants must not be
+mixed.
+
+```{r regularized-balanced-objective}
+data.frame(
+  linear_plan_cost = sink$ot_dist,
+  regularized_primal = sink$regularized_objective,
+  regularized_dual = sink$regularized_dual_objective,
+  primal_dual_gap = sink$regularized_duality_gap
+)
+```
+
+Entropic OT is biased: even a measure compared with itself generally has a
+nonzero regularized value. `ot_sinkhorn_divergence()` removes that self-bias by
+combining one cross solve and two self solves under the same convention.
+
+```{r sinkhorn-divergence}
+sinkhorn_div <- ot_sinkhorn_divergence(
+  X, Y,
+  p = 2,
+  source_weights = p,
+  target_weights = q,
+  epsilon = 0.2,
+  method = "auto",
+  max_iter = 5000L,
+  tol = 1e-7
+)
+data.frame(
+  divergence = rfugw_value(sinkhorn_div),
+  status = sinkhorn_div$status,
+  cross = sinkhorn_div$component_values[["cross"]],
+  source_self = sinkhorn_div$component_values[["source_self"]],
+  target_self = sinkhorn_div$component_values[["target_self"]]
+)
+```
+
+The divergence result retains the three complete component results, statuses,
+residuals, iteration counts, and runtimes. It is certified only when all three
+solves pass and the combined value is nonnegative within the reported numerical
+tolerance. A nonconverged self solve is never hidden behind a finite cross
+value.
+
+## When should transported mass be optimized?
+
+`ot_partial_emd()` is appropriate when the transported mass is known in
+advance. When it is part of the estimand, `ot_partial_penalized()` instead
+balances transport cost against a linear penalty for mass left unmatched on
+either side. The supplied weights remain finite measures; they are not
+separately normalized.
+
+```{r fit-penalized-partial}
+penalized_low <- ot_partial_penalized(
+  M, p, q, discard_penalty = 0.05
+)
+penalized_high <- ot_partial_penalized(
+  M, p, q, discard_penalty = 0.5
+)
+data.frame(
+  discard_penalty = c(0.05, 0.5),
+  transported_mass = c(
+    penalized_low$transported_mass,
+    penalized_high$transported_mass
+  ),
+  transport_term = c(
+    penalized_low$transport_term,
+    penalized_high$transport_term
+  ),
+  discard_term = c(
+    penalized_low$discard_penalty_term,
+    penalized_high$discard_penalty_term
+  )
+)
+```
+
+```{r check-penalized-partial, include = FALSE}
+stopifnot(
+  isTRUE(penalized_low$converged),
+  isTRUE(penalized_high$converged),
+  penalized_low$transported_mass < penalized_high$transported_mass,
+  penalized_low$transported_mass > 0,
+  penalized_high$transported_mass <= min(sum(p), sum(q)),
+  penalized_low$objective_components_consistent,
+  penalized_high$objective_components_consistent
+)
+```
+
+Each transported unit avoids one source and one target discard penalty, so a
+larger penalty weakly favors more transport. The result reports both discarded
+masses, the transport and penalty objective terms, and an augmented exact-OT
+primal/dual certificate scaled back to the original mass units. This is a
+linear variable-mass formulation, not the KL marginal relaxation below.
+
 ## What if the marginals should change?
 
 Contamination, missing support, or partial overlap can make fixed marginals a
@@ -201,11 +488,12 @@ approaches the balanced problem.
 ```{r fit-unbalanced}
 unbalanced <- ot_sinkhorn_unbalanced(
   M, p, q, epsilon = 0.08, rho = 0.2, method = "auto",
-  max_iter = 1000L, tol = 1e-7
+  max_iter = 1000L, tol = 1e-7, normalization = "none"
 )
 data.frame(
   status = unbalanced$status,
   cost = rfugw_value(unbalanced),
+  regularized_objective = unbalanced$regularized_objective,
   transported_mass = unbalanced$mass
 )
 ```
@@ -224,7 +512,64 @@ stopifnot(
 
 An unbalanced plan is not expected to reproduce `p` and `q` exactly. Its total
 mass and relaxed marginal residuals are part of the result and should be
-interpreted alongside the application-specific choice of `rho`.
+interpreted alongside the application-specific choice of `rho`. Here
+`normalization = "none"` means the supplied finite measures, including their
+absolute and unequal total masses, enter the generalized-KL penalties unchanged.
+Use `"joint"` to apply one common scale while preserving the mass ratio. The
+backward-compatible 0.1 default, `"separate"`, normalizes each side to one and
+should be selected only when the inputs represent probability measures. The
+result records original and effective masses and separates the transport term
+(`ot_dist`) from the full `regularized_objective`.
+
+When the allowed matches themselves are sparse, use the translation-invariant
+path. Here each source has only two or three admissible targets; the edge list
+can represent a genuine zero cost without confusing it with a missing sparse-
+matrix entry.
+
+```{r fit-sparse-ti-uot}
+ti_index <- do.call(rbind, lapply(seq_len(nrow(M)), function(i) {
+  target <- unique(c(i, i + 1L, if (i == nrow(M)) ncol(M)))
+  data.frame(source = i, target = target, cost = M[i, target])
+}))
+ti_uot <- ot_sinkhorn_unbalanced_ti(
+  ti_index, p, q,
+  epsilon = 0.08, rho = c(0.2, 0.3),
+  n_source = nrow(M), n_target = ncol(M),
+  plan = "operator", max_iter = 5000L, tol = 1e-8
+)
+data.frame(
+  status = ti_uot$status,
+  representation = ti_uot$plan_representation$representation,
+  support_size = ti_uot$support_size,
+  regularized_objective = rfugw_value(ti_uot),
+  kkt_residual = ti_uot$kkt_residual,
+  primal_dual_gap = ti_uot$primal_dual_gap
+)
+```
+
+```{r check-sparse-ti-uot, include = FALSE}
+ti_plan <- rfugw_plan(ti_uot)
+ti_projection <- transport_plan_barycentric(
+  ti_plan, X, orientation = "target_to_source"
+)
+stopifnot(
+  isTRUE(ti_uot$converged), isTRUE(ti_uot$inner_converged),
+  isTRUE(ti_uot$kkt_consistent), isTRUE(ti_uot$fixed_point_consistent),
+  isTRUE(ti_uot$gauge_invariant),
+  identical(transport_plan_representation(ti_plan)$representation,
+            "implicit_operator"),
+  identical(dim(ti_projection), dim(Y)), all(is.finite(ti_projection))
+)
+```
+
+The operator applies the coupling or its adjoint from the stored cost support
+and certified potentials. Request `plan = "sparse"` only when a downstream
+consumer needs explicit weighted edges, or `plan = "dense"` when the dense
+allocation is intentional. Unlike the older unbalanced API's legacy
+`rfugw_value()` convention, the TI result's value is its full regularized
+objective. Its support certificate reports both active-node coverage and a
+separate exact max-flow answer to the hypothetical balanced-marginal problem;
+unequal masses can make the latter false without making KL-UOT infeasible.
 
 ## How does linear OT connect to FGW?
 
@@ -268,5 +613,7 @@ status and marginal feasibility remain separate diagnostics.
   semirelaxed, and FUGW formulations.
 - `vignette("barycenters")` constructs a representative metric-measure space
   from several inputs.
-- See `?ot_sinkhorn`, `?ot_emd`, and `?ot_validate_plan` for full argument and
-  diagnostic contracts.
+- See `?ot_sinkhorn`, `?ot_sinkhorn_divergence`, `?ot_emd`,
+  `?ot_partial_sinkhorn`, `?ot_partial_penalized`,
+  `?ot_wasserstein_distance`, and
+  `?ot_validate_plan` for full argument and diagnostic contracts.

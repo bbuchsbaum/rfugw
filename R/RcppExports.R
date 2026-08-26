@@ -61,8 +61,8 @@ cpp_semirelaxed_fgw_cg_square_fast <- function(M, C1, C2, p, alpha, init_plan, m
     .Call(`_rfugw_cpp_semirelaxed_fgw_cg_square_fast`, M, C1, C2, p, alpha, init_plan, max_iter, tol_rel, tol_abs, verbose, use_mixed_precision)
 }
 
-cpp_ot_sinkhorn <- function(M, p, q, epsilon, max_iter, tol, use_log) {
-    .Call(`_rfugw_cpp_ot_sinkhorn`, M, p, q, epsilon, max_iter, tol, use_log)
+cpp_ot_sinkhorn <- function(M, p, q, epsilon, max_iter, tol, use_log, init_source_potential, init_target_potential) {
+    .Call(`_rfugw_cpp_ot_sinkhorn`, M, p, q, epsilon, max_iter, tol, use_log, init_source_potential, init_target_potential)
 }
 
 cpp_ot_emd <- function(M, p, q, max_iter, tol) {
@@ -87,6 +87,14 @@ cpp_partial_fgw_entropic_square <- function(M, C1, C2, p, q, m, reg, alpha, symm
 
 cpp_ucoot_kl <- function(X, Y, wx_samp, wx_feat, wy_samp, wy_feat, reg_marginals, epsilon, M_samp, M_feat, init_pi_samp, init_pi_feat, joint, rescale_plan, max_iter, tol, max_iter_ot, tol_ot, use_warm_start) {
     .Call(`_rfugw_cpp_ucoot_kl`, X, Y, wx_samp, wx_feat, wy_samp, wy_feat, reg_marginals, epsilon, M_samp, M_feat, init_pi_samp, init_pi_feat, joint, rescale_plan, max_iter, tol, max_iter_ot, tol_ot, use_warm_start)
+}
+
+cpp_ot_sinkhorn_unbalanced_ti_sparse <- function(row_ptr, col_idx, row_cost, col_ptr, row_idx, col_cost, n_source, n_target, source_measure, target_measure, epsilon, rho_source, rho_target, max_iter, tol) {
+    .Call(`_rfugw_cpp_ot_sinkhorn_unbalanced_ti_sparse`, row_ptr, col_idx, row_cost, col_ptr, row_idx, col_cost, n_source, n_target, source_measure, target_measure, epsilon, rho_source, rho_target, max_iter, tol)
+}
+
+cpp_bipartite_transport_max_flow <- function(n_source, n_target, source, target, source_measure, target_measure, tolerance) {
+    .Call(`_rfugw_cpp_bipartite_transport_max_flow`, n_source, n_target, source, target, source_measure, target_measure, tolerance)
 }
 
 cpp_gw_square_terms_square <- function(C1, C2, G, symmetric = TRUE) {

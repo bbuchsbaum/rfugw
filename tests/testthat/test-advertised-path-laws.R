@@ -24,12 +24,17 @@ test_that("the advertised path matrix covers every required dimension", {
   required <- c(
     "symmetry", "regularization", "sinkhorn", "precision", "start",
     "kernel", "threading", "adapter", "backend", "approximation",
-    "formulation", "input"
+    "formulation", "input", "objective", "mass_policy", "representation"
   )
-  expect_setequal(unique(paths$dimension), required)
+  expect_true(all(required %in% unique(paths$dimension)))
   expect_true(all(paths$scope %in% c("pr", "nightly", "release")))
-  expect_true(all(paths$maturity %in% c("supported", "experimental")))
+  expect_true(all(paths$maturity %in% c(
+    "flagship", "supported", "experimental"
+  )))
   expect_true(all(nzchar(paths$comparison)))
+  expect_true(rfugw:::.validate_capability_path_matrix(
+    transport_capabilities(), paths
+  ))
 })
 
 test_that("native and POT balanced FGW adapters are semantically identical", {

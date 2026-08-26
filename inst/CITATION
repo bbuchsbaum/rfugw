@@ -8,7 +8,7 @@ vers <- meta$Version
 
 bibentry(
   bibtype = "Manual",
-  title = "rfugw: Fast Fused Unbalanced Gromov-Wasserstein Solvers",
+  title = "rfugw: Fast Fused (Unbalanced) Gromov-Wasserstein in R",
   author = person("Bradley", "Buchsbaum"),
   year = year,
   note = paste("R package version", vers),

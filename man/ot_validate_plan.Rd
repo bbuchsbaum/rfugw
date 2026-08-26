@@ -33,7 +33,9 @@ The plan, invisibly, after validation.
 }
 \description{
 Checks shape, nonnegativity, total mass, and optional marginal constraints.
-Accepts a raw matrix or an \code{rfugw_result}.
+Accepts a raw matrix, sparse/edge/operator transport plan, or an
+\code{rfugw_result}. Validation uses mass operations and does not materialize a
+sparse or implicit plan.
 }
 \examples{
 M <- matrix(c(0, 1, 1, 0), 2, 2)

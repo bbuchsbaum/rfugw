@@ -1,6 +1,10 @@
 ^.*\.Rproj$
 ^\.Rproj\.user$
+^\.git$
 ^\.github$
+^_pkgdown\.yml$
+^CONTRIBUTING\.md$
+^pkgdown$
 ^\.mote$
 ^\.omc$
 ^\.venv
@@ -8,10 +12,12 @@
 ^tools$
 ^docs$
 ^rfugw_.*\.tar\.gz$
+^release-artifact\.json$
 ^rfugw$
 ^inst/bench/results
 ^\.gate$
 ^\.tmp-lib$
 ^inst/bench/__pycache__
 ^\.gitignore$
+^\.gitattributes$
 ^\.cursor

@@ -2,7 +2,7 @@
 % Please edit documentation in R/pot_api_ports.R
 \name{lowrank_gromov_wasserstein_samples}
 \alias{lowrank_gromov_wasserstein_samples}
-\title{Low-rank GW from Samples (Experimental)}
+\title{Deprecated pseudo-low-rank GW compatibility wrapper}
 \usage{
 lowrank_gromov_wasserstein_samples(
   X_s,
@@ -40,46 +40,39 @@ lowrank_gromov_wasserstein_samples(
 \item{rank}{Target low-rank factorization rank. Values below 1 error.
 Values above \code{min(ns, nt)} warn and clamp.}
 
-\item{alpha}{Lower bound parameter retained for POT compatibility.}
+\item{alpha}{Deprecated unsupported POT-compatibility parameter.}
 
-\item{gamma_init}{Retained for POT compatibility.}
+\item{gamma_init}{Deprecated unsupported POT-compatibility parameter.}
 
 \item{rescale_cost}{Whether to normalize structure costs to \verb{[0, 1]}.}
 
-\item{cost_factorized_Xs}{Retained for POT compatibility.}
+\item{cost_factorized_Xs}{Deprecated unsupported factorized source cost.}
 
-\item{cost_factorized_Xt}{Retained for POT compatibility.}
+\item{cost_factorized_Xt}{Deprecated unsupported factorized target cost.}
 
 \item{stopThr}{Outer GW stopping tolerance.}
 
 \item{numItermax}{Outer GW max iterations.}
 
-\item{stopThr_dykstra}{Retained for POT compatibility.}
+\item{stopThr_dykstra}{Deprecated unsupported Dykstra tolerance.}
 
-\item{numItermax_dykstra}{Retained for POT compatibility.}
+\item{numItermax_dykstra}{Deprecated unsupported Dykstra iteration budget.}
 
-\item{seed_init}{Optional random seed.}
+\item{seed_init}{Deprecated unsupported initialization seed.}
 
-\item{warn}{Retained for POT compatibility.}
+\item{warn}{Deprecated unsupported warning control.}
 
-\item{warn_dykstra}{Retained for POT compatibility.}
+\item{warn_dykstra}{Deprecated unsupported Dykstra warning control.}
 
 \item{log}{If \code{TRUE}, return diagnostics.}
 }
 \value{
-A list with \code{Q}, \code{R}, \code{g}. If \code{log = TRUE}, includes \code{plan},
-\code{value_quad}, and \code{value}.
+The result of \code{\link[=dense_gromov_wasserstein_plan_svd]{dense_gromov_wasserstein_plan_svd()}}.
 }
 \description{
-Approximate low-rank sampled GW interface for large problems. This function
-computes an entropic GW plan then derives a rank-\code{r} factorization via
-truncated SVD. It is provided as an experimental POT-compatibility tier.
+\code{lowrank_gromov_wasserstein_samples()} was misnamed: it always materializes
+and solves a dense GW problem before applying SVD. Use
+\code{\link[=dense_gromov_wasserstein_plan_svd]{dense_gromov_wasserstein_plan_svd()}} for the same explicit operation.
+POT-shaped factorized-cost, Dykstra, and initialization parameters were never
+implemented and now error when changed from their legacy defaults.
 }
-\section{Experimental}{
-
-This is a post-hoc SVD of a dense GW plan, not a factorized solver.
-Reconstruction error \verb{||T - T_r||_F / ||T||_F} decreases as rank
-increases up to \code{min(ns, nt)}. It is experimental and may be renamed
-(\verb{bd-01M05QY9GKDDTB3CXTKAJE0E8G}). See \code{inst/bench/sampled-budget-curves.md}.
-}
-

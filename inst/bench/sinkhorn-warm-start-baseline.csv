@@ -1,0 +1,5 @@
+method,epsilon,cold_iterations_observed,warm_iterations_observed,cold_iteration_ceiling,warm_iteration_ceiling
+scaling,1.00,80,80,100,100
+scaling,0.60,100,70,125,95
+scaling,0.35,130,105,160,135
+scaling,0.20,185,140,225,180

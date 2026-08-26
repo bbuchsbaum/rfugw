@@ -500,6 +500,15 @@
 }
 
 .plan_marginal_residuals <- function(plan, p = NULL, q = NULL) {
+  if (.is_transport_plan(plan)) {
+    source <- transport_plan_mass(plan, "source")
+    target <- transport_plan_mass(plan, "target")
+    return(list(
+      row_residual = if (is.null(p)) NA_real_ else max(abs(source - p)),
+      col_residual = if (is.null(q)) NA_real_ else max(abs(target - q)),
+      mass = sum(source)
+    ))
+  }
   if (is.null(plan) || !is.matrix(plan) || length(plan) == 0L) {
     return(list(row_residual = NA_real_, col_residual = NA_real_, mass = NA_real_))
   }
@@ -613,7 +622,12 @@
     residuals$row_residual <- max(c(rowSums(plan) - p, 0))
     residuals$col_residual <- max(c(colSums(plan) - q, 0))
   }
-  plan_ok <- is.null(plan) || (is.matrix(plan) && all(is.finite(plan)) && all(plan >= 0))
+  plan_ok <- is.null(plan) ||
+    (is.matrix(plan) && all(is.finite(plan)) && all(plan >= 0)) ||
+    (.is_transport_plan(plan) && {
+      plan_mass <- transport_plan_mass(plan, "source")
+      all(is.finite(plan_mass)) && all(plan_mass >= 0)
+    })
   value_fields <- c("objective", "ot_dist", "fgw_dist", "gw_dist", "fugw_cost", "ucoot_cost",
                     "srgw_dist", "srfgw_dist", "partial_gw_dist", "partial_fgw_dist")
   value_ok <- TRUE

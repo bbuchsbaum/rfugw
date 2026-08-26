@@ -2,6 +2,9 @@
   if (is.list(plan)) {
     plan <- rfugw_plan(plan)
   }
+  if (.is_transport_plan(plan) || inherits(plan, "sparseMatrix")) {
+    plan <- transport_plan_materialize(as_transport_plan(plan))
+  }
   .assert_matrix(plan, name)
   if (nrow(plan) == 0L || ncol(plan) == 0L) {
     stop(sprintf("`%s` must be nonempty.", name), call. = FALSE)
@@ -18,7 +21,9 @@
 #' Validate a transport plan
 #'
 #' Checks shape, nonnegativity, total mass, and optional marginal constraints.
-#' Accepts a raw matrix or an `rfugw_result`.
+#' Accepts a raw matrix, sparse/edge/operator transport plan, or an
+#' `rfugw_result`. Validation uses mass operations and does not materialize a
+#' sparse or implicit plan.
 #'
 #' @param plan Coupling matrix or result object.
 #' @param p Optional source weights.
@@ -43,14 +48,26 @@ ot_validate_plan <- function(plan,
                              marginals = c("balanced", "partial", "relaxed"),
                              tol = 1e-8) {
   marginals <- match.arg(marginals)
-  plan <- .as_plan(plan)
+  returned_plan <- if (inherits(plan, "rfugw_result") ||
+      (is.list(plan) && !.is_transport_plan(plan) && !is.data.frame(plan))) {
+    rfugw_plan(plan)
+  } else {
+    plan
+  }
+  plan <- as_transport_plan(plan)
+  shape <- transport_plan_shape(plan)
+  source_mass <- transport_plan_mass(plan, "source")
+  target_mass <- transport_plan_mass(plan, "target")
+  total_mass <- sum(source_mass)
   if (!is.null(p)) {
-    if (!is.numeric(p) || length(p) != nrow(plan)) {
+    if (!is.numeric(p) || length(p) != shape[[1L]] ||
+        any(!is.finite(p)) || any(p < 0)) {
       stop("`p` must be numeric with length nrow(plan).", call. = FALSE)
     }
   }
   if (!is.null(q)) {
-    if (!is.numeric(q) || length(q) != ncol(plan)) {
+    if (!is.numeric(q) || length(q) != shape[[2L]] ||
+        any(!is.finite(q)) || any(q < 0)) {
       stop("`q` must be numeric with length ncol(plan).", call. = FALSE)
     }
   }
@@ -58,7 +75,7 @@ ot_validate_plan <- function(plan,
     if (length(mass) != 1L || !is.finite(mass) || mass < 0) {
       stop("`mass` must be a finite nonnegative scalar.", call. = FALSE)
     }
-    if (abs(sum(plan) - mass) > tol) {
+    if (abs(total_mass - mass) > tol) {
       stop(sprintf("`plan` total mass must equal `mass` within %g.", tol), call. = FALSE)
     }
   }
@@ -66,18 +83,19 @@ ot_validate_plan <- function(plan,
     if (is.null(p) || is.null(q)) {
       stop("`marginals = \"balanced\"` requires `p` and `q`.", call. = FALSE)
     }
-    if (max(abs(rowSums(plan) - p)) > tol || max(abs(colSums(plan) - q)) > tol) {
+    if (max(abs(source_mass - p)) > tol ||
+        max(abs(target_mass - q)) > tol) {
       stop("`plan` does not satisfy the balanced marginals.", call. = FALSE)
     }
   } else if (identical(marginals, "partial")) {
     if (is.null(p) || is.null(q)) {
       stop("`marginals = \"partial\"` requires `p` and `q`.", call. = FALSE)
     }
-    if (any(rowSums(plan) - p > tol) || any(colSums(plan) - q > tol)) {
+    if (any(source_mass - p > tol) || any(target_mass - q > tol)) {
       stop("`plan` exceeds the partial marginal upper bounds.", call. = FALSE)
     }
   }
-  invisible(plan)
+  invisible(returned_plan)
 }
 
 #' Linear transport cost
@@ -87,12 +105,23 @@ ot_validate_plan <- function(plan,
 #' @return Scalar `<M, plan>`.
 #' @export
 ot_linear_cost <- function(M, plan) {
-  plan <- .as_plan(plan)
+  plan <- as_transport_plan(plan)
   M <- .validate_finite_matrix(M, "M")
-  if (!all(dim(M) == dim(plan))) {
+  if (!all(dim(M) == transport_plan_shape(plan))) {
     stop("`M` and `plan` must have the same shape.", call. = FALSE)
   }
-  sum(M * plan)
+  if (identical(plan$representation, "implicit_operator")) {
+    stop(
+      "Linear cost requires enumerable support; materialize the operator explicitly.",
+      call. = FALSE
+    )
+  }
+  if (identical(plan$representation, "dense_materialized")) {
+    return(sum(M * plan$data))
+  }
+  edges <- .transport_plan_edges(plan)
+  if (!nrow(edges)) return(0)
+  sum(edges$weight * M[cbind(edges$source, edges$target)])
 }
 
 #' Entropic term of a plan
@@ -103,8 +132,18 @@ ot_linear_cost <- function(M, plan) {
 #' @return Numeric scalar.
 #' @export
 ot_entropy <- function(plan) {
-  plan <- .as_plan(plan)
-  z <- plan[plan > 0]
+  plan <- as_transport_plan(plan)
+  if (identical(plan$representation, "implicit_operator")) {
+    stop(
+      "Entropy requires enumerable support; materialize the operator explicitly.",
+      call. = FALSE
+    )
+  }
+  z <- if (identical(plan$representation, "dense_materialized")) {
+    plan$data[plan$data > 0]
+  } else {
+    .transport_plan_edges(plan)$weight
+  }
   sum(z * log(z))
 }
 
@@ -118,11 +157,12 @@ ot_entropy <- function(plan) {
 #'   support returns `Inf`; zero-over-zero contributes zero.
 #' @export
 ot_kl <- function(plan, p, q) {
-  plan <- .as_plan(plan)
-  if (!is.numeric(p) || length(p) != nrow(plan)) {
+  plan <- as_transport_plan(plan)
+  shape <- transport_plan_shape(plan)
+  if (!is.numeric(p) || length(p) != shape[[1L]]) {
     stop("`p` must be numeric with length nrow(plan).", call. = FALSE)
   }
-  if (!is.numeric(q) || length(q) != ncol(plan)) {
+  if (!is.numeric(q) || length(q) != shape[[2L]]) {
     stop("`q` must be numeric with length ncol(plan).", call. = FALSE)
   }
   if (any(!is.finite(p))) {
@@ -137,15 +177,23 @@ ot_kl <- function(plan, p, q) {
   if (any(q < 0)) {
     stop("`q` must be nonnegative.", call. = FALSE)
   }
-  ref <- tcrossprod(p, q)
-  if (any(!is.finite(ref))) {
+  reference_mass <- sum(p) * sum(q)
+  if (!is.finite(reference_mass)) {
     stop("The product reference `p %o% q` must be finite.", call. = FALSE)
   }
-  if (any(plan > 0 & ref == 0)) {
+  if (identical(plan$representation, "implicit_operator")) {
+    stop(
+      "KL requires enumerable support; materialize the operator explicitly.",
+      call. = FALSE
+    )
+  }
+  edges <- .transport_plan_edges(plan)
+  reference <- p[edges$source] * q[edges$target]
+  if (any(reference == 0)) {
     return(Inf)
   }
-  z <- plan > 0
-  sum(plan[z] * log(plan[z] / ref[z])) - sum(plan) + sum(ref)
+  sum(edges$weight * log(edges$weight / reference)) -
+    transport_plan_mass(plan) + reference_mass
 }
 
 #' Square-loss Gromov-Wasserstein objective
@@ -224,25 +272,5 @@ ot_barycentric_project <- function(plan,
                                    zero_mass = c("nan", "zero")) {
   orientation <- match.arg(orientation)
   zero_mass <- match.arg(zero_mass)
-  plan <- .as_plan(plan)
-  points <- .validate_finite_matrix(points, "points")
-  if (identical(orientation, "source_to_target")) {
-    if (nrow(points) != ncol(plan)) {
-      stop("`points` must have nrow equal to ncol(plan) for source_to_target.", call. = FALSE)
-    }
-    mass <- rowSums(plan)
-    proj <- plan %*% points
-  } else {
-    if (nrow(points) != nrow(plan)) {
-      stop("`points` must have nrow equal to nrow(plan) for target_to_source.", call. = FALSE)
-    }
-    mass <- colSums(plan)
-    proj <- t(plan) %*% points
-  }
-  out <- matrix(if (identical(zero_mass, "nan")) NaN else 0, nrow = length(mass), ncol = ncol(points))
-  keep <- mass > 0
-  if (any(keep)) {
-    out[keep, ] <- sweep(proj[keep, , drop = FALSE], 1L, mass[keep], "/")
-  }
-  out
+  transport_plan_barycentric(plan, points, orientation, zero_mass)
 }

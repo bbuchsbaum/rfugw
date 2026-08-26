@@ -104,6 +104,7 @@ Use the narrowest formulation that expresses the scientific problem:
 | Structure only; both marginals fixed | `entropic_gromov_wasserstein()` |
 | Structure plus shared features; both marginals fixed | `fgw_entropic()` |
 | Only a specified amount of mass should match | `entropic_partial_*()` or `partial_*()` |
+| Unmatched mass has a linear cost and matched mass should be optimized | `penalized_partial_fused_gromov_wasserstein()` |
 | Source weights fixed; target weights learned | `entropic_semirelaxed_*()` or `semirelaxed_*()` |
 | Both marginals may depart from reference weights | `fugw_kl()` |
 
@@ -183,9 +184,72 @@ The exact `partial_gromov_wasserstein()` and
 `lp_solver = "cpp_transport"`. The optional `"lp_transport"` and
 `"lp_matrix"` backends require the suggested package `lpSolve`.
 
+Their entropic counterparts call the same certified
+`ot_partial_sinkhorn()` primitive available for direct-cost partial OT. Each
+outer projection must pass fixed-mass capacity, objective, KKT, and duality
+certificates. `method = "auto"` chooses bounded scaling or genuine log-domain
+Dykstra from the actual linearized cost at every outer iteration; explicit
+unsafe scaling fails.
+
 Partial transport does not infer the scientifically correct overlap for you:
 choose `m` from the meaning of the data, or treat it as a sensitivity parameter
 and report how conclusions change.
+
+When overlap is itself the estimand and unmatched source and target mass each
+have a linear cost, use
+`penalized_partial_fused_gromov_wasserstein()`. This does not fix `m`: every
+iterate is a subcoupling, and the solver chooses its mass while balancing
+feature, structure, and discard terms.
+
+```{r penalized-partial-fit}
+penalized_low <- penalized_partial_fused_gromov_wasserstein(
+  M, C1, C2, discard_penalty = 0.05,
+  p = p, q = q, alpha = 0.5
+)
+penalized_high <- penalized_partial_fused_gromov_wasserstein(
+  M, C1, C2, discard_penalty = 0.4,
+  p = p, q = q, alpha = 0.5
+)
+data.frame(
+  discard_penalty = c(0.05, 0.4),
+  transported_mass = c(
+    penalized_low$transported_mass,
+    penalized_high$transported_mass
+  ),
+  feature_term = c(penalized_low$feature_term, penalized_high$feature_term),
+  structure_term = c(
+    penalized_low$structure_term,
+    penalized_high$structure_term
+  ),
+  discard_term = c(
+    penalized_low$discard_penalty_term,
+    penalized_high$discard_penalty_term
+  )
+)
+```
+
+```{r check-penalized-partial, include = FALSE}
+stopifnot(
+  isTRUE(penalized_low$converged),
+  isTRUE(penalized_high$converged),
+  penalized_low$transported_mass < penalized_high$transported_mass,
+  isTRUE(penalized_low$feasible), isTRUE(penalized_high$feasible),
+  isTRUE(penalized_low$inner_converged),
+  isTRUE(penalized_high$inner_converged),
+  penalized_low$frank_wolfe_gap <=
+    penalized_low$frank_wolfe_gap_tolerance,
+  penalized_high$frank_wolfe_gap <=
+    penalized_high$frank_wolfe_gap_tolerance
+)
+```
+
+Each transported unit avoids two discard penalties, so the larger penalty has
+the derived tendency toward more mass. The displayed direction is a controlled
+fixture, not a global monotonicity theorem for this nonconvex problem. A
+converged result certifies a stationary point through a Frank-Wolfe gap; it
+does not certify the global FGW optimum. `fugw_kl()` below is a different
+estimand: it penalizes marginal changes with generalized KL rather than a
+linear unmatched-mass term.
 
 ## When is the target distribution unknown?
 
@@ -303,11 +367,14 @@ sums, and the diagnostics returned by `rfugw_residuals()`.
 ## Which APIs are experimental?
 
 `sampled_gromov_wasserstein()`, `sampled_gromov_wasserstein_coords()`,
-`sampled_gw_from_graphs()`, and `lowrank_gromov_wasserstein_samples()` are
+`sampled_gw_from_graphs()`, and `dense_gromov_wasserstein_plan_svd()` are
 experimental. Their names and signatures may change, and their result status
-does not claim convergence certification. In particular, the low-rank samples
-function factorizes a dense plan after fitting; it is not an end-to-end
-low-memory GW solver.
+does not claim convergence certification. In particular, the last function
+materializes two dense structure costs and a dense plan before factorizing that
+plan. It is not an end-to-end low-rank or low-memory GW solver. The older
+`lowrank_gromov_wasserstein_samples()` name is deprecated; its formerly ignored
+POT-shaped factorized-cost, Dykstra, seed, and warning arguments now error when
+supplied.
 
 Use these only when their documented envelope matches your task. See
 `inst/bench/sampled-budget-curves.md` for the package's current evidence and

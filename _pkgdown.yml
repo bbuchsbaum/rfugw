@@ -10,9 +10,15 @@ reference:
   desc: Public balanced, exact, and KL-unbalanced linear-OT primitives.
   contents:
   - ot_sinkhorn
+  - ot_sinkhorn_divergence
   - ot_emd
   - ot_partial_emd
+  - ot_partial_sinkhorn
+  - ot_partial_penalized
   - ot_sinkhorn_unbalanced
+  - ot_sinkhorn_unbalanced_ti
+  - ot_wasserstein_cost
+  - ot_wasserstein_distance
   - ot_validate_plan
   - ot_linear_cost
   - ot_entropy
@@ -20,10 +26,42 @@ reference:
   - ot_gw_square
   - ot_fgw_square
   - ot_barycentric_project
+  - transport_problem_sinkhorn
+  - transport_problem_emd
+  - transport_problem_partial_emd
+  - transport_problem_partial_sinkhorn
+  - transport_problem_unbalanced
+  - transport_solve
+  - transport_capabilities
+  - print.rfugw_transport_problem
+  - print.rfugw_solver_state
   - rfugw_plan
   - rfugw_value
   - rfugw_status
   - rfugw_residuals
+  - rfugw_state
+  - rfugw_problem
+  - rfugw_masses
+  - rfugw_provenance
+  - print.rfugw_result
+  - summary.rfugw_result
+  - print.summary.rfugw_result
+- title: Transport plan representations
+  desc: Dense, sparse, edge-supported, and implicit coupling operations.
+  contents:
+  - as_transport_plan
+  - transport_operator
+  - transport_plan_shape
+  - transport_plan_mass
+  - transport_plan_apply
+  - transport_plan_adjoint
+  - transport_plan_barycentric
+  - transport_plan_materialize
+  - transport_plan_representation
+  - transport_plan_prune
+  - dim.rfugw_transport_plan
+  - as.matrix.rfugw_transport_plan
+  - print.rfugw_transport_plan
 - title: Flagship GW and FGW
   desc: Primary unregularized and entropic solvers. Unregularized names are conditional-gradient
     procedures, not global optimizers.
@@ -49,6 +87,7 @@ reference:
   - partial_gromov_wasserstein2
   - partial_fused_gromov_wasserstein
   - partial_fused_gromov_wasserstein2
+  - penalized_partial_fused_gromov_wasserstein
   - entropic_partial_gromov_wasserstein
   - entropic_partial_gromov_wasserstein2
   - entropic_partial_fused_gromov_wasserstein
@@ -66,6 +105,8 @@ reference:
   - unbalanced_co_optimal_transport2
 - title: Barycenters and multiset alignment
   contents:
+  - ot_barycenter_weights
+  - print.rfugw_barycenter_result
   - fgw_barycenters
   - gromov_barycenters
   - entropic_gromov_barycenters
@@ -77,19 +118,24 @@ reference:
   - multialign_project_features
   - multialign_project_matrix
 - title: Experimental
-  desc: Approximate or misnamed APIs. See inst/solver-contract.md. Do not treat these
+  desc: Approximate APIs. See inst/solver-contract.md. Do not treat these
     as certified 0.1 flagship solvers.
   contents:
   - sampled_gromov_wasserstein
   - sampled_gromov_wasserstein_coords
   - sampled_gw_from_graphs
   - graph_diffusion_coordinates
+  - dense_gromov_wasserstein_plan_svd
+- title: Deprecated
+  desc: Compatibility names retained only for migration.
+  contents:
   - lowrank_gromov_wasserstein_samples
 articles:
 - title: Guides
   contents:
   - rfugw
   - linear-ot
+  - solver-contract
   - solver-guide
   - barycenters
   - multiset-alignment

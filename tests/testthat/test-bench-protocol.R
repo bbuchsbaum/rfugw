@@ -45,21 +45,24 @@ test_that("invalid-quality timings cannot be treated as a baseline row", {
 
 test_that("split timing records prepare, solve, and e2e separately", {
   M <- matrix(c(0, 1, 1, 0), 2, 2)
-  timing <- bench_run_split(
-    prepare_fn = function() {
-      Sys.sleep(0.01)
-      list(M = M, p = c(0.5, 0.5), q = c(0.5, 0.5))
-    },
-    solve_fn = function(d) ot_sinkhorn(d$M, d$p, d$q, epsilon = 0.1, max_iter = 200L),
-    warmup = 1L,
-    reps = 1L,
-    method = "ot_sinkhorn"
+  expect_no_warning(
+    timing <- bench_run_split(
+      prepare_fn = function() {
+        # Stay safely above the coarse elapsed-clock quantum on Windows.
+        Sys.sleep(0.05)
+        list(M = M, p = c(0.5, 0.5), q = c(0.5, 0.5))
+      },
+      solve_fn = function(d) ot_sinkhorn(d$M, d$p, d$q, epsilon = 0.1, max_iter = 200L),
+      warmup = 1L,
+      reps = 1L,
+      method = "ot_sinkhorn"
+    )
   )
   expect_true(timing$valid)
   expect_true(timing$certified)
   expect_true(timing$comparison_eligible)
   expect_false(timing$performance_regression_eligible)
-  expect_gt(timing$prepare_ms, 5)
+  expect_gt(timing$prepare_ms, 20)
   expect_true(is.finite(timing$solve_ms))
   expect_gte(timing$solve_ms, 0)
   expect_equal(timing$e2e_ms, timing$prepare_ms + timing$solve_ms, tolerance = 1e-8)
@@ -162,6 +165,70 @@ test_that("FUGW and sampled fixed budgets never masquerade as certification", {
   expect_true(sampled_perf$valid)
   expect_false(sampled_perf$certified)
   expect_false(sampled_perf$comparison_eligible)
+})
+
+test_that("nightly boundary configurations satisfy their declared evidence class", {
+  seed <- 20260816L
+
+  fugw_stop <- bench_read_thresholds("fugw_kl")$performance_stop
+  for (n in c(8L, 12L)) {
+    d <- bench_make_problem("fgw", n, seed)
+    out <- fugw_kl(
+      Cx = d$C1, Cy = d$C2, wx = d$p, wy = d$q, M = d$M,
+      alpha = fugw_stop$alpha, epsilon = fugw_stop$epsilon,
+      reg_marginals = unlist(fugw_stop$reg_marginals),
+      max_iter = as.integer(fugw_stop$max_iter), tol = fugw_stop$tol,
+      max_iter_ot = as.integer(fugw_stop$max_iter_ot),
+      tol_ot = fugw_stop$tol_ot
+    )
+    quality <- bench_check_quality(
+      "fugw_kl", out, d, evidence_class = "fixed_budget_performance"
+    )
+    expect_true(quality$performance_regression_eligible, info = paste("FUGW n", n))
+    expect_false(quality$certified, info = paste("FUGW n", n))
+  }
+
+  sr_stop <- bench_read_thresholds("entropic_semirelaxed_gromov_wasserstein")$stop
+  d <- bench_make_problem("fgw", 12L, seed)
+  sr <- entropic_semirelaxed_gromov_wasserstein(
+    d$C1, d$C2, p = d$p, epsilon = sr_stop$epsilon,
+    max_iter = as.integer(sr_stop$max_iter), tol = sr_stop$tol,
+    check_every = as.integer(sr_stop$check_every)
+  )
+  expect_true(
+    bench_check_quality("entropic_semirelaxed_gromov_wasserstein", sr, d)$comparison_eligible
+  )
+
+  for (n in c(8L, 12L)) {
+    d <- bench_make_problem("ucoot", n, seed)
+    for (method in c(
+      "unbalanced_co_optimal_transport",
+      "fused_unbalanced_across_spaces_divergence"
+    )) {
+      stop <- bench_read_thresholds(method)$stop
+      args <- list(
+        X = d$X, Y = d$Y,
+        wx_samp = d$wx_samp, wy_samp = d$wy_samp,
+        wx_feat = d$wx_feat, wy_feat = d$wy_feat,
+        reg_marginals = unlist(stop$reg_marginals),
+        epsilon = unlist(stop$epsilon),
+        max_iter = as.integer(stop$max_iter), tol = stop$tol,
+        max_iter_ot = as.integer(stop$max_iter_ot), tol_ot = stop$tol_ot,
+        log = TRUE
+      )
+      if (identical(method, "fused_unbalanced_across_spaces_divergence")) {
+        args$reg_type <- "joint"
+      }
+      out <- do.call(get(method, mode = "function"), args)
+      quality <- bench_check_quality(method, out, d)
+      expect_true(quality$comparison_eligible, info = paste(method, "n", n))
+      expect_true(out$inner_converged, info = paste(method, "n", n))
+      expect_true(
+        out$max_inner_residual <= stop$tol_ot,
+        info = paste(method, "n", n)
+      )
+    }
+  }
 })
 
 test_that("threshold changes require a retained matching evidence entry", {

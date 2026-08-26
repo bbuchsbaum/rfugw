@@ -1,5 +1,5 @@
 #!/usr/bin/env Rscript
-# Quality-versus-budget, rank, and memory curves for sampled / approximate GW.
+# Quality-versus-budget, dense-plan SVD rank, and materialization curves.
 
 args <- commandArgs(trailingOnly = TRUE)
 out_dir <- if (length(args) >= 1L) args[[1]] else "inst/bench/results"
@@ -141,6 +141,9 @@ mem_rows <- lapply(mem_sizes, function(nn) {
     graph_bytes = graph_bytes,
     embed_bytes = as.numeric(object.size(coords)),
     plan_bytes = as.numeric(object.size(matrix(0, nn, nn))),
+    dense_svd_min_materialized_bytes =
+      as.numeric(object.size(dd$C1)) + as.numeric(object.size(dd$C2)) +
+      as.numeric(object.size(matrix(0, nn, nn))),
     stringsAsFactors = FALSE
   )
 })

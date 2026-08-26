@@ -282,12 +282,12 @@ test_that("sampled GW returns valid coupling", {
   expect_gte(out$iterations, 1L)
 })
 
-test_that("lowrank GW samples wrapper returns factors and diagnostics", {
+test_that("dense-plan GW SVD returns factors and diagnostics", {
   set.seed(107)
   Xs <- matrix(rnorm(40L), 10L, 4L)
   Xt <- matrix(rnorm(48L), 12L, 4L)
 
-  out <- rfugw::lowrank_gromov_wasserstein_samples(
+  out <- rfugw::dense_gromov_wasserstein_plan_svd(
     X_s = Xs,
     X_t = Xt,
     reg = 0.05,
@@ -301,6 +301,9 @@ test_that("lowrank GW samples wrapper returns factors and diagnostics", {
   expect_equal(length(out$g), 5L)
   expect_true(is.finite(out$value_quad))
   expect_true(is.finite(out$value))
+  expect_identical(out$representation, "posthoc_svd_of_dense_gw_plan")
+  expect_true(out$dense_plan_materialized)
+  expect_identical(out$solve_memory_order, "O(ns^2 + nt^2 + ns*nt)")
 })
 
 test_that("across-space and UCOOT wrappers produce finite objectives", {

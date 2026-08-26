@@ -431,12 +431,18 @@ bench_run_split <- function(prepare_fn, solve_fn, warmup = 1L, reps = 3L,
   mem_solve <- NA_real_
   mem_e2e <- NA_real_
   if (requireNamespace("bench", quietly = TRUE)) {
-    b_solve <- bench::mark(solve_fn(prepare_fn()), iterations = 1L, memory = TRUE, check = FALSE)
+    b_solve <- bench::mark(
+      solve_fn(prepare_fn()),
+      iterations = 1L,
+      memory = TRUE,
+      filter_gc = FALSE,
+      check = FALSE
+    )
     mem_solve <- as.numeric(b_solve$mem_alloc[[1]])
     b_e2e <- bench::mark({
       d <- prepare_fn()
       solve_fn(d)
-    }, iterations = 1L, memory = TRUE, check = FALSE)
+    }, iterations = 1L, memory = TRUE, filter_gc = FALSE, check = FALSE)
     mem_e2e <- as.numeric(b_e2e$mem_alloc[[1]])
   }
   list(

@@ -1,6 +1,14 @@
 // [[Rcpp::depends(RcppArmadillo)]]
 // [[Rcpp::plugins(cpp17)]]
 
+#ifdef _WIN32
+// R's Windows BLAS/LAPACK libraries expose the double-precision interface used
+// by R, but not the single-precision s* symbols Armadillo would otherwise
+// instantiate for fmat expressions. Keep the mixed-precision kernels portable
+// by using local float loops and a double-precision SVD fallback on Windows.
+#define RFUGW_NO_SINGLE_BLAS
+#endif
+
 #include <RcppArmadillo.h>
 #include "approximation_cache.h"
 #include "batch_worker.h"
@@ -284,6 +292,22 @@ inline void sgemm_nn(
     arma::fmat& C,
     float alpha = 1.0f,
     float beta = 0.0f) {
+#ifdef RFUGW_NO_SINGLE_BLAS
+  arma::fmat result(A.n_rows, B.n_cols, arma::fill::zeros);
+  for (arma::uword j = 0; j < B.n_cols; ++j) {
+    for (arma::uword k = 0; k < A.n_cols; ++k) {
+      const float b = B(k, j);
+      for (arma::uword i = 0; i < A.n_rows; ++i) {
+        result(i, j) += A(i, k) * b;
+      }
+    }
+  }
+  result *= alpha;
+  if (beta != 0.0f && C.n_rows == result.n_rows && C.n_cols == result.n_cols) {
+    result += beta * C;
+  }
+  C = std::move(result);
+#else
   const arma::blas_int n = static_cast<arma::blas_int>(A.n_rows);
   const arma::blas_int k = static_cast<arma::blas_int>(A.n_cols);
   const arma::blas_int m = static_cast<arma::blas_int>(B.n_cols);
@@ -298,6 +322,7 @@ inline void sgemm_nn(
     &beta,
     C.memptr(), &n
   );
+#endif
 }
 
 inline void sgemm_nn_accum(
@@ -306,6 +331,9 @@ inline void sgemm_nn_accum(
     arma::fmat& C,
     float alpha,
     float beta) {
+#ifdef RFUGW_NO_SINGLE_BLAS
+  sgemm_nn(A, B, C, alpha, beta);
+#else
   const arma::blas_int n = static_cast<arma::blas_int>(A.n_rows);
   const arma::blas_int k = static_cast<arma::blas_int>(A.n_cols);
   const arma::blas_int m = static_cast<arma::blas_int>(B.n_cols);
@@ -323,6 +351,7 @@ inline void sgemm_nn_accum(
     &beta,
     C.memptr(), &n
   );
+#endif
 }
 
 inline void sgemm_nt_accum(
@@ -331,6 +360,22 @@ inline void sgemm_nt_accum(
     arma::fmat& C,
     float alpha,
     float beta) {
+#ifdef RFUGW_NO_SINGLE_BLAS
+  arma::fmat result(A.n_rows, B.n_rows, arma::fill::zeros);
+  for (arma::uword j = 0; j < B.n_rows; ++j) {
+    for (arma::uword k = 0; k < A.n_cols; ++k) {
+      const float b = B(j, k);
+      for (arma::uword i = 0; i < A.n_rows; ++i) {
+        result(i, j) += A(i, k) * b;
+      }
+    }
+  }
+  result *= alpha;
+  if (beta != 0.0f && C.n_rows == result.n_rows && C.n_cols == result.n_cols) {
+    result += beta * C;
+  }
+  C = std::move(result);
+#else
   const arma::blas_int n = static_cast<arma::blas_int>(A.n_rows);
   const arma::blas_int k = static_cast<arma::blas_int>(A.n_cols);
   const arma::blas_int m = static_cast<arma::blas_int>(B.n_rows);
@@ -349,6 +394,7 @@ inline void sgemm_nt_accum(
     &beta,
     C.memptr(), &n
   );
+#endif
 }
 
 inline void sgemm_nt(
@@ -357,6 +403,9 @@ inline void sgemm_nt(
     arma::fmat& C,
     float alpha = 1.0f,
     float beta = 0.0f) {
+#ifdef RFUGW_NO_SINGLE_BLAS
+  sgemm_nt_accum(A, B, C, alpha, beta);
+#else
   const arma::blas_int n = static_cast<arma::blas_int>(A.n_rows);
   const arma::blas_int k = static_cast<arma::blas_int>(A.n_cols);
   const arma::blas_int m = static_cast<arma::blas_int>(B.n_rows);
@@ -372,6 +421,7 @@ inline void sgemm_nt(
     &beta,
     C.memptr(), &n
   );
+#endif
 }
 
 inline void dgemv_n(
@@ -424,6 +474,20 @@ inline void sgemv_n(
     arma::fvec& y,
     float alpha = 1.0f,
     float beta = 0.0f) {
+#ifdef RFUGW_NO_SINGLE_BLAS
+  arma::fvec result(A.n_rows, arma::fill::zeros);
+  for (arma::uword j = 0; j < A.n_cols; ++j) {
+    const float xj = x[j];
+    for (arma::uword i = 0; i < A.n_rows; ++i) {
+      result[i] += A(i, j) * xj;
+    }
+  }
+  result *= alpha;
+  if (beta != 0.0f && y.n_elem == result.n_elem) {
+    result += beta * y;
+  }
+  y = std::move(result);
+#else
   const arma::blas_int n = static_cast<arma::blas_int>(A.n_rows);
   const arma::blas_int m = static_cast<arma::blas_int>(A.n_cols);
   const arma::blas_int inc = 1;
@@ -438,6 +502,7 @@ inline void sgemv_n(
     &beta,
     y.memptr(), &inc
   );
+#endif
 }
 
 inline void sgemv_t(
@@ -446,6 +511,21 @@ inline void sgemv_t(
     arma::fvec& y,
     float alpha = 1.0f,
     float beta = 0.0f) {
+#ifdef RFUGW_NO_SINGLE_BLAS
+  arma::fvec result(A.n_cols, arma::fill::zeros);
+  for (arma::uword j = 0; j < A.n_cols; ++j) {
+    float value = 0.0f;
+    for (arma::uword i = 0; i < A.n_rows; ++i) {
+      value += A(i, j) * x[i];
+    }
+    result[j] = value;
+  }
+  result *= alpha;
+  if (beta != 0.0f && y.n_elem == result.n_elem) {
+    result += beta * y;
+  }
+  y = std::move(result);
+#else
   const arma::blas_int n = static_cast<arma::blas_int>(A.n_rows);
   const arma::blas_int m = static_cast<arma::blas_int>(A.n_cols);
   const arma::blas_int inc = 1;
@@ -460,6 +540,54 @@ inline void sgemv_t(
     &beta,
     y.memptr(), &inc
   );
+#endif
+}
+
+inline arma::fmat outer_product_f(const arma::fvec& x, const arma::fvec& y) {
+  arma::fmat out(x.n_elem, y.n_elem);
+  for (arma::uword j = 0; j < y.n_elem; ++j) {
+    const float yj = y[j];
+    for (arma::uword i = 0; i < x.n_elem; ++i) {
+      out(i, j) = x[i] * yj;
+    }
+  }
+  return out;
+}
+
+inline arma::fvec matvec_f(const arma::fmat& A, const arma::fvec& x) {
+  arma::fvec out;
+  sgemv_n(A, x, out);
+  return out;
+}
+
+inline arma::frowvec row_times_matrix_f(
+    const arma::frowvec& x,
+    const arma::fmat& A) {
+  arma::frowvec out(A.n_cols, arma::fill::zeros);
+  for (arma::uword j = 0; j < A.n_cols; ++j) {
+    float value = 0.0f;
+    for (arma::uword i = 0; i < A.n_rows; ++i) {
+      value += x[i] * A(i, j);
+    }
+    out[j] = value;
+  }
+  return out;
+}
+
+inline float dot_product_f(const arma::fvec& x, const arma::fvec& y) {
+  float out = 0.0f;
+  for (arma::uword i = 0; i < x.n_elem; ++i) {
+    out += x[i] * y[i];
+  }
+  return out;
+}
+
+inline float schur_sum_f(const arma::fmat& A, const arma::fmat& B) {
+  float out = 0.0f;
+  for (arma::uword i = 0; i < A.n_elem; ++i) {
+    out += A[i] * B[i];
+  }
+  return out;
 }
 
 template <typename T>
@@ -1031,8 +1159,8 @@ inline void init_matrices_square_f(
   hC1 = C1;
   hC2 = 2.0f * C2;
 
-  const arma::fvec left = fC1 * p;
-  const arma::frowvec right = q.t() * fC2.t();
+  const arma::fvec left = matvec_f(fC1, p);
+  const arma::frowvec right = matvec_f(fC2, q).t();
   constC.set_size(C1.n_rows, C2.n_rows);
   for (arma::uword j = 0; j < C2.n_rows; ++j) {
     constC.col(j) = left;
@@ -1181,11 +1309,23 @@ inline bool svd_lowrank_factors_f(
   if (rank <= 0) {
     return false;
   }
+#ifdef RFUGW_NO_SINGLE_BLAS
+  arma::mat U_double, V_double;
+  arma::vec s_double;
+  if (!arma::svd_econ(
+        U_double, s_double, V_double, arma::conv_to<arma::mat>::from(C))) {
+    return false;
+  }
+  arma::fmat U = arma::conv_to<arma::fmat>::from(U_double);
+  arma::fmat V = arma::conv_to<arma::fmat>::from(V_double);
+  arma::fvec s = arma::conv_to<arma::fvec>::from(s_double);
+#else
   arma::fmat U, V;
   arma::fvec s;
   if (!arma::svd_econ(U, s, V, C)) {
     return false;
   }
+#endif
   if (s.n_elem == 0) {
     return false;
   }
@@ -1349,7 +1489,7 @@ inline SquareC2CacheF build_square_c2_cache_f(
   cache.C2 = C2;
   cache.q = q;
   cache.hC2 = 2.0f * C2;
-  cache.right_term = q.t() * fC2.t();
+  cache.right_term = matvec_f(fC2, q).t();
   cache.valid = true;
   return cache;
 }
@@ -1411,6 +1551,8 @@ inline SinkhornBalancedResult sinkhorn_balanced(
   const bool use_blas = (K.n_elem >= gemv_min_work_d());
   const bool use_blocked = (!use_blas && K.n_elem >= matvec_blocked_min_work_d());
   const int check_interval = (K.n_elem <= 160000) ? 5 : 10;
+  const bool has_initial_scaling =
+    u.n_elem == p.n_elem && v.n_elem == q.n_elem;
   if (u.n_elem != p.n_elem) {
     u = arma::ones<arma::vec>(p.n_elem);
   }
@@ -1430,8 +1572,24 @@ inline SinkhornBalancedResult sinkhorn_balanced(
   Ktu += kTiny;
 
   double err = std::numeric_limits<double>::infinity();
+  if (has_initial_scaling) {
+    if (use_blas) {
+      dgemv_n(K, v, Kv);
+    } else if (use_blocked) {
+      matvec_colmajor_blocked(K, v, Kv);
+    } else {
+      matvec_colmajor(K, v, Kv);
+    }
+    Kv += kTiny;
+    const arma::vec row_marg = u % Kv;
+    const arma::vec col_marg = v % Ktu;
+    err = std::max(
+      arma::max(arma::abs(row_marg - p)),
+      arma::max(arma::abs(col_marg - q))
+    );
+  }
   int it = 0;
-  for (; it < max_iter; ++it) {
+  for (; it < max_iter && !(has_initial_scaling && err < tol); ++it) {
     if (use_blas) {
       dgemv_n(K, v, Kv);
     } else if (use_blocked) {
@@ -1547,7 +1705,7 @@ inline SinkhornBalancedResultF sinkhorn_balanced_f(
   }
 
   SinkhornBalancedResultF out;
-  out.plan = (u * v.t()) % K;
+  out.plan = outer_product_f(u, v) % K;
   const float row_err = arma::max(arma::abs(arma::sum(out.plan, 1) - p));
   const float col_err = arma::max(arma::abs(arma::sum(out.plan, 0).t() - q));
   out.u = std::move(u);
@@ -1568,6 +1726,7 @@ inline SinkhornBalancedResult sinkhorn_balanced_log(
     arma::vec g) {
   const arma::uword ns = p.n_elem;
   const arma::uword nt = q.n_elem;
+  const bool has_initial_potentials = f.n_elem == ns && g.n_elem == nt;
   if (f.n_elem != ns) {
     f = arma::zeros<arma::vec>(ns);
   }
@@ -1579,8 +1738,24 @@ inline SinkhornBalancedResult sinkhorn_balanced_log(
   const arma::vec logq = arma::log(q + kTiny);
 
   double err = std::numeric_limits<double>::infinity();
+  if (has_initial_potentials) {
+    arma::vec row_marg(ns);
+    arma::vec col_marg(nt);
+    for (arma::uword i = 0; i < ns; ++i) {
+      const arma::vec z = (g - cost.row(i).t()) / epsilon;
+      row_marg(i) = std::exp((f(i) / epsilon) + logsumexp_vec(z));
+    }
+    for (arma::uword j = 0; j < nt; ++j) {
+      const arma::vec z = (f - cost.col(j)) / epsilon;
+      col_marg(j) = std::exp((g(j) / epsilon) + logsumexp_vec(z));
+    }
+    err = std::max(
+      arma::max(arma::abs(row_marg - p)),
+      arma::max(arma::abs(col_marg - q))
+    );
+  }
   int it = 0;
-  for (; it < max_iter; ++it) {
+  for (; it < max_iter && !(has_initial_potentials && err < tol); ++it) {
     for (arma::uword i = 0; i < ns; ++i) {
       const arma::vec z = (g - cost.row(i).t()) / epsilon;
       f(i) = epsilon * (logp(i) - logsumexp_vec(z));
@@ -1913,8 +2088,8 @@ inline void uot_cost_matrix_kl_joint_inplace_f(
     arma::fvec& B) {
   pi1 = arma::sum(pi, 1);
   pi2 = arma::sum(pi, 0).t();
-  A = X_sqr * pi1;
-  B = Y_sqr * pi2;
+  A = matvec_f(X_sqr, pi1);
+  B = matvec_f(Y_sqr, pi2);
   sgemm_nn(X, pi, scratch);
   sgemm_nn(scratch, Yt, uot_cost);
 
@@ -2373,8 +2548,33 @@ inline SinkhornUnbalancedResult sinkhorn_unbalanced_kl(
         const bool robust_stop = (target_abs < target_tol) &&
           (update_rel < rel_tol || delta_rel < col_rel_tol);
         if (legacy_stop || robust_stop) {
-          ++it;
-          break;
+          // The heuristic criteria above are useful candidate stops, but the
+          // public solver certificate is the fixed-point residual returned
+          // below. Re-evaluate that same residual here so a loose heuristic
+          // cannot terminate an inner solve that its caller must reject.
+          if (use_blas) {
+            dgemv_n(ws.K, ws.v, ws.Kv);
+            dgemv_t(ws.K, ws.u, ws.Ktu);
+          } else if (use_blocked) {
+            matvec_colmajor_blocked(ws.K, ws.v, ws.Kv);
+            tmatvec_colmajor_blocked(ws.K, ws.u, ws.Ktu);
+          } else {
+            matvec_colmajor(ws.K, ws.v, ws.Kv);
+            tmatvec_colmajor(ws.K, ws.u, ws.Ktu);
+          }
+          ws.Kv += kTiny;
+          ws.Ktu += kTiny;
+          const double certified_update_abs = std::max(
+            scaling_update_residual(a, ws.Kv, tau1, ws.u),
+            scaling_update_residual(b, ws.Ktu, tau2, ws.v)
+          );
+          const double certified_scaling = std::max(
+            max_abs_vec(ws.u), max_abs_vec(ws.v)
+          );
+          if (certified_update_abs / (certified_scaling + kTiny) <= tol) {
+            ++it;
+            break;
+          }
         }
       }
     }
@@ -2544,8 +2744,29 @@ inline SinkhornUnbalancedResultF sinkhorn_unbalanced_kl_f(
         const bool robust_stop = (target_abs < target_tol) &&
           (update_rel < rel_tol || delta_rel < col_rel_tol);
         if (legacy_stop || robust_stop) {
-          ++it;
-          break;
+          if (use_blas) {
+            sgemv_n(ws.K, ws.v, ws.Kv);
+            sgemv_t(ws.K, ws.u, ws.Ktu);
+          } else if (use_blocked) {
+            matvec_colmajor_blocked(ws.K, ws.v, ws.Kv);
+            tmatvec_colmajor_blocked(ws.K, ws.u, ws.Ktu);
+          } else {
+            matvec_colmajor(ws.K, ws.v, ws.Kv);
+            tmatvec_colmajor(ws.K, ws.u, ws.Ktu);
+          }
+          ws.Kv += kTinyF;
+          ws.Ktu += kTinyF;
+          const float certified_update_abs = std::max(
+            scaling_update_residual_f(a, ws.Kv, tau1, ws.u),
+            scaling_update_residual_f(b, ws.Ktu, tau2, ws.v)
+          );
+          const float certified_scaling = std::max(
+            max_abs_vec_f(ws.u), max_abs_vec_f(ws.v)
+          );
+          if (certified_update_abs / (certified_scaling + kTinyF) <= tol) {
+            ++it;
+            break;
+          }
         }
       }
     }
@@ -2573,7 +2794,7 @@ inline SinkhornUnbalancedResultF sinkhorn_unbalanced_kl_f(
   ws.last_err = err;
   ws.last_iters = it;
   SinkhornUnbalancedResultF out;
-  out.plan = (ws.u * ws.v.t()) % ws.K;
+  out.plan = outer_product_f(ws.u, ws.v) % ws.K;
   out.iters = it;
   out.err = err;
   out.warm_started = use_warm;
@@ -3421,10 +3642,10 @@ inline Rcpp::List fgw_entropic_square_mixed_impl(
     if (m > 0.0f) {
       T /= m;
     } else {
-      T = pf * qf.t();
+      T = outer_product_f(pf, qf);
     }
   } else {
-    T = pf * qf.t();
+    T = outer_product_f(pf, qf);
   }
   arma::fmat T_prev_check = T;
   arma::fvec u_ws = arma::ones<arma::fvec>(pf.n_elem);
@@ -3758,7 +3979,7 @@ inline SrfgwEntropicCoreResult entropic_semirelaxed_fgw_square_core_mixed(
   const arma::fmat C1_sqr = C1f % C1f;
   const arma::fmat C2_sqr = C2f % C2f;
   const arma::fmat fC2t = C2_sqr.t();
-  const arma::fvec left = C1_sqr * pf;
+  const arma::fvec left = matvec_f(C1_sqr, pf);
 
   arma::fmat constC(ns, nt);
   for (arma::uword j = 0; j < nt; ++j) {
@@ -3775,7 +3996,7 @@ inline SrfgwEntropicCoreResult entropic_semirelaxed_fgw_square_core_mixed(
     const arma::fmat C1_t = C1f.t();
     const arma::fmat C2_t = C2f.t();
     const arma::fmat C1_t_sqr = C1_t % C1_t;
-    const arma::fvec left_t = C1_t_sqr * pf;
+    const arma::fvec left_t = matvec_f(C1_t_sqr, pf);
     constCt.set_size(ns, nt);
     for (arma::uword j = 0; j < nt; ++j) {
       constCt.col(j) = left_t;
@@ -3803,7 +4024,8 @@ inline SrfgwEntropicCoreResult entropic_semirelaxed_fgw_square_core_mixed(
       }
     }
   } else {
-    Gf = pf * (arma::ones<arma::frowvec>(nt) / static_cast<float>(nt));
+    Gf = outer_product_f(
+      pf, arma::ones<arma::fvec>(nt) / static_cast<float>(nt));
   }
 
   arma::fmat G_prev = Gf;
@@ -3832,20 +4054,20 @@ inline SrfgwEntropicCoreResult entropic_semirelaxed_fgw_square_core_mixed(
 
     const arma::frowvec qG = arma::sum(Gf, 0);
     if (symmetric) {
-      const arma::frowvec marg = qG * fC2t;
+      const arma::frowvec marg = row_times_matrix_f(qG, fC2t);
       grad_quad = constC;
       grad_quad.each_row() += marg;
       sgemm_nn(hC1, Gf, scratch);
       sgemm_nt_accum(scratch, hC2, grad_quad, -1.0f, 1.0f);
     } else {
-      const arma::frowvec marg1 = qG * fC2t;
+      const arma::frowvec marg1 = row_times_matrix_f(qG, fC2t);
       grad1 = constC;
       grad1.each_row() += marg1;
       sgemm_nn(hC1, Gf, scratch);
       sgemm_nt_accum(scratch, hC2, grad1, -1.0f, 1.0f);
       grad1 *= 2.0f;
 
-      const arma::frowvec marg2 = qG * fC2;
+      const arma::frowvec marg2 = row_times_matrix_f(qG, fC2);
       grad2 = constCt;
       grad2.each_row() += marg2;
       sgemm_nn(hC1t, Gf, scratch2);
@@ -4270,10 +4492,10 @@ inline FgwEntropicCoreResult fgw_entropic_square_mixed_core(
     if (m > 0.0f) {
       T /= m;
     } else {
-      T = pf * qf->t();
+      T = outer_product_f(pf, *qf);
     }
   } else {
-    T = pf * qf->t();
+    T = outer_product_f(pf, *qf);
   }
   arma::fmat T_prev_check = T;
   arma::fvec u_ws = arma::ones<arma::fvec>(pf.n_elem);
@@ -5836,7 +6058,7 @@ Rcpp::List cpp_fugw_kl_square(
   const arma::fmat Cx_sqr_f = Cxf % Cxf;
   const arma::fmat Cy_sqr_f = Cyf % Cyf;
   const arma::fmat Cy_t_f = Cyf.t();
-  const arma::fmat wxy_f = wxf * wyf.t();
+  const arma::fmat wxy_f = outer_product_f(wxf, wyf);
   const arma::fvec log_wxf = arma::log(wxf + kTinyF);
   const arma::fvec log_wyf = arma::log(wyf + kTinyF);
 
@@ -7469,7 +7691,8 @@ Rcpp::List cpp_semirelaxed_fgw_cg_square_fast(
 
     arma::fmat G_f;
     if (init_plan.n_elem == 0) {
-      G_f = p_f * (arma::ones<arma::fvec>(nt) / static_cast<float>(nt)).t();
+      G_f = outer_product_f(
+        p_f, arma::ones<arma::fvec>(nt) / static_cast<float>(nt));
     } else {
       if (init_plan.n_rows != ns || init_plan.n_cols != nt) {
         Rcpp::stop("`init_plan` has incompatible shape.");
@@ -7482,10 +7705,10 @@ Rcpp::List cpp_semirelaxed_fgw_cg_square_fast(
     const arma::fmat C1_sq_f = C1_f % C1_f;
     const arma::fmat C2_sq_f = C2_f % C2_f;
     const arma::fmat fC2t_f = C2_sq_f.t();
-    const arma::fvec left_f = C1_sq_f * p_f;
+    const arma::fvec left_f = matvec_f(C1_sq_f, p_f);
 
     arma::fvec q_f = arma::sum(G_f, 0).t();
-    arma::fvec right_q_f = fC2t_f * q_f;
+    arma::fvec right_q_f = matvec_f(fC2t_f, q_f);
 
     arma::fmat Acur_f;
     arma::fmat scratch_f;
@@ -7498,8 +7721,8 @@ Rcpp::List cpp_semirelaxed_fgw_cg_square_fast(
     }
     arma::fmat grad_f = 2.0f * tens_f;
 
-    double quad_raw = static_cast<double>(arma::accu(tens_f % G_f));
-    double lin_loss = use_lin ? static_cast<double>(arma::accu(M_lin_f % G_f)) : 0.0;
+    double quad_raw = static_cast<double>(schur_sum_f(tens_f, G_f));
+    double lin_loss = use_lin ? static_cast<double>(schur_sum_f(M_lin_f, G_f)) : 0.0;
     double cost = lin_loss + alpha * quad_raw;
 
     std::vector<double> loss_trace;
@@ -7562,19 +7785,19 @@ Rcpp::List cpp_semirelaxed_fgw_cg_square_fast(
 
       sgemm_nn(hC1_f, delta_f, scratch_f);
       sgemm_nt(scratch_f, hC2_f, dot_f);
-      right_delta_f = fC2t_f * qdelta_f;
+      right_delta_f = matvec_f(fC2t_f, qdelta_f);
 
-      const double sum_dot_delta = static_cast<double>(arma::accu(dot_f % delta_f));
-      const double sum_dot_G = static_cast<double>(arma::accu(dot_f % G_f));
-      const double sum_Acur_delta = static_cast<double>(arma::accu(Acur_f % delta_f));
+      const double sum_dot_delta = static_cast<double>(schur_sum_f(dot_f, delta_f));
+      const double sum_dot_G = static_cast<double>(schur_sum_f(dot_f, G_f));
+      const double sum_Acur_delta = static_cast<double>(schur_sum_f(Acur_f, delta_f));
 
-      const double a_ls = alpha * (static_cast<double>(arma::dot(right_delta_f, qdelta_f)) - sum_dot_delta);
+      const double a_ls = alpha * (static_cast<double>(dot_product_f(right_delta_f, qdelta_f)) - sum_dot_delta);
       double b_ls = alpha * (
-        static_cast<double>(arma::dot(right_delta_f, q_f)) - sum_dot_G +
-          static_cast<double>(arma::dot(right_q_f, qdelta_f)) - sum_Acur_delta
+        static_cast<double>(dot_product_f(right_delta_f, q_f)) - sum_dot_G +
+          static_cast<double>(dot_product_f(right_q_f, qdelta_f)) - sum_Acur_delta
       );
       if (use_lin) {
-        b_ls += static_cast<double>(arma::accu(M_lin_f % delta_f));
+        b_ls += static_cast<double>(schur_sum_f(M_lin_f, delta_f));
       }
 
       double step = solve_1d_linesearch_quad(a_ls, b_ls);
@@ -7800,18 +8023,94 @@ Rcpp::List cpp_ot_sinkhorn(
     double epsilon,
     int max_iter,
     double tol,
-    bool use_log) {
+    bool use_log,
+    const arma::vec& init_source_potential,
+    const arma::vec& init_target_potential) {
+  const bool has_initial_potentials =
+    init_source_potential.n_elem > 0 || init_target_potential.n_elem > 0;
+  if (has_initial_potentials &&
+      (init_source_potential.n_elem != p.n_elem ||
+       init_target_potential.n_elem != q.n_elem)) {
+    Rcpp::stop("Initial Sinkhorn potentials have incompatible dimensions.");
+  }
+  if (has_initial_potentials &&
+      (!init_source_potential.is_finite() || !init_target_potential.is_finite())) {
+    Rcpp::stop("Initial Sinkhorn potentials must be finite.");
+  }
+
   arma::vec u;
   arma::vec v;
+  arma::vec f;
+  arma::vec g;
+  if (has_initial_potentials) {
+    if (use_log) {
+      f = init_source_potential;
+      g = init_target_potential;
+    } else {
+      u = arma::exp(init_source_potential / epsilon);
+      v = arma::exp(init_target_potential / epsilon);
+      if (!u.is_finite() || !v.is_finite()) {
+        Rcpp::stop(
+          "Initial Sinkhorn potentials overflow the scaling backend; use the log backend."
+        );
+      }
+    }
+  }
   const SinkhornBalancedResult res = use_log
-    ? sinkhorn_balanced_log(p, q, M, epsilon, max_iter, tol, u, v)
+    ? sinkhorn_balanced_log(p, q, M, epsilon, max_iter, tol, f, g)
     : sinkhorn_balanced(p, q, M, epsilon, max_iter, tol, u, v);
   const double ot_dist = arma::accu(M % res.plan);
+
+  arma::vec source_potential(p.n_elem, arma::fill::zeros);
+  arma::vec target_potential(q.n_elem, arma::fill::zeros);
+  if (use_log) {
+    source_potential = res.f;
+    target_potential = res.g;
+  } else {
+    for (arma::uword i = 0; i < p.n_elem; ++i) {
+      if (p(i) > 0.0) {
+        if (!(res.u(i) > 0.0) || !std::isfinite(res.u(i))) {
+          Rcpp::stop("Scaling backend produced a nonpositive source scaling.");
+        }
+        source_potential(i) = epsilon * std::log(res.u(i));
+      }
+    }
+    for (arma::uword j = 0; j < q.n_elem; ++j) {
+      if (q(j) > 0.0) {
+        if (!(res.v(j) > 0.0) || !std::isfinite(res.v(j))) {
+          Rcpp::stop("Scaling backend produced a nonpositive target scaling.");
+        }
+        target_potential(j) = epsilon * std::log(res.v(j));
+      }
+    }
+  }
+  for (arma::uword i = 0; i < p.n_elem; ++i) {
+    if (p(i) == 0.0) source_potential(i) = 0.0;
+  }
+  for (arma::uword j = 0; j < q.n_elem; ++j) {
+    if (q(j) == 0.0) target_potential(j) = 0.0;
+  }
+  const double source_mass = arma::accu(p);
+  const double gauge_shift = source_mass > 0.0
+    ? arma::dot(p, source_potential) / source_mass
+    : 0.0;
+  source_potential -= gauge_shift;
+  target_potential += gauge_shift;
+  for (arma::uword i = 0; i < p.n_elem; ++i) {
+    if (p(i) == 0.0) source_potential(i) = 0.0;
+  }
+  for (arma::uword j = 0; j < q.n_elem; ++j) {
+    if (q(j) == 0.0) target_potential(j) = 0.0;
+  }
   return Rcpp::List::create(
     Rcpp::Named("plan") = res.plan,
     Rcpp::Named("ot_dist") = ot_dist,
     Rcpp::Named("iterations") = res.iters,
-    Rcpp::Named("error") = res.err
+    Rcpp::Named("error") = res.err,
+    Rcpp::Named("source_potential") = source_potential,
+    Rcpp::Named("target_potential") = target_potential,
+    Rcpp::Named("potential_gauge") = "weighted_source_mean_zero",
+    Rcpp::Named("warm_started") = has_initial_potentials
   );
 }
 
@@ -8513,5 +8812,409 @@ Rcpp::List cpp_ucoot_kl(
     Rcpp::Named("feat_ms") = feat_ms,
     Rcpp::Named("samp_ms") = samp_ms,
     Rcpp::Named("warm_start") = use_warm_start
+  );
+}
+
+namespace {
+
+inline double ti_neg_inf() {
+  return -std::numeric_limits<double>::infinity();
+}
+
+inline arma::vec ti_safe_log(const arma::vec& weights) {
+  arma::vec out(weights.n_elem);
+  for (arma::uword i = 0; i < weights.n_elem; ++i) {
+    out(i) = weights(i) > 0.0 ? std::log(weights(i)) : ti_neg_inf();
+  }
+  return out;
+}
+
+inline double ti_logsumexp_affine(
+    const arma::vec& log_weights,
+    const arma::vec& values,
+    double scale) {
+  double maximum = ti_neg_inf();
+  for (arma::uword i = 0; i < values.n_elem; ++i) {
+    if (!std::isfinite(log_weights(i))) continue;
+    maximum = std::max(maximum, log_weights(i) + scale * values(i));
+  }
+  if (!std::isfinite(maximum)) return ti_neg_inf();
+  double total = 0.0;
+  for (arma::uword i = 0; i < values.n_elem; ++i) {
+    if (!std::isfinite(log_weights(i))) continue;
+    total += std::exp(log_weights(i) + scale * values(i) - maximum);
+  }
+  return maximum + std::log(total);
+}
+
+inline double ti_softmin(
+    const arma::vec& log_weights,
+    const arma::vec& values,
+    double temperature) {
+  const double value = ti_logsumexp_affine(
+    log_weights, values, -1.0 / temperature
+  );
+  return std::isfinite(value)
+    ? -temperature * value
+    : std::numeric_limits<double>::infinity();
+}
+
+inline double ti_max_abs_difference(
+    const arma::vec& left,
+    const arma::vec& right) {
+  double out = 0.0;
+  for (arma::uword i = 0; i < left.n_elem; ++i) {
+    out = std::max(out, std::abs(left(i) - right(i)));
+  }
+  return out;
+}
+
+struct TiFlowEdge {
+  int to;
+  int reverse;
+  double capacity;
+};
+
+class TiDinic {
+ public:
+  explicit TiDinic(int n)
+      : graph_(static_cast<std::size_t>(n)), level_(static_cast<std::size_t>(n)),
+        next_(static_cast<std::size_t>(n)) {}
+
+  void add_edge(int from, int to, double capacity) {
+    TiFlowEdge forward{to, static_cast<int>(graph_[to].size()), capacity};
+    TiFlowEdge reverse{from, static_cast<int>(graph_[from].size()), 0.0};
+    graph_[from].push_back(forward);
+    graph_[to].push_back(reverse);
+  }
+
+  double max_flow(int source, int sink, double tolerance) {
+    double flow = 0.0;
+    while (bfs(source, sink, tolerance)) {
+      std::fill(next_.begin(), next_.end(), 0);
+      while (true) {
+        const double pushed = dfs(
+          source, sink, std::numeric_limits<double>::infinity(), tolerance
+        );
+        if (pushed <= tolerance) break;
+        flow += pushed;
+      }
+    }
+    return flow;
+  }
+
+ private:
+  bool bfs(int source, int sink, double tolerance) {
+    std::fill(level_.begin(), level_.end(), -1);
+    std::queue<int> queue;
+    level_[source] = 0;
+    queue.push(source);
+    while (!queue.empty()) {
+      const int vertex = queue.front();
+      queue.pop();
+      for (const TiFlowEdge& edge : graph_[vertex]) {
+        if (edge.capacity > tolerance && level_[edge.to] < 0) {
+          level_[edge.to] = level_[vertex] + 1;
+          queue.push(edge.to);
+        }
+      }
+    }
+    return level_[sink] >= 0;
+  }
+
+  double dfs(int vertex, int sink, double flow, double tolerance) {
+    if (vertex == sink) return flow;
+    for (int& index = next_[vertex];
+         index < static_cast<int>(graph_[vertex].size()); ++index) {
+      TiFlowEdge& edge = graph_[vertex][index];
+      if (edge.capacity <= tolerance || level_[edge.to] != level_[vertex] + 1) {
+        continue;
+      }
+      const double pushed = dfs(
+        edge.to, sink, std::min(flow, edge.capacity), tolerance
+      );
+      if (pushed > tolerance) {
+        edge.capacity -= pushed;
+        graph_[edge.to][edge.reverse].capacity += pushed;
+        return pushed;
+      }
+    }
+    return 0.0;
+  }
+
+  std::vector<std::vector<TiFlowEdge>> graph_;
+  std::vector<int> level_;
+  std::vector<int> next_;
+};
+
+}  // namespace
+
+// [[Rcpp::export]]
+Rcpp::List cpp_ot_sinkhorn_unbalanced_ti_sparse(
+    const Rcpp::IntegerVector& row_ptr,
+    const Rcpp::IntegerVector& col_idx,
+    const Rcpp::NumericVector& row_cost,
+    const Rcpp::IntegerVector& col_ptr,
+    const Rcpp::IntegerVector& row_idx,
+    const Rcpp::NumericVector& col_cost,
+    int n_source,
+    int n_target,
+    const arma::vec& source_measure,
+    const arma::vec& target_measure,
+    double epsilon,
+    double rho_source,
+    double rho_target,
+    int max_iter,
+    double tol) {
+  if (n_source < 1 || n_target < 1) {
+    Rcpp::stop("Sparse TI-UOT dimensions must be positive.");
+  }
+  if (row_ptr.size() != n_source + 1 || col_ptr.size() != n_target + 1) {
+    Rcpp::stop("Sparse TI-UOT pointer dimensions are inconsistent.");
+  }
+  if (col_idx.size() != row_cost.size() || row_idx.size() != col_cost.size() ||
+      col_idx.size() != row_idx.size()) {
+    Rcpp::stop("Sparse TI-UOT CSR and CSC arrays must have identical support size.");
+  }
+  if (source_measure.n_elem != static_cast<arma::uword>(n_source) ||
+      target_measure.n_elem != static_cast<arma::uword>(n_target)) {
+    Rcpp::stop("Sparse TI-UOT measure dimensions are inconsistent.");
+  }
+  if (!(epsilon > 0.0) || !(rho_source > 0.0) || !(rho_target > 0.0) ||
+      max_iter < 1 || !(tol > 0.0)) {
+    Rcpp::stop("Sparse TI-UOT controls must be positive.");
+  }
+
+  const int nnz = col_idx.size();
+  if (row_ptr[0] != 0 || row_ptr[n_source] != nnz ||
+      col_ptr[0] != 0 || col_ptr[n_target] != nnz) {
+    Rcpp::stop("Sparse TI-UOT pointers must be zero-based and span all edges.");
+  }
+  for (int i = 0; i < n_source; ++i) {
+    if (row_ptr[i] > row_ptr[i + 1]) {
+      Rcpp::stop("Sparse TI-UOT row pointers must be nondecreasing.");
+    }
+  }
+  for (int j = 0; j < n_target; ++j) {
+    if (col_ptr[j] > col_ptr[j + 1]) {
+      Rcpp::stop("Sparse TI-UOT column pointers must be nondecreasing.");
+    }
+  }
+
+  const arma::vec log_source = ti_safe_log(source_measure);
+  const arma::vec log_target = ti_safe_log(target_measure);
+  arma::vec source_bar(n_source, arma::fill::zeros);
+  arma::vec target_bar(n_target, arma::fill::zeros);
+  arma::vec source_tmp(n_source);
+  arma::vec target_tmp(n_target);
+  arma::vec source_next(n_source);
+  arma::vec target_next(n_target);
+
+  const double denominator = epsilon + rho_source + rho_target;
+  const double xi_source_target =
+    epsilon * rho_target / (rho_source * denominator);
+  const double xi_target_source =
+    epsilon * rho_source / (rho_target * denominator);
+  const double k_source =
+    (epsilon / (epsilon + rho_source)) *
+    (rho_source / (rho_source + rho_target));
+  const double k_target =
+    (epsilon / (epsilon + rho_target)) *
+    (rho_target / (rho_source + rho_target));
+  const double source_contraction = rho_source / (rho_source + epsilon);
+  const double target_contraction = rho_target / (rho_target + epsilon);
+  const double inverse_epsilon = 1.0 / epsilon;
+
+  bool converged = false;
+  bool numerical_ok = true;
+  double residual = std::numeric_limits<double>::infinity();
+  int iterations = 0;
+  const auto started = std::chrono::steady_clock::now();
+
+  for (int iteration = 0; iteration < max_iter; ++iteration) {
+    const double target_scalar = ti_softmin(
+      log_target, target_bar, rho_target
+    );
+    for (int i = 0; i < n_source; ++i) {
+      double maximum = ti_neg_inf();
+      double total = 0.0;
+      for (int edge = row_ptr[i]; edge < row_ptr[i + 1]; ++edge) {
+        const int j = col_idx[edge] - 1;
+        if (j < 0 || j >= n_target || !std::isfinite(row_cost[edge])) {
+          Rcpp::stop("Sparse TI-UOT CSR edge is invalid.");
+        }
+        if (!std::isfinite(log_target(j))) continue;
+        const double value = log_target(j) +
+          (target_bar(j) - row_cost[edge]) * inverse_epsilon;
+        if (value > maximum) {
+          total = total * (std::isfinite(maximum)
+            ? std::exp(maximum - value) : 0.0) + 1.0;
+          maximum = value;
+        } else {
+          total += std::exp(value - maximum);
+        }
+      }
+      if (source_measure(i) == 0.0) {
+        source_tmp(i) = 0.0;
+      } else {
+        const double softmin = total > 0.0
+          ? -epsilon * (maximum + std::log(total))
+          : std::numeric_limits<double>::infinity();
+        source_tmp(i) = source_contraction * softmin - k_source * target_scalar;
+      }
+    }
+    const double source_scalar_tmp = ti_softmin(
+      log_source, source_tmp, rho_source
+    );
+    source_next = source_tmp + xi_source_target * source_scalar_tmp;
+    for (int i = 0; i < n_source; ++i) {
+      if (source_measure(i) == 0.0) source_next(i) = 0.0;
+    }
+
+    const double source_scalar = ti_softmin(
+      log_source, source_next, rho_source
+    );
+    for (int j = 0; j < n_target; ++j) {
+      double maximum = ti_neg_inf();
+      double total = 0.0;
+      for (int edge = col_ptr[j]; edge < col_ptr[j + 1]; ++edge) {
+        const int i = row_idx[edge] - 1;
+        if (i < 0 || i >= n_source || !std::isfinite(col_cost[edge])) {
+          Rcpp::stop("Sparse TI-UOT CSC edge is invalid.");
+        }
+        if (!std::isfinite(log_source(i))) continue;
+        const double value = log_source(i) +
+          (source_next(i) - col_cost[edge]) * inverse_epsilon;
+        if (value > maximum) {
+          total = total * (std::isfinite(maximum)
+            ? std::exp(maximum - value) : 0.0) + 1.0;
+          maximum = value;
+        } else {
+          total += std::exp(value - maximum);
+        }
+      }
+      if (target_measure(j) == 0.0) {
+        target_tmp(j) = 0.0;
+      } else {
+        const double softmin = total > 0.0
+          ? -epsilon * (maximum + std::log(total))
+          : std::numeric_limits<double>::infinity();
+        target_tmp(j) = target_contraction * softmin - k_target * source_scalar;
+      }
+    }
+    const double target_scalar_tmp = ti_softmin(
+      log_target, target_tmp, rho_target
+    );
+    target_next = target_tmp + xi_target_source * target_scalar_tmp;
+    for (int j = 0; j < n_target; ++j) {
+      if (target_measure(j) == 0.0) target_next(j) = 0.0;
+    }
+
+    residual = std::max(
+      ti_max_abs_difference(source_next, source_bar),
+      ti_max_abs_difference(target_next, target_bar)
+    );
+    source_bar.swap(source_next);
+    target_bar.swap(target_next);
+    iterations = iteration + 1;
+    numerical_ok = source_bar.is_finite() && target_bar.is_finite() &&
+      std::isfinite(residual);
+    if (!numerical_ok) break;
+    if (residual <= tol) {
+      converged = true;
+      break;
+    }
+  }
+
+  double translation = NA_REAL;
+  arma::vec source_potential(n_source);
+  arma::vec target_potential(n_target);
+  source_potential.fill(NA_REAL);
+  target_potential.fill(NA_REAL);
+  if (numerical_ok) {
+    const double source_log_partition = ti_logsumexp_affine(
+      log_source, source_bar, -1.0 / rho_source
+    );
+    const double target_log_partition = ti_logsumexp_affine(
+      log_target, target_bar, -1.0 / rho_target
+    );
+    translation = rho_source * rho_target / (rho_source + rho_target) *
+      (source_log_partition - target_log_partition);
+    source_potential = source_bar + translation;
+    target_potential = target_bar - translation;
+    numerical_ok = std::isfinite(translation) && source_potential.is_finite() &&
+      target_potential.is_finite();
+  }
+
+  const double solve_seconds = std::chrono::duration<double>(
+    std::chrono::steady_clock::now() - started
+  ).count();
+  return Rcpp::List::create(
+    Rcpp::Named("source_bar") = source_bar,
+    Rcpp::Named("target_bar") = target_bar,
+    Rcpp::Named("translation") = translation,
+    Rcpp::Named("source_potential") = source_potential,
+    Rcpp::Named("target_potential") = target_potential,
+    Rcpp::Named("iterations") = iterations,
+    Rcpp::Named("residual") = residual,
+    Rcpp::Named("converged") = converged,
+    Rcpp::Named("numerical_ok") = numerical_ok,
+    Rcpp::Named("solve_seconds") = solve_seconds,
+    Rcpp::Named("backend") = "cpp_sparse_csr_csc_ti"
+  );
+}
+
+// [[Rcpp::export]]
+Rcpp::List cpp_bipartite_transport_max_flow(
+    int n_source,
+    int n_target,
+    const Rcpp::IntegerVector& source,
+    const Rcpp::IntegerVector& target,
+    const arma::vec& source_measure,
+    const arma::vec& target_measure,
+    double tolerance) {
+  if (n_source < 1 || n_target < 1 ||
+      source_measure.n_elem != static_cast<arma::uword>(n_source) ||
+      target_measure.n_elem != static_cast<arma::uword>(n_target) ||
+      source.size() != target.size() || !(tolerance > 0.0)) {
+    Rcpp::stop("Invalid bipartite max-flow input.");
+  }
+  const double source_total = arma::accu(source_measure);
+  const double target_total = arma::accu(target_measure);
+  const int source_vertex = 0;
+  const int source_offset = 1;
+  const int target_offset = source_offset + n_source;
+  const int sink_vertex = target_offset + n_target;
+  TiDinic graph(sink_vertex + 1);
+  for (int i = 0; i < n_source; ++i) {
+    graph.add_edge(source_vertex, source_offset + i, source_measure(i));
+  }
+  const double edge_capacity = std::max(source_total, target_total);
+  for (R_xlen_t edge = 0; edge < source.size(); ++edge) {
+    const int i = source[edge] - 1;
+    const int j = target[edge] - 1;
+    if (i < 0 || i >= n_source || j < 0 || j >= n_target) {
+      Rcpp::stop("Bipartite max-flow edge index is out of range.");
+    }
+    graph.add_edge(source_offset + i, target_offset + j, edge_capacity);
+  }
+  for (int j = 0; j < n_target; ++j) {
+    graph.add_edge(target_offset + j, sink_vertex, target_measure(j));
+  }
+  const double flow = graph.max_flow(source_vertex, sink_vertex, tolerance);
+  const double target_flow = std::max(source_total, target_total);
+  const bool equal_total = std::abs(source_total - target_total) <= tolerance;
+  const bool feasible = equal_total &&
+    std::abs(flow - source_total) <= tolerance &&
+    std::abs(flow - target_total) <= tolerance;
+  return Rcpp::List::create(
+    Rcpp::Named("max_flow") = flow,
+    Rcpp::Named("source_total") = source_total,
+    Rcpp::Named("target_total") = target_total,
+    Rcpp::Named("equal_total") = equal_total,
+    Rcpp::Named("feasible") = feasible,
+    Rcpp::Named("deficit") = std::max(0.0, target_flow - flow),
+    Rcpp::Named("tolerance") = tolerance,
+    Rcpp::Named("method") = "dinic_exact_bipartite_flow"
   );
 }

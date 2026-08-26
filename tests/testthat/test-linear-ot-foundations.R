@@ -118,17 +118,21 @@ test_that("adversarial unbalanced dynamic range routes to genuine log", {
   )
 })
 
-test_that("deferred linear foundations are not silently exported", {
-  expect_false(exists("ot_partial_sinkhorn", asNamespace("rfugw"), inherits = FALSE))
-  expect_false(exists("ot_sinkhorn_divergence", asNamespace("rfugw"), inherits = FALSE))
-  expect_false(exists("ot_fixed_support_barycenter", asNamespace("rfugw"), inherits = FALSE))
+test_that("accepted linear foundations are exported and documented", {
+  expect_true(exists("ot_partial_sinkhorn", asNamespace("rfugw"), inherits = FALSE))
+  expect_true(exists("ot_sinkhorn_divergence", asNamespace("rfugw"), inherits = FALSE))
+  expect_true(exists("ot_barycenter_weights", asNamespace("rfugw"), inherits = FALSE))
   decision <- readLines(
     trust_test_resource("linear-ot-foundations.md"),
     warn = FALSE
   )
-  expect_true(any(grepl("Deferred", decision, fixed = TRUE)))
-  expect_true(any(grepl("log-domain Dykstra", decision, fixed = TRUE)))
+  expect_true(any(grepl("Fixed-support Wasserstein barycenter weights | Accepted", decision, fixed = TRUE)))
+  expect_true(any(grepl("Entropic partial linear OT | Accepted", decision, fixed = TRUE)))
+  expect_true(grepl(
+    "genuine log Dykstra", paste(decision, collapse = " "), fixed = TRUE
+  ))
   expect_true(any(grepl("regularized primal", decision, fixed = TRUE)))
+  expect_true(any(grepl("Sinkhorn divergence | Accepted", decision, fixed = TRUE)))
 })
 
 test_that("accepted foundations retain a certificate-first representative baseline", {

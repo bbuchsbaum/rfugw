@@ -13,19 +13,20 @@ ot_sinkhorn_unbalanced(
   max_iter = 500L,
   tol = 1e-07,
   init_plan = NULL,
-  method = c("scaling", "log", "auto")
+  method = c("scaling", "log", "auto"),
+  normalization = c("separate", "none", "joint")
 )
 }
 \arguments{
 \item{M}{Cost matrix (\verb{ns x nt}).}
 
-\item{p}{Source weights (default uniform). Renormalized to sum 1.}
+\item{p}{Source finite nonnegative measure (default uniform).}
 
-\item{q}{Target weights (default uniform). Renormalized to sum 1.}
+\item{q}{Target finite nonnegative measure (default uniform).}
 
 \item{epsilon}{Positive entropic regularization.}
 
-\item{rho}{Marginal KL penalties, length 1 or 2.}
+\item{rho}{Marginal generalized-KL penalties, length 1 or 2.}
 
 \item{max_iter}{Maximum Sinkhorn iterations.}
 
@@ -35,9 +36,18 @@ ot_sinkhorn_unbalanced(
 
 \item{method}{\code{"scaling"}, genuine \code{"log"}, or \code{"auto"}. Auto uses the
 documented dynamic-range criterion from \code{ot_sinkhorn()}.}
+
+\item{normalization}{Measure normalization policy. \code{"none"} preserves the
+supplied finite measures. \code{"joint"} applies one common factor so the mean
+source/target mass is one, preserving their mass ratio. \code{"separate"}
+normalizes each measure to mass one and is the backward-compatible default
+during the 0.1 transition.}
 }
 \value{
-An \code{rfugw_result} with \code{plan}, \code{ot_dist}, \code{mass}, and status.
+An \code{rfugw_result}. \code{ot_dist} remains the unregularized transport
+term for compatibility. \code{regularized_objective}, all three generalized-KL
+terms, original/effective measures and masses, transported mass,
+normalization policy, and a fixed-point certificate are also returned.
 }
 \description{
 KL-unbalanced entropic optimal transport

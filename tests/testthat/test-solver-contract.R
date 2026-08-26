@@ -18,7 +18,11 @@ make_pair <- function(seed = 1, ns = 6, nt = 7) {
 test_that("package metadata is real and citation validates", {
   desc <- read.dcf(system.file("DESCRIPTION", package = "rfugw"))
   expect_false(grepl("Codex|example.com", desc[, "Authors@R"]))
-  expect_equal(unname(desc[, "URL"]), "https://github.com/bbuchsbaum/rfugw")
+  urls <- trimws(strsplit(unname(desc[, "URL"]), ",", fixed = TRUE)[[1L]])
+  expect_setequal(urls, c(
+    "https://bbuchsbaum.github.io/rfugw/",
+    "https://github.com/bbuchsbaum/rfugw"
+  ))
   expect_equal(unname(desc[, "BugReports"]), "https://github.com/bbuchsbaum/rfugw/issues")
   cit <- citation("rfugw")
   expect_s3_class(cit, "citation")

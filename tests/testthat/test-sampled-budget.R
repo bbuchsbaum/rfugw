@@ -93,7 +93,7 @@ test_that("unusable low-rank ranks error or warn explicitly", {
   Xs <- matrix(rnorm(24L), 6L, 4L)
   Xt <- matrix(rnorm(32L), 8L, 4L)
   expect_warning(
-    lowrank_gromov_wasserstein_samples(
+    dense_gromov_wasserstein_plan_svd(
       Xs, Xt, reg = 0.1, rank = 20L, numItermax = 20L
     ),
     "clamping"
@@ -141,7 +141,7 @@ test_that("sampled GW quality generally improves with budget", {
   expect_lt(frob_high, stats::median(frob_low))
 })
 
-test_that("low-rank reconstruction error decreases with rank", {
+test_that("dense-plan SVD reconstruction error decreases with rank", {
   d <- make_gw_pair(10L, 20260816L)
   dense <- entropic_gromov_wasserstein(
     d$C1, d$C2, d$p, d$q,
@@ -156,7 +156,7 @@ test_that("low-rank reconstruction error decreases with rank", {
   expect_lt(err8, err4)
   expect_lt(err8, 0.15)
 
-  out <- lowrank_gromov_wasserstein_samples(
+  out <- dense_gromov_wasserstein_plan_svd(
     d$X1, d$X2,
     a = d$p,
     b = d$q,
@@ -168,6 +168,48 @@ test_that("low-rank reconstruction error decreases with rank", {
   recon <- out$Q %*% t(out$R)
   rel <- sqrt(sum((out$plan - recon)^2)) / sqrt(sum(out$plan^2))
   expect_lt(rel, err2)
+  expect_identical(out$representation, "posthoc_svd_of_dense_gw_plan")
+  expect_true(out$dense_plan_materialized)
+  expect_identical(out$solve_memory_order, "O(ns^2 + nt^2 + ns*nt)")
+  expect_equal(out$dense_structure_bytes, as.numeric(
+    object.size(as.matrix(dist(d$X1))) + object.size(as.matrix(dist(d$X2)))
+  ))
+  expect_equal(out$dense_plan_bytes, as.numeric(object.size(out$plan)))
+  expect_equal(out$factor_rank, 4L)
+})
+
+test_that("pseudo-low-rank compatibility has an explicit lifecycle", {
+  set.seed(20260816L)
+  Xs <- matrix(rnorm(18L), 6L, 3L)
+  Xt <- matrix(rnorm(21L), 7L, 3L)
+
+  expect_false(any(c(
+    "alpha", "gamma_init", "cost_factorized_Xs", "cost_factorized_Xt",
+    "stopThr_dykstra", "numItermax_dykstra", "seed_init", "warn",
+    "warn_dykstra"
+  ) %in% names(formals(dense_gromov_wasserstein_plan_svd))))
+
+  expect_warning(
+    legacy <- lowrank_gromov_wasserstein_samples(
+      Xs, Xt, reg = 0.1, rank = 2L, numItermax = 10L
+    ),
+    "deprecated"
+  )
+  expect_identical(legacy$representation, "posthoc_svd_of_dense_gw_plan")
+  expect_true(legacy$dense_plan_materialized)
+
+  expect_error(
+    lowrank_gromov_wasserstein_samples(
+      Xs, Xt, rank = 2L, alpha = 1e-10
+    ),
+    "Unsupported.*alpha"
+  )
+  expect_error(
+    lowrank_gromov_wasserstein_samples(
+      Xs, Xt, rank = 2L, cost_factorized_Xs = list()
+    ),
+    "Unsupported.*cost_factorized_Xs"
+  )
 })
 
 test_that("coordinate and graph inputs store less than dense structure costs", {
