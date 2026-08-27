@@ -146,3 +146,64 @@ jobs:
           path: |
             .gate/numerical-trust
             release-artifact.json
+
+  pot-oracle-release:
+    name: installed-artifact-live-pot-oracle
+    needs: build-artifact
+    runs-on: ubuntu-latest
+    timeout-minutes: 75
+    env:
+      GITHUB_PAT: ${{ secrets.GITHUB_TOKEN }}
+      OMP_NUM_THREADS: "1"
+      OPENBLAS_NUM_THREADS: "1"
+      MKL_NUM_THREADS: "1"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: r-lib/actions/setup-r@v2
+        with:
+          use-public-rspm: true
+      - uses: r-lib/actions/setup-r-dependencies@v2
+        with:
+          extra-packages: |
+            any::digest
+            any::jsonlite
+            any::lpSolve
+            any::Matrix
+            any::testthat
+          needs: check
+      - uses: actions/download-artifact@v4
+        with:
+          name: rfugw-source-${{ github.sha }}
+          path: "."
+      - name: Verify and install the canonical source artifact
+        run: |
+          Rscript tools/numerical-trust/release-artifact.R --mode=verify --commit=${{ github.sha }}
+          R CMD INSTALL rfugw_*.tar.gz
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: tools/pot-oracle/requirements-baseline.txt
+      - name: Install the pinned POT oracle
+        run: python -m pip install --requirement tools/pot-oracle/requirements-baseline.txt
+      - name: Generate release-profile POT evidence
+        run: >-
+          python tools/pot-oracle/generate.py
+          --profile=release
+          --channel=baseline
+          --output=.gate/pot-oracle/pot-release.json
+      - name: Certify the installed canonical artifact
+        run: >-
+          Rscript tools/pot-oracle/compare.R
+          --input=.gate/pot-oracle/pot-release.json
+          --output=.gate/pot-oracle/rfugw-release.json
+          --scope=release
+      - name: Upload release POT evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: pot-oracle-release-${{ github.sha }}
+          if-no-files-found: error
+          path: |
+            .gate/pot-oracle
+            release-artifact.json
