@@ -1,0 +1,58 @@
+{
+  "schema_version": 1,
+  "entries": [
+    {
+      "date": "2026-08-27",
+      "thresholds_md5": "37ba24bde52bf4ab1864828a4e24c57a",
+      "admission_status": "candidate",
+      "evidence": "Initial fail-closed Moment-FUGW admission contract; no release performance baseline is claimed by this entry.",
+      "review_requirement": "Promotion requires a same-commit full-profile artifact, a larger certified endpoint on documented conservative release hardware, and independent numerical and performance review.",
+      "largest_certified_endpoint": null,
+      "artifact": null
+    },
+    {
+      "date": "2026-08-27",
+      "thresholds_md5": "fe8382fa32b689d41feae9db949df802",
+      "admission_status": "candidate",
+      "evidence": "inst/bench/moment-fugw-candidate-scaling-evidence.csv; same-contract full source-mode calibration completed all 56 rows, with four-point runtime exponent 1.704, largest-three exponent 1.852, incremental RSS exponent 1.159, and certified endpoint 512.",
+      "review_requirement": "The largest-three asymptotic runtime fit is preregistered while the four-point fit remains mandatory. Promotion still requires a clean same-commit installed full artifact, retained raw worker files, and independent review.",
+      "largest_certified_endpoint": 512,
+      "artifact": "inst/bench/results/moment_fugw/current (local raw source artifact; not a release baseline)"
+    },
+    {
+      "date": "2026-08-27",
+      "thresholds_md5": "fe8382fa32b689d41feae9db949df802",
+      "admission_status": "candidate",
+      "evidence": "Optimized source-tree evidence: moment-fugw-kernel-evidence.csv passes the four-size fixed-work profile with incremental RSS exponent 1.175 and primary largest-three runtime exponent 1.827; moment-fugw-multiscale-evidence.csv passes all ten planted efficacy cases with 34.6 percent median fine-work reduction; the frozen image, surface, and geometry-rank CSVs pass paired partial-overlap, planted cortical held-out-map, dense-parity, and separated geometry-error gates.",
+      "review_requirement": "This entry remains candidate evidence because the worktree was dirty and the retained measurements are not a clean same-commit installed full artifact. Promotion requires hosted cross-platform replay and independent numerical, performance, and scientific review.",
+      "largest_certified_endpoint": 512,
+      "artifact": "inst/bench/moment-fugw-{kernel,multiscale,image,surface,geometry-rank}-evidence.csv",
+      "release_evidence": false
+    },
+    {
+      "date": "2026-08-27",
+      "thresholds_md5": "fe8382fa32b689d41feae9db949df802",
+      "admission_status": "candidate",
+      "evidence": "A full installed-package replay completed all 56 requested rows at sizes 625, 1250, 2500, and 5000 with no invalid rows, largest-three runtime exponent 1.959, incremental RSS exponent 1.360, and certified endpoint 512. All 228 raw worker receipts are retained with a SHA-256 attestation.",
+      "review_requirement": "The pre-hardening runner failed open when Git metadata was unavailable. Its numerical and performance rows remain candidate evidence, but promotion still requires a clean exact-commit installed replay on hosted macOS and Linux plus independent numerical, performance, and scientific review.",
+      "largest_certified_endpoint": 512,
+      "artifact": "inst/bench/evidence/moment-fugw-full-installed-candidate-20260827/evidence.json",
+      "artifact_sha256": "6a04ff3c59af56e3386f46a7d7346efaaf139dc844227f19b419091b0a28c31c",
+      "source_commit": null,
+      "release_evidence": false
+    },
+    {
+      "date": "2026-08-27",
+      "thresholds_md5": "98edf488583bf5399673eaaec0816228",
+      "admission_status": "candidate",
+      "evidence": "The amended full installed profile completed all 60 rows and retained all 244 raw receipts, including separate Rprofmem solve, objective, apply, and adjoint curves. On local macOS its largest-three runtime exponent was 1.943, all-point exponent 1.895, incremental native-RSS exponent 1.324, and certified endpoint 512; every non-provenance gate passed.",
+      "review_requirement": "The checked tarball was built from a dirty working tree and remains candidate-only. Regenerate on an exact clean candidate commit using hosted macOS and Linux, replay the frozen science matrix on all three platforms, aggregate the technical receipt, and obtain independent numerical, performance, and scientific review before promotion.",
+      "largest_certified_endpoint": 512,
+      "artifact": "inst/bench/evidence/moment-fugw-full-installed-rprofmem-candidate-20260827/evidence.json",
+      "artifact_sha256": "b088d6e793c74ee8446e643cbdca5f5dd306e2bf771e845a5507f71d77527ba7",
+      "checked_tarball_sha256": "013996968eae6d78b6b528e802006cc7e35910d4fec09de49893637dc3a7ba90",
+      "source_commit": null,
+      "release_evidence": false
+    }
+  ]
+}

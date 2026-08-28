@@ -74,6 +74,10 @@ test_that("environment capture records commit, seed, threads, and hardware", {
   expect_true(nzchar(meta$version))
   expect_identical(meta$seed, 7L)
   expect_identical(meta$threads, 2L)
+  expect_type(meta$git_dirty, "logical")
+  expect_length(meta$git_dirty, 1L)
+  expect_true(is.na(meta$git_status_entry_count) ||
+                meta$git_status_entry_count >= 0L)
   expect_true(nzchar(meta$sysname))
   expect_true(nzchar(meta$machine))
   expect_true(nzchar(meta$timestamp))

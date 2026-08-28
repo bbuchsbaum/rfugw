@@ -1,0 +1,99 @@
+{
+  "schema_version": 1,
+  "method_family": "moment_fugw",
+  "profile": "release",
+  "required_package_mode": "installed",
+  "required_platforms": ["Darwin", "Linux", "Windows"],
+  "thread_environment": {
+    "OMP_NUM_THREADS": "1",
+    "OPENBLAS_NUM_THREADS": "1",
+    "MKL_NUM_THREADS": "1",
+    "VECLIB_MAXIMUM_THREADS": "1",
+    "BLIS_NUM_THREADS": "1"
+  },
+  "accuracy": {
+    "script": "inst/bench/moment_fugw_accuracy.R",
+    "design": "inst/bench/moment-fugw-accuracy-design.csv",
+    "profile": "full",
+    "seed": 20260827,
+    "rows": 12,
+    "expected_pairs": [
+      "4x5", "5x4", "8x11", "11x8", "16x19", "19x16",
+      "32x37", "37x32", "64x71", "71x64", "128x127", "127x128"
+    ],
+    "thresholds": {
+      "objective_relative_error": 1e-8,
+      "component_relative_error": 1e-8,
+      "direct_oracle_relative_error": 1e-8,
+      "action_relative_error": 1e-6,
+      "adjoint_relative_error": 1e-6,
+      "mass_relative_error": 1e-7,
+      "moment_relative_error": 1e-7
+    },
+    "require_zero_weight": true,
+    "require_near_zero_weight": true
+  },
+  "multiscale": {
+    "script": "inst/bench/benchmark_moment_fugw_multiscale.R",
+    "seeds": [1701, 1702, 1703, 1704, 1705, 1706, 1707, 1708, 1709, 1710],
+    "rows": 10,
+    "minimum_improved_fraction": 0.8,
+    "minimum_median_inner_iteration_reduction": 0.2,
+    "maximum_objective_relative_difference": 1e-4,
+    "minimum_heldout_score_ratio": 0.99,
+    "maximum_identity_action_difference": 1e-7
+  },
+  "helper_files": [
+    "tests/testthat/helper-bench-resource.R",
+    "tests/testthat/helper-moment-fugw-oracle.R"
+  ],
+  "test_files": [
+    {
+      "path": "tests/testthat/test-fugw-factorized-oracle.R",
+      "required_cases": [
+        "the direct Moment-FUGW oracle has no solver or moment dependency",
+        "the four-index oracle certifies both exact implementations",
+        "oracle fixtures kill the four declared objective mutants",
+        "randomized exact-factor smoke cases retain strict dense parity",
+        "the retained exact-factor matrix satisfies its declared gates"
+      ]
+    },
+    {
+      "path": "tests/testthat/test-fugw-factorized-certificate.R",
+      "required_cases": [
+        "final post-rescale KKT audits match an explicit derivative oracle",
+        "cheap iterate screening never replaces the final full audit",
+        "cost perturbation and post-solve rescaling invalidate block KKT",
+        "nonfinite and fully underflowed implicit states fail closed",
+        "inner failure history is retained while a later retry can recover",
+        "the final certificate uses factors and bounded tiles only"
+      ]
+    },
+    {
+      "path": "tests/testthat/test-fugw-geometry-audit.R",
+      "required_cases": [
+        "exact geometry constructors verify metric invariants",
+        "computed audits reject metadata-only exactness and bad self-costs",
+        "embedded geometry retains reproducible train and held-out evidence",
+        "held-out pairs catch a train-only geometry fit",
+        "verified approximate geometry changes status without solver error",
+        "hierarchy audits cover aggregation, geometry, and round trips",
+        "inconsistent coarse geometry and feature policy fail closed"
+      ]
+    },
+    {
+      "path": "tests/testthat/test-fugw-multiscale.R",
+      "required_cases": [
+        "fugw domains validate factorized geometry and hierarchy metadata",
+        "conditional hierarchy lift has an independent dense oracle",
+        "one-level multiscale is exactly the factorized solver",
+        "multiscale transfers potentials, masses, and moments without dense plans",
+        "multiscale hierarchy and unsupported adaptive support fail closed",
+        "multiscale status distinguishes final-level-only certification",
+        "identity-parent repeated levels preserve the certified endpoint",
+        "budgeted warm starts have a distinct honest final-level status",
+        "planted transfer efficacy meets frozen work and accuracy gates"
+      ]
+    }
+  ]
+}

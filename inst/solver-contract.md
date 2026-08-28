@@ -187,16 +187,21 @@ Each returns the documented objective field of its parent solver.
 ### Experimental / approximate
 
 These are not flagship 0.1 solvers. The only certified claims are the
-quality-versus-budget envelope in `inst/bench/sampled-budget-curves.md`.
-The admission review in `inst/scalable-relational-ot-decision.md` promotes no
-candidate: coordinate and graph inputs save structure-input storage but the
-current solver still materializes a dense plan and at least five
-coupling-sized work matrices. The retained 400/800 measurements and exact
-source-audited lower bounds are in
-`inst/bench/scalable-relational-admission.csv`.
+path-specific claims below. The admission review in
+`inst/scalable-relational-ot-decision.md` promotes no scalable candidate.
+Coordinate and graph sampled-GW inputs save structure-input storage but still
+materialize a dense plan and at least five coupling-sized work matrices. The
+new Moment-FUGW path has dense-oracle, matrix-free representation, four-size
+scaling, multiscale-efficacy, partial-overlap image, and planted cortical
+held-out-map candidate evidence. Those numerical, representation, geometry,
+scientific, and release-evidence layers remain separate. Supported promotion
+still requires a reviewed clean same-commit installed artifact and hosted
+cross-platform replay.
 
 | Function | Status | Certified envelope |
 |---|---|---|
+| `fugw_factorized` | Experimental | Solves the same joint-KL two-coupling objective as `fugw_kl()` for affine-bilinear structure and feature costs. Complete-support couplings are retained by TI-Sinkhorn potentials and applied in blocks. Small exact-factor fixtures certify objective components, both plan actions, masses, and `H`/Gram moments against dense `fugw_kl()`. The result separately reports inner UOT, outer stationarity, geometry representation, and complete-support certificates; global optimality is not claimed. Explicit `plan = "dense"` is the only normal dense-coupling allocation boundary. |
+| `fugw_multiscale` | Experimental | Runs arbitrary-depth coarse-to-fine `fugw_domain()` hierarchies with per-level epsilon schedules. Parent maps prolong both potential pairs; a conditional-product lift preserves mass and recomputes fine-basis marginal, entropy, `H`, and Gram state. An independent tiny dense lift oracle guards the transfer. Only complete implicit support is implemented; `support = "adaptive"` fails closed pending an omitted-mass or reduced-cost certificate. |
 | `sampled_gromov_wasserstein` | Experimental | A full budget `(ns, nt)` is closer to dense entropic GW than a tiny budget such as `(2, 1)`, in square-loss GW and plan Frobenius distance. Intermediate budgets are not certified as monotone. Budgets `< 1` error; source/target counts above `ns`/`nt` warn and clamp. |
 | `sampled_gromov_wasserstein_coords` | Experimental | Same tiny-versus-full quality envelope. Inputs scale as `O(n d)` rather than two dense `n x n` structure costs. |
 | `sampled_gw_from_graphs` | Experimental | Same envelope after diffusion coordinates. A sparse graph plus `k` embeddings stores less than two dense structure costs. |

@@ -42,6 +42,7 @@ jobs:
           extra-packages: |
             local::.
             any::devtools
+            any::digest
             any::jsonlite
             any::lpSolve
             any::Matrix
@@ -51,6 +52,14 @@ jobs:
         run: Rscript tools/numerical-trust/run-laws.R --family=all --scope=nightly
       - name: Controlled mutation sentinels
         run: Rscript tools/numerical-trust/run-mutation-proof.R .gate/numerical-trust
+      - name: Moment-FUGW full differential, certificate, geometry, and multiscale replay
+        run: >-
+          Rscript inst/bench/run_moment_fugw_core_certification.R
+          nightly .gate/moment-fugw-core installed
+      - name: Moment-FUGW planted scientific replay
+        run: >-
+          Rscript inst/bench/run_moment_fugw_scientific_validation.R
+          tuning .gate/moment-fugw-scientific installed
       - name: Collect hosted evidence ledger
         run: Rscript tools/numerical-trust/collect-evidence.R --output=.gate/numerical-trust --scope=nightly --channel=hosted
       - name: Upload nightly numerical evidence
@@ -59,4 +68,8 @@ jobs:
         with:
           name: numerical-trust-nightly
           if-no-files-found: error
-          path: .gate/numerical-trust
+          include-hidden-files: true
+          path: |
+            .gate/numerical-trust
+            .gate/moment-fugw-core
+            .gate/moment-fugw-scientific

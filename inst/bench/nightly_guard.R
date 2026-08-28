@@ -49,7 +49,44 @@ run_accuracy_gate(
 )
 add_check("accuracy_gate", TRUE, 1, 1)
 
-# 2) Mixed-path micro profile.
+# 2) Exact-factor Moment-FUGW differential matrix.
+moment_accuracy_csv <- file.path(out_dir, "moment_fugw_accuracy.csv")
+run_cmd(
+  file.path(R.home("bin"), "Rscript"),
+  c(
+    file.path(bench_root, "moment_fugw_accuracy.R"),
+    moment_accuracy_csv,
+    "full",
+    as.character(seed)
+  )
+)
+moment_accuracy <- read.csv(moment_accuracy_csv, stringsAsFactors = FALSE)
+add_check(
+  "moment_fugw_all_rows_certified",
+  nrow(moment_accuracy) == 12L && all(moment_accuracy$pass),
+  sum(moment_accuracy$pass),
+  12
+)
+add_check(
+  "moment_fugw_objective_relative_error",
+  all(moment_accuracy$objective_relative_error <= 1e-8),
+  max(moment_accuracy$objective_relative_error),
+  1e-8
+)
+add_check(
+  "moment_fugw_action_relative_error",
+  all(moment_accuracy$action_relative_error <= 1e-6),
+  max(moment_accuracy$action_relative_error),
+  1e-6
+)
+add_check(
+  "moment_fugw_moment_relative_error",
+  all(moment_accuracy$moment_relative_error <= 1e-7),
+  max(moment_accuracy$moment_relative_error),
+  1e-7
+)
+
+# 3) Mixed-path micro profile.
 profile_csv <- file.path(out_dir, "profile_mixed_path_nightly.csv")
 run_cmd(
   file.path(R.home("bin"), "Rscript"),
@@ -71,7 +108,7 @@ if (all(need_methods %in% prof$method)) {
   }
 }
 
-# 3) Larger multiset sanity run.
+# 4) Larger multiset sanity run.
 large_csv <- file.path(out_dir, "benchmark_multiset_large_nightly.csv")
 run_cmd(
   file.path(R.home("bin"), "Rscript"),
@@ -92,7 +129,7 @@ for (nn in unique(large$n)) {
   }
 }
 
-# 4) POT parity suite.
+# 5) POT parity suite.
 suite_csv <- file.path(out_dir, "benchmark_suite_nightly.csv")
 pot_csv <- file.path(out_dir, "pot_benchmark_nightly.csv")
 thread_csv <- file.path(out_dir, "thread_scaling_nightly.csv")

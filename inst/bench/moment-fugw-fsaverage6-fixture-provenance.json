@@ -1,0 +1,34 @@
+{
+  "schema_version": 1,
+  "generated_at_utc": "2026-08-27 16:54:34 UTC",
+  "derivation": "Deterministic numeric landmark derivatives of the left fsaverage6 pial and inflated surfaces. Pial coordinates are centered and RMS-normalized; landmarks are farthest-point samples on the normalized inflated surface; weights aggregate full-mesh pial triangle area; geodesics are shortest paths over normalized-pial mesh edges.",
+  "source": {
+    "package": "neuroatlas",
+    "package_version": "0.1.0.9000",
+    "repository_commit": "9e469f21d6c3248910d9e2d57ce18e945b8bd16c",
+    "raw_pial_md5": "78e6d7073a20cf31013dd2963837f955",
+    "raw_inflated_md5": "c78e55996ce6fe277ad1e462c250b535",
+    "full_vertex_count": 40962,
+    "full_face_count": 81920,
+    "coordinate_scale_mm": 50.946091225751488,
+    "upstream_terms_note": "Derived from FreeSurfer fsaverage6 geometry bundled by neuroatlas; the neuroatlas package is MIT-licensed, while upstream surface terms remain authoritative."
+  },
+  "resources": [
+    {
+      "landmark_count": 16,
+      "fixture_fingerprint_md5": "ebaaa6eecd52a7dd7ee339fe8d294cbd",
+      "landmark_resource": "moment-fugw-fsaverage6-16-landmarks.csv",
+      "landmark_resource_md5": "b95b41f8ccecfd3a79cdcd3a06e78ae2",
+      "geodesic_resource": "moment-fugw-fsaverage6-16-geodesic.csv",
+      "geodesic_resource_md5": "401a8ca7ff01fe7cf732fb77b609960c"
+    },
+    {
+      "landmark_count": 36,
+      "fixture_fingerprint_md5": "c448a7e378f48df12e374c3c07aa0120",
+      "landmark_resource": "moment-fugw-fsaverage6-36-landmarks.csv",
+      "landmark_resource_md5": "e0de0ba50a190419a63ea1e60ad85712",
+      "geodesic_resource": "moment-fugw-fsaverage6-36-geodesic.csv",
+      "geodesic_resource_md5": "fa0e85024cd9bcc80e34f18797d47daa"
+    }
+  ]
+}

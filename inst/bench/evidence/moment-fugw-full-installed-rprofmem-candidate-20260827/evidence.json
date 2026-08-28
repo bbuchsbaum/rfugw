@@ -1,0 +1,110 @@
+{
+  "schema_version": 1,
+  "date": "2026-08-27",
+  "method_family": "moment_fugw",
+  "status": "candidate_installed_artifact_current_contract_provenance_incomplete",
+  "release_baseline": false,
+  "source_artifact": {
+    "kind": "checked_source_tarball",
+    "package": "rfugw",
+    "version": "0.1.0",
+    "sha256": "013996968eae6d78b6b528e802006cc7e35910d4fec09de49893637dc3a7ba90",
+    "r_cmd_check_log_sha256": "7d438c9074e0da3367eb2bb5d5bf269850cba0d289ed261a43c811d80ecda360",
+    "r_cmd_check": {
+      "errors": 0,
+      "warnings": 0,
+      "notes": 1,
+      "note_classification": "informational_new_submission"
+    },
+    "exact_candidate_commit_bound": false
+  },
+  "retained_run_artifact": {
+    "artifact": "raw-workers.tar.gz",
+    "sha256": "d1eb1795c7d3ee64ac4632478ab75b6077183f8394acf7db5eff0bc512da854e",
+    "md5": "010cf4c2dd7e7d4fe20cebdfaf294bd4",
+    "contents": [
+      "summary.json",
+      "meta.json",
+      "runs.csv",
+      "raw/"
+    ],
+    "raw_artifact_count": 244,
+    "fresh_worker_count_including_baseline": 61,
+    "measured_and_warmup_rows": 60,
+    "invalid_rows": 0,
+    "infrastructure_error_rows": 0,
+    "summary_sha256": "f6f268476d4268a5e914455cfd21971587d1b589fd7d913a01a288340cfa5e17",
+    "meta_sha256": "2e4bcae0585c803ec1692e4305e3edb60263d57f5dc27a69df05497ad86cb102",
+    "runs_sha256": "79f8b56d6e9e6b340e7346b085029c70ef53e36725b676cfa587e9969137d1f8"
+  },
+  "execution": {
+    "profile": "full",
+    "package_mode": "installed",
+    "timestamp_utc": "2026-08-27T18:48:54Z",
+    "r_version": "4.5.1",
+    "r_platform": "aarch64-apple-darwin20",
+    "sysname": "Darwin",
+    "os_release": "23.3.0",
+    "machine": "arm64",
+    "rss_backend": "macos_time_l_bytes",
+    "compiler_cxx17": "clang++ -arch arm64",
+    "blas": "Apple Accelerate vecLib BLAS",
+    "threads": 1,
+    "repetitions": 3,
+    "warmup_repetitions": 1,
+    "thresholds_md5": "98edf488583bf5399673eaaec0816228"
+  },
+  "results": {
+    "completed_fixed_work_sizes": [625, 1250, 2500, 5000],
+    "median_fixed_work_seconds": [0.062, 0.209, 0.857, 3.09],
+    "median_absolute_peak_rss_bytes": [
+      149602304,
+      167395328,
+      356057088,
+      985038848
+    ],
+    "median_incremental_peak_rss_bytes": [
+      63029248,
+      80822272,
+      269484032,
+      898465792
+    ],
+    "package_load_baseline_rss_bytes": 86573056,
+    "fixed_work_runtime_exponent_largest_three": 1.943015995355432,
+    "fixed_work_runtime_exponent_all_points": 1.89533766992462,
+    "incremental_peak_rss_exponent": 1.323748563933459,
+    "absolute_peak_rss_exponent": 0.924599399566723,
+    "largest_completed_certified_endpoint": 512,
+    "r_visible_allocation_semantics": "cumulative_Rprofmem_allocation_not_peak_RSS",
+    "r_visible_allocation_bytes": {
+      "solve": [54597840, 174009440, 637822448, 2465442560],
+      "objective": [2234392, 3619104, 6389104, 11929104],
+      "apply": [384632, 414608, 474608, 594608],
+      "adjoint": [384632, 414608, 474608, 594608]
+    }
+  },
+  "gate_audit": {
+    "design": true,
+    "full_profile_complete": true,
+    "fixed_work_runtime_envelope": true,
+    "near_linear_peak_memory": true,
+    "prohibited_dense_allocations_absent": true,
+    "r_visible_allocation_complete": true,
+    "rank_curve_complete": true,
+    "operator_batch_curve_complete": true,
+    "larger_certified_endpoint": true,
+    "exact_commit_provenance": true,
+    "clean_exact_source_tree": false,
+    "release_hardware": false,
+    "admission_evaluable": false
+  },
+  "provenance_boundary": {
+    "reported_parent_commit": "696165ff03b24ef3bffcce5555a24b3b24f5ba74",
+    "git_dirty": true,
+    "git_status_entry_count": 1106,
+    "finding": "The exact checked tarball passed R CMD check and the complete amended numerical and performance profile, but it was built from a dirty working tree and therefore does not identify an exact candidate commit.",
+    "hosted_linux_artifact_present": false,
+    "hosted_macos_artifact_present": false,
+    "promotion_evidence": false
+  }
+}

@@ -1,0 +1,9 @@
+profile,curve,n_source,structure_rank,feature_dimension,repetitions,median_seconds,median_peak_rss_bytes,median_incremental_peak_rss_bytes,certified,status,source_commit,git_dirty,rss_backend,admission
+full_source,fixed_work_scaling,625,4,8,3,0.655,283262976,156368896,FALSE,max_iter,696165ff03b24ef3bffcce5555a24b3b24f5ba74,TRUE,macos_time_l_bytes,candidate_only
+full_source,fixed_work_scaling,1250,4,8,3,1.698,393314304,266420224,FALSE,max_iter,696165ff03b24ef3bffcce5555a24b3b24f5ba74,TRUE,macos_time_l_bytes,candidate_only
+full_source,fixed_work_scaling,2500,4,8,3,5.917,1247543296,1120649216,FALSE,max_iter,696165ff03b24ef3bffcce5555a24b3b24f5ba74,TRUE,macos_time_l_bytes,candidate_only
+full_source,fixed_work_scaling,5000,4,8,3,22.133,1535475712,1408581632,FALSE,max_iter,696165ff03b24ef3bffcce5555a24b3b24f5ba74,TRUE,macos_time_l_bytes,candidate_only
+full_source,end_to_end_convergence,64,4,8,3,0.443,167264256,,TRUE,converged_stationary,696165ff03b24ef3bffcce5555a24b3b24f5ba74,TRUE,macos_time_l_bytes,candidate_only
+full_source,end_to_end_convergence,128,4,8,3,0.751,181338112,,TRUE,converged_stationary,696165ff03b24ef3bffcce5555a24b3b24f5ba74,TRUE,macos_time_l_bytes,candidate_only
+full_source,end_to_end_convergence,256,4,8,3,1.952,229998592,,TRUE,converged_stationary,696165ff03b24ef3bffcce5555a24b3b24f5ba74,TRUE,macos_time_l_bytes,candidate_only
+full_source,end_to_end_convergence,512,4,8,3,6.573,302497792,,TRUE,converged_stationary,696165ff03b24ef3bffcce5555a24b3b24f5ba74,TRUE,macos_time_l_bytes,candidate_only

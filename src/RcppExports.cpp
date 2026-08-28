@@ -523,6 +523,171 @@ BEGIN_RCPP
     return rcpp_result_gen;
 END_RCPP
 }
+// cpp_ot_sinkhorn_unbalanced_ti_factorized
+Rcpp::List cpp_ot_sinkhorn_unbalanced_ti_factorized(const arma::vec& row_term, const arma::vec& column_term, const arma::mat& left, const arma::mat& right, const arma::vec& source_measure, const arma::vec& target_measure, double epsilon, double rho_source, double rho_target, int max_iter, double tol, int block_size, const arma::vec& init_source_bar, const arma::vec& init_target_bar);
+RcppExport SEXP _rfugw_cpp_ot_sinkhorn_unbalanced_ti_factorized(SEXP row_termSEXP, SEXP column_termSEXP, SEXP leftSEXP, SEXP rightSEXP, SEXP source_measureSEXP, SEXP target_measureSEXP, SEXP epsilonSEXP, SEXP rho_sourceSEXP, SEXP rho_targetSEXP, SEXP max_iterSEXP, SEXP tolSEXP, SEXP block_sizeSEXP, SEXP init_source_barSEXP, SEXP init_target_barSEXP) {
+BEGIN_RCPP
+    Rcpp::RObject rcpp_result_gen;
+    Rcpp::RNGScope rcpp_rngScope_gen;
+    Rcpp::traits::input_parameter< const arma::vec& >::type row_term(row_termSEXP);
+    Rcpp::traits::input_parameter< const arma::vec& >::type column_term(column_termSEXP);
+    Rcpp::traits::input_parameter< const arma::mat& >::type left(leftSEXP);
+    Rcpp::traits::input_parameter< const arma::mat& >::type right(rightSEXP);
+    Rcpp::traits::input_parameter< const arma::vec& >::type source_measure(source_measureSEXP);
+    Rcpp::traits::input_parameter< const arma::vec& >::type target_measure(target_measureSEXP);
+    Rcpp::traits::input_parameter< double >::type epsilon(epsilonSEXP);
+    Rcpp::traits::input_parameter< double >::type rho_source(rho_sourceSEXP);
+    Rcpp::traits::input_parameter< double >::type rho_target(rho_targetSEXP);
+    Rcpp::traits::input_parameter< int >::type max_iter(max_iterSEXP);
+    Rcpp::traits::input_parameter< double >::type tol(tolSEXP);
+    Rcpp::traits::input_parameter< int >::type block_size(block_sizeSEXP);
+    Rcpp::traits::input_parameter< const arma::vec& >::type init_source_bar(init_source_barSEXP);
+    Rcpp::traits::input_parameter< const arma::vec& >::type init_target_bar(init_target_barSEXP);
+    rcpp_result_gen = Rcpp::wrap(cpp_ot_sinkhorn_unbalanced_ti_factorized(row_term, column_term, left, right, source_measure, target_measure, epsilon, rho_source, rho_target, max_iter, tol, block_size, init_source_bar, init_target_bar));
+    return rcpp_result_gen;
+END_RCPP
+}
+// cpp_factorized_plan_stats
+Rcpp::List cpp_factorized_plan_stats(const arma::vec& row_term, const arma::vec& column_term, const arma::mat& left, const arma::mat& right, const arma::vec& source_measure, const arma::vec& target_measure, const arma::vec& source_bar, const arma::vec& target_bar, double epsilon, int block_size);
+RcppExport SEXP _rfugw_cpp_factorized_plan_stats(SEXP row_termSEXP, SEXP column_termSEXP, SEXP leftSEXP, SEXP rightSEXP, SEXP source_measureSEXP, SEXP target_measureSEXP, SEXP source_barSEXP, SEXP target_barSEXP, SEXP epsilonSEXP, SEXP block_sizeSEXP) {
+BEGIN_RCPP
+    Rcpp::RObject rcpp_result_gen;
+    Rcpp::RNGScope rcpp_rngScope_gen;
+    Rcpp::traits::input_parameter< const arma::vec& >::type row_term(row_termSEXP);
+    Rcpp::traits::input_parameter< const arma::vec& >::type column_term(column_termSEXP);
+    Rcpp::traits::input_parameter< const arma::mat& >::type left(leftSEXP);
+    Rcpp::traits::input_parameter< const arma::mat& >::type right(rightSEXP);
+    Rcpp::traits::input_parameter< const arma::vec& >::type source_measure(source_measureSEXP);
+    Rcpp::traits::input_parameter< const arma::vec& >::type target_measure(target_measureSEXP);
+    Rcpp::traits::input_parameter< const arma::vec& >::type source_bar(source_barSEXP);
+    Rcpp::traits::input_parameter< const arma::vec& >::type target_bar(target_barSEXP);
+    Rcpp::traits::input_parameter< double >::type epsilon(epsilonSEXP);
+    Rcpp::traits::input_parameter< int >::type block_size(block_sizeSEXP);
+    rcpp_result_gen = Rcpp::wrap(cpp_factorized_plan_stats(row_term, column_term, left, right, source_measure, target_measure, source_bar, target_bar, epsilon, block_size));
+    return rcpp_result_gen;
+END_RCPP
+}
+// cpp_factorized_plan_stats_moments
+Rcpp::List cpp_factorized_plan_stats_moments(const arma::vec& row_term, const arma::vec& column_term, const arma::mat& left, const arma::mat& right, const arma::vec& source_measure, const arma::vec& target_measure, const arma::vec& source_bar, const arma::vec& target_bar, double epsilon, const arma::mat& source_moment, const arma::mat& target_moment, int block_size);
+RcppExport SEXP _rfugw_cpp_factorized_plan_stats_moments(SEXP row_termSEXP, SEXP column_termSEXP, SEXP leftSEXP, SEXP rightSEXP, SEXP source_measureSEXP, SEXP target_measureSEXP, SEXP source_barSEXP, SEXP target_barSEXP, SEXP epsilonSEXP, SEXP source_momentSEXP, SEXP target_momentSEXP, SEXP block_sizeSEXP) {
+BEGIN_RCPP
+    Rcpp::RObject rcpp_result_gen;
+    Rcpp::RNGScope rcpp_rngScope_gen;
+    Rcpp::traits::input_parameter< const arma::vec& >::type row_term(row_termSEXP);
+    Rcpp::traits::input_parameter< const arma::vec& >::type column_term(column_termSEXP);
+    Rcpp::traits::input_parameter< const arma::mat& >::type left(leftSEXP);
+    Rcpp::traits::input_parameter< const arma::mat& >::type right(rightSEXP);
+    Rcpp::traits::input_parameter< const arma::vec& >::type source_measure(source_measureSEXP);
+    Rcpp::traits::input_parameter< const arma::vec& >::type target_measure(target_measureSEXP);
+    Rcpp::traits::input_parameter< const arma::vec& >::type source_bar(source_barSEXP);
+    Rcpp::traits::input_parameter< const arma::vec& >::type target_bar(target_barSEXP);
+    Rcpp::traits::input_parameter< double >::type epsilon(epsilonSEXP);
+    Rcpp::traits::input_parameter< const arma::mat& >::type source_moment(source_momentSEXP);
+    Rcpp::traits::input_parameter< const arma::mat& >::type target_moment(target_momentSEXP);
+    Rcpp::traits::input_parameter< int >::type block_size(block_sizeSEXP);
+    rcpp_result_gen = Rcpp::wrap(cpp_factorized_plan_stats_moments(row_term, column_term, left, right, source_measure, target_measure, source_bar, target_bar, epsilon, source_moment, target_moment, block_size));
+    return rcpp_result_gen;
+END_RCPP
+}
+// cpp_factorized_plan_kkt_audit
+Rcpp::List cpp_factorized_plan_kkt_audit(const arma::vec& final_row_term, const arma::vec& final_column_term, const arma::mat& final_left, const arma::mat& final_right, const arma::vec& stored_row_term, const arma::vec& stored_column_term, const arma::mat& stored_left, const arma::mat& stored_right, const arma::vec& source_measure, const arma::vec& target_measure, const arma::vec& source_bar, const arma::vec& target_bar, const arma::vec& source_marginal, const arma::vec& target_marginal, double epsilon, double rho_source, double rho_target, int block_size);
+RcppExport SEXP _rfugw_cpp_factorized_plan_kkt_audit(SEXP final_row_termSEXP, SEXP final_column_termSEXP, SEXP final_leftSEXP, SEXP final_rightSEXP, SEXP stored_row_termSEXP, SEXP stored_column_termSEXP, SEXP stored_leftSEXP, SEXP stored_rightSEXP, SEXP source_measureSEXP, SEXP target_measureSEXP, SEXP source_barSEXP, SEXP target_barSEXP, SEXP source_marginalSEXP, SEXP target_marginalSEXP, SEXP epsilonSEXP, SEXP rho_sourceSEXP, SEXP rho_targetSEXP, SEXP block_sizeSEXP) {
+BEGIN_RCPP
+    Rcpp::RObject rcpp_result_gen;
+    Rcpp::RNGScope rcpp_rngScope_gen;
+    Rcpp::traits::input_parameter< const arma::vec& >::type final_row_term(final_row_termSEXP);
+    Rcpp::traits::input_parameter< const arma::vec& >::type final_column_term(final_column_termSEXP);
+    Rcpp::traits::input_parameter< const arma::mat& >::type final_left(final_leftSEXP);
+    Rcpp::traits::input_parameter< const arma::mat& >::type final_right(final_rightSEXP);
+    Rcpp::traits::input_parameter< const arma::vec& >::type stored_row_term(stored_row_termSEXP);
+    Rcpp::traits::input_parameter< const arma::vec& >::type stored_column_term(stored_column_termSEXP);
+    Rcpp::traits::input_parameter< const arma::mat& >::type stored_left(stored_leftSEXP);
+    Rcpp::traits::input_parameter< const arma::mat& >::type stored_right(stored_rightSEXP);
+    Rcpp::traits::input_parameter< const arma::vec& >::type source_measure(source_measureSEXP);
+    Rcpp::traits::input_parameter< const arma::vec& >::type target_measure(target_measureSEXP);
+    Rcpp::traits::input_parameter< const arma::vec& >::type source_bar(source_barSEXP);
+    Rcpp::traits::input_parameter< const arma::vec& >::type target_bar(target_barSEXP);
+    Rcpp::traits::input_parameter< const arma::vec& >::type source_marginal(source_marginalSEXP);
+    Rcpp::traits::input_parameter< const arma::vec& >::type target_marginal(target_marginalSEXP);
+    Rcpp::traits::input_parameter< double >::type epsilon(epsilonSEXP);
+    Rcpp::traits::input_parameter< double >::type rho_source(rho_sourceSEXP);
+    Rcpp::traits::input_parameter< double >::type rho_target(rho_targetSEXP);
+    Rcpp::traits::input_parameter< int >::type block_size(block_sizeSEXP);
+    rcpp_result_gen = Rcpp::wrap(cpp_factorized_plan_kkt_audit(final_row_term, final_column_term, final_left, final_right, stored_row_term, stored_column_term, stored_left, stored_right, source_measure, target_measure, source_bar, target_bar, source_marginal, target_marginal, epsilon, rho_source, rho_target, block_size));
+    return rcpp_result_gen;
+END_RCPP
+}
+// cpp_factorized_plan_apply
+arma::mat cpp_factorized_plan_apply(const arma::vec& row_term, const arma::vec& column_term, const arma::mat& left, const arma::mat& right, const arma::vec& source_measure, const arma::vec& target_measure, const arma::vec& source_bar, const arma::vec& target_bar, double epsilon, const arma::mat& values, bool adjoint, int block_size);
+RcppExport SEXP _rfugw_cpp_factorized_plan_apply(SEXP row_termSEXP, SEXP column_termSEXP, SEXP leftSEXP, SEXP rightSEXP, SEXP source_measureSEXP, SEXP target_measureSEXP, SEXP source_barSEXP, SEXP target_barSEXP, SEXP epsilonSEXP, SEXP valuesSEXP, SEXP adjointSEXP, SEXP block_sizeSEXP) {
+BEGIN_RCPP
+    Rcpp::RObject rcpp_result_gen;
+    Rcpp::RNGScope rcpp_rngScope_gen;
+    Rcpp::traits::input_parameter< const arma::vec& >::type row_term(row_termSEXP);
+    Rcpp::traits::input_parameter< const arma::vec& >::type column_term(column_termSEXP);
+    Rcpp::traits::input_parameter< const arma::mat& >::type left(leftSEXP);
+    Rcpp::traits::input_parameter< const arma::mat& >::type right(rightSEXP);
+    Rcpp::traits::input_parameter< const arma::vec& >::type source_measure(source_measureSEXP);
+    Rcpp::traits::input_parameter< const arma::vec& >::type target_measure(target_measureSEXP);
+    Rcpp::traits::input_parameter< const arma::vec& >::type source_bar(source_barSEXP);
+    Rcpp::traits::input_parameter< const arma::vec& >::type target_bar(target_barSEXP);
+    Rcpp::traits::input_parameter< double >::type epsilon(epsilonSEXP);
+    Rcpp::traits::input_parameter< const arma::mat& >::type values(valuesSEXP);
+    Rcpp::traits::input_parameter< bool >::type adjoint(adjointSEXP);
+    Rcpp::traits::input_parameter< int >::type block_size(block_sizeSEXP);
+    rcpp_result_gen = Rcpp::wrap(cpp_factorized_plan_apply(row_term, column_term, left, right, source_measure, target_measure, source_bar, target_bar, epsilon, values, adjoint, block_size));
+    return rcpp_result_gen;
+END_RCPP
+}
+// cpp_factorized_plan_materialize
+arma::mat cpp_factorized_plan_materialize(const arma::vec& row_term, const arma::vec& column_term, const arma::mat& left, const arma::mat& right, const arma::vec& source_measure, const arma::vec& target_measure, const arma::vec& source_bar, const arma::vec& target_bar, double epsilon, int block_size);
+RcppExport SEXP _rfugw_cpp_factorized_plan_materialize(SEXP row_termSEXP, SEXP column_termSEXP, SEXP leftSEXP, SEXP rightSEXP, SEXP source_measureSEXP, SEXP target_measureSEXP, SEXP source_barSEXP, SEXP target_barSEXP, SEXP epsilonSEXP, SEXP block_sizeSEXP) {
+BEGIN_RCPP
+    Rcpp::RObject rcpp_result_gen;
+    Rcpp::RNGScope rcpp_rngScope_gen;
+    Rcpp::traits::input_parameter< const arma::vec& >::type row_term(row_termSEXP);
+    Rcpp::traits::input_parameter< const arma::vec& >::type column_term(column_termSEXP);
+    Rcpp::traits::input_parameter< const arma::mat& >::type left(leftSEXP);
+    Rcpp::traits::input_parameter< const arma::mat& >::type right(rightSEXP);
+    Rcpp::traits::input_parameter< const arma::vec& >::type source_measure(source_measureSEXP);
+    Rcpp::traits::input_parameter< const arma::vec& >::type target_measure(target_measureSEXP);
+    Rcpp::traits::input_parameter< const arma::vec& >::type source_bar(source_barSEXP);
+    Rcpp::traits::input_parameter< const arma::vec& >::type target_bar(target_barSEXP);
+    Rcpp::traits::input_parameter< double >::type epsilon(epsilonSEXP);
+    Rcpp::traits::input_parameter< int >::type block_size(block_sizeSEXP);
+    rcpp_result_gen = Rcpp::wrap(cpp_factorized_plan_materialize(row_term, column_term, left, right, source_measure, target_measure, source_bar, target_bar, epsilon, block_size));
+    return rcpp_result_gen;
+END_RCPP
+}
+// cpp_factorized_plan_difference
+Rcpp::List cpp_factorized_plan_difference(const arma::vec& row_term_a, const arma::vec& column_term_a, const arma::mat& left_a, const arma::mat& right_a, const arma::vec& source_measure_a, const arma::vec& target_measure_a, const arma::vec& source_bar_a, const arma::vec& target_bar_a, double epsilon_a, const arma::vec& row_term_b, const arma::vec& column_term_b, const arma::mat& left_b, const arma::mat& right_b, const arma::vec& source_measure_b, const arma::vec& target_measure_b, const arma::vec& source_bar_b, const arma::vec& target_bar_b, double epsilon_b, int block_size);
+RcppExport SEXP _rfugw_cpp_factorized_plan_difference(SEXP row_term_aSEXP, SEXP column_term_aSEXP, SEXP left_aSEXP, SEXP right_aSEXP, SEXP source_measure_aSEXP, SEXP target_measure_aSEXP, SEXP source_bar_aSEXP, SEXP target_bar_aSEXP, SEXP epsilon_aSEXP, SEXP row_term_bSEXP, SEXP column_term_bSEXP, SEXP left_bSEXP, SEXP right_bSEXP, SEXP source_measure_bSEXP, SEXP target_measure_bSEXP, SEXP source_bar_bSEXP, SEXP target_bar_bSEXP, SEXP epsilon_bSEXP, SEXP block_sizeSEXP) {
+BEGIN_RCPP
+    Rcpp::RObject rcpp_result_gen;
+    Rcpp::RNGScope rcpp_rngScope_gen;
+    Rcpp::traits::input_parameter< const arma::vec& >::type row_term_a(row_term_aSEXP);
+    Rcpp::traits::input_parameter< const arma::vec& >::type column_term_a(column_term_aSEXP);
+    Rcpp::traits::input_parameter< const arma::mat& >::type left_a(left_aSEXP);
+    Rcpp::traits::input_parameter< const arma::mat& >::type right_a(right_aSEXP);
+    Rcpp::traits::input_parameter< const arma::vec& >::type source_measure_a(source_measure_aSEXP);
+    Rcpp::traits::input_parameter< const arma::vec& >::type target_measure_a(target_measure_aSEXP);
+    Rcpp::traits::input_parameter< const arma::vec& >::type source_bar_a(source_bar_aSEXP);
+    Rcpp::traits::input_parameter< const arma::vec& >::type target_bar_a(target_bar_aSEXP);
+    Rcpp::traits::input_parameter< double >::type epsilon_a(epsilon_aSEXP);
+    Rcpp::traits::input_parameter< const arma::vec& >::type row_term_b(row_term_bSEXP);
+    Rcpp::traits::input_parameter< const arma::vec& >::type column_term_b(column_term_bSEXP);
+    Rcpp::traits::input_parameter< const arma::mat& >::type left_b(left_bSEXP);
+    Rcpp::traits::input_parameter< const arma::mat& >::type right_b(right_bSEXP);
+    Rcpp::traits::input_parameter< const arma::vec& >::type source_measure_b(source_measure_bSEXP);
+    Rcpp::traits::input_parameter< const arma::vec& >::type target_measure_b(target_measure_bSEXP);
+    Rcpp::traits::input_parameter< const arma::vec& >::type source_bar_b(source_bar_bSEXP);
+    Rcpp::traits::input_parameter< const arma::vec& >::type target_bar_b(target_bar_bSEXP);
+    Rcpp::traits::input_parameter< double >::type epsilon_b(epsilon_bSEXP);
+    Rcpp::traits::input_parameter< int >::type block_size(block_sizeSEXP);
+    rcpp_result_gen = Rcpp::wrap(cpp_factorized_plan_difference(row_term_a, column_term_a, left_a, right_a, source_measure_a, target_measure_a, source_bar_a, target_bar_a, epsilon_a, row_term_b, column_term_b, left_b, right_b, source_measure_b, target_measure_b, source_bar_b, target_bar_b, epsilon_b, block_size));
+    return rcpp_result_gen;
+END_RCPP
+}
 // cpp_bipartite_transport_max_flow
 Rcpp::List cpp_bipartite_transport_max_flow(int n_source, int n_target, const Rcpp::IntegerVector& source, const Rcpp::IntegerVector& target, const arma::vec& source_measure, const arma::vec& target_measure, double tolerance);
 RcppExport SEXP _rfugw_cpp_bipartite_transport_max_flow(SEXP n_sourceSEXP, SEXP n_targetSEXP, SEXP sourceSEXP, SEXP targetSEXP, SEXP source_measureSEXP, SEXP target_measureSEXP, SEXP toleranceSEXP) {
@@ -593,6 +758,13 @@ static const R_CallMethodDef CallEntries[] = {
     {"_rfugw_cpp_partial_fgw_entropic_square", (DL_FUNC) &_rfugw_cpp_partial_fgw_entropic_square, 15},
     {"_rfugw_cpp_ucoot_kl", (DL_FUNC) &_rfugw_cpp_ucoot_kl, 19},
     {"_rfugw_cpp_ot_sinkhorn_unbalanced_ti_sparse", (DL_FUNC) &_rfugw_cpp_ot_sinkhorn_unbalanced_ti_sparse, 15},
+    {"_rfugw_cpp_ot_sinkhorn_unbalanced_ti_factorized", (DL_FUNC) &_rfugw_cpp_ot_sinkhorn_unbalanced_ti_factorized, 14},
+    {"_rfugw_cpp_factorized_plan_stats", (DL_FUNC) &_rfugw_cpp_factorized_plan_stats, 10},
+    {"_rfugw_cpp_factorized_plan_stats_moments", (DL_FUNC) &_rfugw_cpp_factorized_plan_stats_moments, 12},
+    {"_rfugw_cpp_factorized_plan_kkt_audit", (DL_FUNC) &_rfugw_cpp_factorized_plan_kkt_audit, 18},
+    {"_rfugw_cpp_factorized_plan_apply", (DL_FUNC) &_rfugw_cpp_factorized_plan_apply, 12},
+    {"_rfugw_cpp_factorized_plan_materialize", (DL_FUNC) &_rfugw_cpp_factorized_plan_materialize, 10},
+    {"_rfugw_cpp_factorized_plan_difference", (DL_FUNC) &_rfugw_cpp_factorized_plan_difference, 19},
     {"_rfugw_cpp_bipartite_transport_max_flow", (DL_FUNC) &_rfugw_cpp_bipartite_transport_max_flow, 7},
     {"_rfugw_cpp_gw_square_terms_square", (DL_FUNC) &_rfugw_cpp_gw_square_terms_square, 4},
     {"_rfugw_cpp_thread_kernel_probe", (DL_FUNC) &_rfugw_cpp_thread_kernel_probe, 4},

@@ -1,0 +1,50 @@
+{
+  "schema_version": 1,
+  "method_family": "moment_fugw",
+  "profile": "release",
+  "required_package_mode": "installed",
+  "required_platforms": ["Darwin", "Linux", "Windows"],
+  "thread_environment": {
+    "OMP_NUM_THREADS": "1",
+    "OPENBLAS_NUM_THREADS": "1",
+    "MKL_NUM_THREADS": "1",
+    "VECLIB_MAXIMUM_THREADS": "1",
+    "BLIS_NUM_THREADS": "1"
+  },
+  "test_files": [
+    {
+      "path": "tests/testthat/test-fugw-factorized-metamorphic.R",
+      "required_cases": [
+        "independent node permutations preserve both Moment-FUGW couplings",
+        "coordinate isometries preserve both Moment-FUGW couplings",
+        "factor gauges, zero padding, composition, and tiling are invariant",
+        "split-weight duplicate nodes aggregate to the original solution",
+        "serialized fits preserve apply and adjoint for both couplings",
+        "thread settings are deterministic and numerical extremes fail closed"
+      ]
+    },
+    {
+      "path": "tests/testthat/test-fugw-factorized-certificate.R",
+      "required_cases": [
+        "nonfinite and fully underflowed implicit states fail closed"
+      ]
+    }
+  ],
+  "property_cases": {
+    "independent_node_permutations": "independent node permutations preserve both Moment-FUGW couplings",
+    "coordinate_translation": "coordinate isometries preserve both Moment-FUGW couplings",
+    "orthogonal_transforms": "coordinate isometries preserve both Moment-FUGW couplings",
+    "factor_gauge_changes": "factor gauges, zero padding, composition, and tiling are invariant",
+    "zero_column_factor_padding": "factor gauges, zero padding, composition, and tiling are invariant",
+    "cost_composition": "factor gauges, zero padding, composition, and tiling are invariant",
+    "block_size_invariance": "factor gauges, zero padding, composition, and tiling are invariant",
+    "split_weight_duplicates": "split-weight duplicate nodes aggregate to the original solution",
+    "serialization": "serialized fits preserve apply and adjoint for both couplings",
+    "deterministic_thread_settings": "thread settings are deterministic and numerical extremes fail closed",
+    "small_epsilon": "thread settings are deterministic and numerical extremes fail closed",
+    "extreme_rho_epsilon": "thread settings are deterministic and numerical extremes fail closed",
+    "constant_correlation_profiles": "thread settings are deterministic and numerical extremes fail closed",
+    "extreme_coordinate_scales": "thread settings are deterministic and numerical extremes fail closed",
+    "underflow_diagnostics": "nonfinite and fully underflowed implicit states fail closed"
+  }
+}

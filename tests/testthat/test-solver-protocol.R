@@ -385,7 +385,9 @@ test_that("capability matrix keeps scientific formulations distinct", {
     "kl_unbalanced_entropic_linear_ot", "sinkhorn_divergence",
     "fixed_support_wasserstein_barycenter_weights",
     "gromov_wasserstein", "fused_gromov_wasserstein",
-    "fused_unbalanced_gromov_wasserstein", "sampled_gromov_wasserstein"
+    "fused_unbalanced_gromov_wasserstein",
+    "matrix_free_fused_unbalanced_gromov_wasserstein",
+    "sampled_gromov_wasserstein"
   ) %in% capabilities$estimand))
   expect_true(capabilities$warm_state[
     capabilities$estimand == "balanced_entropic_linear_ot"
@@ -402,6 +404,13 @@ test_that("capability matrix keeps scientific formulations distinct", {
   expect_identical(
     capabilities$maturity[
       capabilities$estimand == "sampled_gromov_wasserstein"
+    ],
+    "experimental"
+  )
+  expect_identical(
+    capabilities$maturity[
+      capabilities$estimand ==
+        "matrix_free_fused_unbalanced_gromov_wasserstein"
     ],
     "experimental"
   )
@@ -460,6 +469,7 @@ test_that("release support prose is derived from accepted capability maturity", 
     "fixed support wasserstein barycenter weights", boundaries, fixed = TRUE
   ))
   expect_match(boundaries, "sampled gromov wasserstein")
+  expect_match(boundaries, "matrix free fused unbalanced gromov wasserstein")
   expect_match(boundaries, "Directed-KL structural GW/FGW loss is deferred")
   expect_match(boundaries, "No end-to-end scalable relational-OT path")
 })

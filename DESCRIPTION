@@ -28,6 +28,7 @@ Suggests:
     albersdown,
     testthat (>= 3.0.0),
     bench,
+    digest,
     ggplot2,
     jsonlite,
     lpSolve,

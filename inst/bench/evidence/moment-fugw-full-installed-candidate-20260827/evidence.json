@@ -1,0 +1,84 @@
+{
+  "schema_version": 1,
+  "date": "2026-08-27",
+  "method_family": "moment_fugw",
+  "status": "candidate_installed_artifact_provenance_incomplete",
+  "release_baseline": false,
+  "source_artifact": {
+    "kind": "checked_source_tarball",
+    "package": "rfugw",
+    "version": "0.1.0",
+    "sha256": "386b241c8cc154b16bd2969c4469de74d11617b30ecdc8fb2454a32a42bb4a1b",
+    "r_cmd_check_log_sha256": "6662d562ec677fd3f0d7e2012029207a45a0ad5ceeb3ae22518b89b45eb993fa",
+    "r_cmd_check": {
+      "errors": 0,
+      "warnings": 0,
+      "notes": 1,
+      "note_classification": "informational_new_submission"
+    },
+    "exact_candidate_commit_bound": false
+  },
+  "retained_run_artifact": {
+    "artifact": "raw-workers.tar.gz",
+    "sha256": "72269c15c11d971846450f7e284890057eb3a30b7ddac264b52b592abd37041f",
+    "md5": "521edc3c476d88d77964fd2cc1ed75e0",
+    "contents": ["summary.json", "meta.json", "runs.csv", "raw/"],
+    "raw_artifact_count": 228,
+    "fresh_worker_count_including_baseline": 57,
+    "measured_and_warmup_rows": 56,
+    "invalid_rows": 0,
+    "infrastructure_error_rows": 0,
+    "summary_sha256": "9040e6650f1836a90c64c957fc8949f2e744523bcdd5aabc625164d9ff5f7cb1",
+    "meta_sha256": "f0b17f38979430af0a5077a6feba72e3eafb8b0928ba023906c2c0d893248406",
+    "runs_sha256": "198ac01aae3cf630e4e4deac42198a149edeade219980f97af1e6d3e4ec2da8e"
+  },
+  "execution": {
+    "profile": "full",
+    "package_mode": "installed",
+    "timestamp_utc": "2026-08-27T17:45:43Z",
+    "r_version": "4.5.1",
+    "r_platform": "aarch64-apple-darwin20",
+    "sysname": "Darwin",
+    "os_release": "23.3.0",
+    "machine": "arm64",
+    "rss_backend": "macos_time_l_bytes",
+    "compiler_cxx17": "clang++ -arch arm64",
+    "blas": "Apple Accelerate vecLib BLAS",
+    "threads": 1,
+    "repetitions": 3,
+    "warmup_repetitions": 1
+  },
+  "results": {
+    "completed_fixed_work_sizes": [625, 1250, 2500, 5000],
+    "median_fixed_work_seconds": [0.062, 0.211, 0.885, 3.191],
+    "median_absolute_peak_rss_bytes": [150355968, 168017920, 357154816, 985497600],
+    "median_incremental_peak_rss_bytes": [58540032, 76201984, 265338880, 893681664],
+    "package_load_baseline_rss_bytes": 91815936,
+    "fixed_work_runtime_exponent_largest_three": 1.959347,
+    "fixed_work_runtime_exponent_all_points": 1.912522,
+    "incremental_peak_rss_exponent": 1.359673,
+    "absolute_peak_rss_exponent": 0.9225345,
+    "largest_completed_certified_endpoint": 512
+  },
+  "gate_audit": {
+    "design": true,
+    "full_profile_complete": true,
+    "fixed_work_runtime_envelope": true,
+    "near_linear_peak_memory": true,
+    "prohibited_dense_allocations_absent": true,
+    "rank_curve_complete": true,
+    "operator_batch_curve_complete": true,
+    "larger_certified_endpoint": true,
+    "exact_commit_provenance": false,
+    "clean_exact_source_tree": false,
+    "release_hardware": false,
+    "admission_evaluable": false
+  },
+  "provenance_correction": {
+    "original_summary_admission_evaluable": false,
+    "original_meta_commit": null,
+    "original_meta_git_dirty": null,
+    "finding": "The hardened installed runner retained all numerical and performance rows but correctly failed release admission because Git identity and status were unavailable outside a checkout.",
+    "regression_test_added": true
+  }
+}

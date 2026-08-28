@@ -1,6 +1,18 @@
 #!/usr/bin/env Rscript
 
 args <- commandArgs(trailingOnly = TRUE)
+script_arg <- grep("^--file=", commandArgs(trailingOnly = FALSE), value = TRUE)
+script_path <- if (length(script_arg)) {
+  normalizePath(sub("^--file=", "", script_arg[[1L]]), mustWork = TRUE)
+} else {
+  normalizePath("tools/numerical-trust/collect-evidence.R", mustWork = TRUE)
+}
+repository_root <- normalizePath(
+  file.path(dirname(script_path), "..", ".."), mustWork = TRUE
+)
+source(file.path(
+  repository_root, "inst", "numerical-trust", "provenance-lib.R"
+))
 value_arg <- function(prefix, default) {
   hit <- args[startsWith(args, prefix)]
   if (!length(hit)) return(default)
@@ -20,15 +32,6 @@ if (installed) {
   library(rfugw)
 }
 
-git_output <- function(...) {
-  out <- tryCatch(system2("git", c(...), stdout = TRUE, stderr = FALSE),
-                  error = function(e) character())
-  out
-}
-git_value <- function(...) {
-  out <- git_output(...)
-  if (!length(out)) NA_character_ else paste(out, collapse = "\n")
-}
 digest_file <- function(path) {
   if (!file.exists(path)) return(NULL)
   sha <- if (requireNamespace("digest", quietly = TRUE)) {
@@ -87,15 +90,24 @@ selected_env <- c(
 )
 verified_support <- support_evidence$verified_support
 experimental_boundaries <- support_evidence$experimental_boundaries
-git_status_lines <- git_output("status", "--porcelain")
-working_tree_dirty <- length(git_status_lines) > 0L &&
-  any(nzchar(git_status_lines))
-exact_commit_evidence <- !working_tree_dirty
+git <- rfugw_git_provenance(".")
+working_tree_dirty <- git$working_tree_dirty
+expected_host_commit <- Sys.getenv("GITHUB_SHA", "")
+host_commit_valid <- rfugw_valid_commit(expected_host_commit)
+commit_matches_host <- host_commit_valid &&
+  isTRUE(git$git_provenance_complete) &&
+  identical(git$commit, tolower(expected_host_commit))
+exact_commit_evidence <- isTRUE(git$exact_commit_evidence) &&
+  (!identical(channel, "hosted") || commit_matches_host)
 limitations <- c(
   if (identical(channel, "local"))
     "Local evidence only: the hosted Linux/macOS/Windows matrix and sanitizer jobs are not evaluated by this bundle.",
-  if (working_tree_dirty)
+  if (!isTRUE(git$git_provenance_complete))
+    "Git commit or status provenance is unavailable, so exact-commit evidence is false.",
+  if (isTRUE(working_tree_dirty))
     "The source identity is a dirty working tree, so this is not exact-release-commit evidence.",
+  if (identical(channel, "hosted") && !commit_matches_host)
+    "The checked-out commit does not match a valid 40-hex GITHUB_SHA.",
   "Publication status is not evaluated by the numerical-trust workflow.",
   if (!isTRUE(fgw$runtime_provenance$native_effective$openmp_available))
     "This machine has no active OpenMP runtime; multi-thread execution requires hosted or toolchain-specific evidence."
@@ -106,11 +118,20 @@ report <- list(
   scope = scope,
   evidence_channel = channel,
   timestamp_utc = format(Sys.time(), "%Y-%m-%dT%H:%M:%SZ", tz = "UTC"),
-  commit = git_value("rev-parse", "HEAD"),
+  commit = git$commit,
   working_tree_dirty = working_tree_dirty,
+  git_provenance_complete = git$git_provenance_complete,
+  git_status_entry_count = git$git_status_entry_count,
+  git_commit_command_status = git$git_commit_command_status,
+  git_status_command_status = git$git_status_command_status,
+  expected_host_commit = if (host_commit_valid) {
+    tolower(expected_host_commit)
+  } else NA_character_,
+  commit_matches_host = commit_matches_host,
   exact_commit_evidence = exact_commit_evidence,
   hosted_run = if (identical(channel, "hosted")) Sys.getenv("GITHUB_RUN_ID", NA_character_) else NA_character_,
   publication_status = "not_evaluated_by_numerical_trust_job",
+  sys_info = as.list(Sys.info()),
   seed_contract = list(
     base = 20260820L,
     transport = "410000 + case_id",

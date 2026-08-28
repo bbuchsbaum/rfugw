@@ -1,0 +1,86 @@
+{
+  "_policy": {
+    "schema_version": 1,
+    "admission_status": "candidate",
+    "method_family": "moment_fugw",
+    "release_baseline_requires_reviewed_history": true,
+    "claims_stop_at_largest_completed_certified_endpoint": true
+  },
+  "quality": {
+    "stationary_status": [
+      "converged_stationary",
+      "converged_approximate_stationary"
+    ],
+    "require_inner_uot": true,
+    "require_two_sided_block_kkt": true,
+    "require_equal_mass": true,
+    "require_objective_consistency": true,
+    "require_numerical_finiteness": true,
+    "require_geometry_certificate": true,
+    "require_exact_feature_cost": true,
+    "require_full_implicit_support": true,
+    "support_tail_bound_max": 0,
+    "require_multiscale_certificate": true
+  },
+  "scaling": {
+    "memory_doubling_exponent_max": 1.5,
+    "fixed_work_runtime_exponent_min": 1.8,
+    "fixed_work_runtime_exponent_max": 2.2,
+    "runtime_exponent_primary_fit": "largest_three_points",
+    "runtime_exponent_all_points_required": true,
+    "minimum_full_size": 5000,
+    "domain_sizes": [625, 1250, 2500, 5000],
+    "structure_ranks": [4, 16, 64, 256],
+    "heldout_batches": [1, 10, 100, 1000],
+    "fixed_outer_iterations": 1,
+    "fixed_inner_iterations": 1,
+    "require_r_visible_allocation": true,
+    "r_visible_allocation_actions": ["solve", "objective", "apply", "adjoint"]
+  },
+  "profiles": {
+    "smoke": {
+      "domain_sizes": [16, 24, 32, 48],
+      "converged_sizes": [16, 32],
+      "rank_size": 48,
+      "operator_size": 32,
+      "block_size": 16,
+      "max_iter": 30,
+      "max_iter_ot": 600,
+      "warmup": 0,
+      "repetitions": 1
+    },
+    "pr": {
+      "domain_sizes": [64, 128, 256, 512],
+      "converged_sizes": [32, 64, 128],
+      "rank_size": 128,
+      "operator_size": 128,
+      "block_size": 64,
+      "max_iter": 50,
+      "max_iter_ot": 1200,
+      "warmup": 1,
+      "repetitions": 2
+    },
+    "full": {
+      "domain_sizes": [625, 1250, 2500, 5000],
+      "converged_sizes": [64, 128, 256, 512],
+      "rank_size": 512,
+      "operator_size": 512,
+      "block_size": 256,
+      "max_iter": 80,
+      "max_iter_ot": 2500,
+      "warmup": 1,
+      "repetitions": 3
+    }
+  },
+  "problem": {
+    "seed": 20260827,
+    "threads": 1,
+    "structure_rank": 4,
+    "feature_dimension": 8,
+    "epsilon": 0.1,
+    "reg_marginals": [1, 1],
+    "tol": 1e-6,
+    "tol_ot": 1e-8,
+    "minimum_certified_endpoint": 512
+  }
+}

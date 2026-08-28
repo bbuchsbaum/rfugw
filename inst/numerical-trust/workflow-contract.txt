@@ -22,11 +22,26 @@ needs: build-artifact
 R CMD INSTALL rfugw_*.tar.gz
 ubuntu-latest, macos-latest, windows-latest
 --family=all --scope=release --installed
+run_moment_fugw_robustness.R
+.gate/moment-fugw-robustness
+run_moment_fugw_core_certification.R
+.gate/moment-fugw-core
+metamorphic and adversarial replay on Darwin, Linux, and Windows
 fsanitize=address,undefined
 LD_PRELOAD
 gcc -print-file-name=libasan.so
 collect-evidence.R
 upload-artifact@v4
+moment-fugw-admission:
+needs: [build-artifact, release-matrix]
+verify-moment-fugw-admission.R
+--mode=candidate
+pattern: numerical-trust-release-*
+merge-multiple: false
+include-hidden-files: true
+moment-fugw-cross-platform-candidate-receipt
+candidate-receipt.json
+independent review is required separately for promotion eligibility
 
 Sanitizer workflow: .github/workflows/sanitizer.yml
 fsanitize=address,undefined
@@ -42,10 +57,16 @@ not_evaluated_by_numerical_trust_job
 representative_certificates
 sha256
 exact_commit_evidence
-git_status_lines
-length(git_status_lines) > 0L
+git_provenance_complete
+commit_matches_host
+sys_info
 experimental_boundaries
 release-dossier
+moment-fugw-admission
+evidence_fingerprint_sha256
+robustness_platform_matrix
+core_platform_matrix
+technical_candidate_passed_review_pending
 
 Release gate:
 run-mutation-proof.R
