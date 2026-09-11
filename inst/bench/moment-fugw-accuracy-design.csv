@@ -1,0 +1,13 @@
+case_id,seed_offset,ns,nt,source_rank,target_rank,feature_rank,block_size,zero_weight,near_zero_weight,epsilon,rho_source,rho_target,feature_weight,structure_weight
+mfugw-01,11,4,5,1,2,1,1,FALSE,FALSE,0.5,2,5,0.2,1.3
+mfugw-02,23,5,4,3,1,2,2,TRUE,FALSE,0.35,4,2,0.7,0.8
+mfugw-03,37,8,11,2,4,3,3,FALSE,TRUE,0.25,3,8,0.4,1.1
+mfugw-04,41,11,8,4,2,4,5,TRUE,FALSE,0.4,7,3,0.9,0.7
+mfugw-05,59,16,19,3,5,2,7,FALSE,FALSE,0.2,5,9,0.3,1.4
+mfugw-06,61,19,16,5,3,5,8,TRUE,FALSE,0.3,9,4,0.8,0.9
+mfugw-07,73,32,37,4,6,3,13,FALSE,TRUE,0.18,6,12,0.5,1.2
+mfugw-08,89,37,32,6,4,6,16,TRUE,FALSE,0.27,11,5,0.65,0.85
+mfugw-09,97,64,71,5,7,4,24,FALSE,FALSE,0.16,8,13,0.35,1.35
+mfugw-10,101,71,64,7,5,7,32,TRUE,FALSE,0.24,12,6,0.75,0.95
+mfugw-11,113,128,127,6,8,5,48,FALSE,TRUE,0.14,10,15,0.45,1.15
+mfugw-12,127,127,128,8,6,8,64,TRUE,FALSE,0.2,14,7,0.6,1.05

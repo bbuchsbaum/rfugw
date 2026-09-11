@@ -2,14 +2,47 @@
 
 Initial focused release.
 
-- The scalable relational-OT admission review closes with a measured deferral:
-  no sampled, graph, operator, or low-rank candidate currently avoids both
-  dense structure and dense coupling materialization while meeting a certified
-  quality envelope. Coordinate inputs reduce input storage, but the native
+- Partial Sinkhorn now requires its existing KKT and primal-dual certificate
+  before early stopping in both log and scaling Dykstra backends. Small plan
+  updates alone could previously terminate an uncertified solve with iteration
+  budget left. Budget exhaustion remains explicitly uncertified.
+
+- Experimental Moment-FUGW adds `factorized_cost()` and exact lazy
+  squared-Euclidean/cosine/correlation costs, a native blocked
+  translation-invariant KL-UOT backend, `fugw_factorized()`, `fugw_domain()`,
+  and `fugw_multiscale()`. The two FUGW couplings remain full-support implicit
+  operators represented by potentials; dynamic structure costs close through
+  marginal Gram matrices and a small cross moment. Small fixtures match dense
+  `fugw_kl()` in objective components, masses, moments, and plan actions, while
+  an independent explicit oracle checks coarse-to-fine potential/mass/moment
+  transfer. Certificates separate inner UOT convergence, outer stationarity,
+  geometry approximation, hierarchy transfer, and complete support, and never
+  claim global optimality. Candidate evidence now includes a four-size
+  625--5,000 checked-tarball installed profile (incremental peak-RSS exponent
+  1.324; primary largest-three runtime exponent 1.943), with 60 rows, 244 raw
+  worker receipts, and separate cumulative `Rprofmem` curves for solve,
+  objective, apply, and adjoint. It also includes a ten-seed multiscale efficacy
+  study, partial-overlap image validation, and held-out planted functional maps
+  on a retained fsaverage6 cortical fixture. The release workflow now aggregates
+  both RSS platforms, all three scientific platforms, a three-platform core
+  replay covering the full 12-case dense/direct-oracle matrix, ten multiscale
+  seeds, and 27 named AC1--AC5 cases, plus a three-platform installed robustness
+  replay covering 15 named metamorphic/adversarial properties. Successful
+  package-check logs and exact artifact provenance are
+  combined into a deterministic candidate receipt; independent review is a
+  separate promotion gate. The capability remains experimental because the
+  local measurements come from a dirty candidate and the hosted receipt and
+  review do not exist. Adaptive sparse refinement and domain-specific
+  image/mesh constructors remain future work, not completed claims.
+
+- The scalable relational-OT admission review retains a release-evidence
+  deferral. Moment-FUGW passes its candidate correctness, empirical scaling,
+  multiscale-efficacy, and planted scientific gates, but lacks a clean exact-
+  commit installed benchmark, hosted multi-platform replay, and independent
+  review. Coordinate sampled-GW inputs reduce input storage while the native
   sampled kernel retains at least five dense coupling-sized matrices and its
-  measured 400-to-800 runtime slope is 1.936. The experimental labels remain;
-  `inst/scalable-relational-ot-decision.md` records target sizes, rejected
-  alternatives, exact workspace lower bounds, and promotion thresholds.
+  measured 400-to-800 runtime slope is 1.936. Experimental labels remain; the
+  decision record separates candidate evidence from supported release proof.
 
 - `ot_barycenter_weights()` now optimizes probability weights on a fixed
   user-supplied support without relabeling a GW/FGW support-learning update.

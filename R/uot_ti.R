@@ -450,7 +450,9 @@
 #' canonical translated gauge. The plan is implicit by default, so apply and
 #' adjoint operations do not require dense materialization.
 #'
-#' @param cost Dense matrix, sparse Matrix, edge list, or CSR sparse-cost list.
+#' @param cost Dense matrix, sparse Matrix, edge list, CSR sparse-cost list, or
+#'   an affine-bilinear `rfugw_cost_operator`. Cost operators use complete
+#'   implicit support and native blocked reductions.
 #' @param p,q Finite nonnegative source and target measures. Defaults are
 #'   probability measures; positive total mass is required.
 #' @param epsilon Positive entropic regularization.
@@ -461,6 +463,10 @@
 #' @param n_source,n_target Sparse edge-list shape; ignored for matrix costs.
 #' @param plan Returned plan representation: coupling-free `"operator"`,
 #'   explicit `"sparse"` edge plan, or explicitly allocated `"dense"` matrix.
+#' @param init_potentials Optional list with `source_bar` and `target_bar` for a
+#'   factorized-cost warm start. Explicit edge and matrix costs do not yet
+#'   accept this state.
+#' @param block_size Positive tile size for factorized complete-support costs.
 #' @return An `rfugw_result` with potentials, sparse-support diagnostics,
 #'   objective components, KKT and primal-dual certificates, mass diagnostics,
 #'   plan/operator representation, and runtime provenance.
@@ -481,7 +487,9 @@ ot_sinkhorn_unbalanced_ti <- function(
     tol = 1e-8,
     n_source = NULL,
     n_target = NULL,
-    plan = c("operator", "sparse", "dense")) {
+    plan = c("operator", "sparse", "dense"),
+    init_potentials = NULL,
+    block_size = 256L) {
   plan <- match.arg(plan)
   epsilon <- .validate_positive_scalar(epsilon, "epsilon")
   max_iter <- .validate_count(max_iter, "max_iter")
@@ -490,6 +498,40 @@ ot_sinkhorn_unbalanced_ti <- function(
   if (!is.numeric(rho) || length(rho) != 2L ||
       any(!is.finite(rho)) || any(rho <= 0)) {
     stop("`rho` must be one or two finite positive numbers.", call. = FALSE)
+  }
+
+  if (inherits(cost, "rfugw_cost_operator")) {
+    shape <- cost_shape(cost)
+    if (!is.null(n_source)) {
+      n_source <- .validate_cost_shape_scalar(n_source, "n_source")
+      if (!identical(n_source, shape[[1L]])) {
+        stop("`n_source` conflicts with the cost-operator shape.", call. = FALSE)
+      }
+    }
+    if (!is.null(n_target)) {
+      n_target <- .validate_cost_shape_scalar(n_target, "n_target")
+      if (!identical(n_target, shape[[2L]])) {
+        stop("`n_target` conflicts with the cost-operator shape.", call. = FALSE)
+      }
+    }
+    return(.ot_sinkhorn_unbalanced_ti_factorized(
+      cost = cost,
+      p = p,
+      q = q,
+      epsilon = epsilon,
+      rho = rho,
+      max_iter = max_iter,
+      tol = tol,
+      plan = plan,
+      init_potentials = init_potentials,
+      block_size = block_size
+    ))
+  }
+  if (!is.null(init_potentials)) {
+    stop(
+      "`init_potentials` is currently supported only for factorized costs.",
+      call. = FALSE
+    )
   }
 
   setup_started <- proc.time()[["elapsed"]]

@@ -8,6 +8,17 @@ test_that("scalable relational OT remains fail-closed", {
   expect_match(decision, "1.0 GB at `n = 5,000`")
   expect_match(decision, "operator structure cost")
   expect_match(decision, "remain experimental")
+  expect_match(decision, "Moment-FUGW: implemented, matrix-free")
+  expect_match(decision, "support = \"adaptive\"")
+  expect_match(decision, "fails closed")
+  expect_match(decision, "planted cortical held-out-map gates")
+  expect_match(decision, "incremental peak-RSS.*1.324")
+  expect_match(decision, "60 rows and 244 raw receipts")
+  expect_match(decision, "not observed neurobiology")
+  expect_match(
+    decision,
+    "clean[[:space:]]+same-commit installed full artifact"
+  )
 })
 
 test_that("admission evidence exposes the quadratic coupling boundary", {

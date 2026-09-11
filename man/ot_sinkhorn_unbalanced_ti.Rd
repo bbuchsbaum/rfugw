@@ -14,11 +14,15 @@ ot_sinkhorn_unbalanced_ti(
   tol = 1e-08,
   n_source = NULL,
   n_target = NULL,
-  plan = c("operator", "sparse", "dense")
+  plan = c("operator", "sparse", "dense"),
+  init_potentials = NULL,
+  block_size = 256L
 )
 }
 \arguments{
-\item{cost}{Dense matrix, sparse Matrix, edge list, or CSR sparse-cost list.}
+\item{cost}{Dense matrix, sparse Matrix, edge list, CSR sparse-cost list, or
+an affine-bilinear \code{rfugw_cost_operator}. Cost operators use complete
+implicit support and native blocked reductions.}
 
 \item{p, q}{Finite nonnegative source and target measures. Defaults are
 probability measures; positive total mass is required.}
@@ -36,6 +40,12 @@ primal-dual tolerances are derived and reported.}
 
 \item{plan}{Returned plan representation: coupling-free \code{"operator"},
 explicit \code{"sparse"} edge plan, or explicitly allocated \code{"dense"} matrix.}
+
+\item{init_potentials}{Optional list with \code{source_bar} and \code{target_bar} for a
+factorized-cost warm start. Explicit edge and matrix costs do not yet
+accept this state.}
+
+\item{block_size}{Positive tile size for factorized complete-support costs.}
 }
 \value{
 An \code{rfugw_result} with potentials, sparse-support diagnostics,

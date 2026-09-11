@@ -1,0 +1,111 @@
+{
+  "schema_version": 2,
+  "status": "frozen_before_evaluation",
+  "frozen_date": "2026-08-27",
+  "pre_evaluation_amendment": {
+    "date": "2026-08-27",
+    "reason": "Replace the tuning-only synthetic triangulated sheet with actual fsaverage6 cortical geometry; no evaluation seed had been run.",
+    "evidence_used": "surface tuning seeds 3101 and 3102 only",
+    "evaluation_seed_accessed_before_freeze": false
+  },
+  "post_evaluation_replay_hardening": {
+    "date": "2026-08-27",
+    "reason": "Replace runtime loading of a legacy serialized SurfaceGeometry object with checksum-verified numeric derivatives of the already frozen landmarks and geodesics.",
+    "estimand_threshold_or_evaluation_result_changed": false,
+    "semantic_fixture_fingerprint_preserved": true
+  },
+  "failure_policy": "retain_every_requested_case_with_solver_success_and_failure_reason",
+  "materialization_policy": "solver_paths_remain_implicit; small validation fixtures may be materialized only for independent metrics and dense parity",
+  "image": {
+    "grid_side": 10,
+    "overlap_percent": [100, 80, 60, 40],
+    "mask_kind": ["none", "crop", "lesion", "crop_plus_lesion"],
+    "feature_noise_sd": 0.02,
+    "tuning_seeds": [2101, 2102, 2103],
+    "evaluation_seeds": [4101, 4102, 4103, 4104, 4105],
+    "train_channels": 4,
+    "heldout_channels": 3,
+    "unbalanced": {
+      "feature_weight": 2.0,
+      "structure_weight": 1.0,
+      "reg_marginals": [0.6, 0.6],
+      "epsilon": 0.03,
+      "max_iter": 80,
+      "tol": 1e-7,
+      "max_iter_ot": 5000,
+      "tol_ot": 1e-9,
+      "block_size": 32
+    },
+    "balanced_comparator": {
+      "method": "fgw_entropic",
+      "feature_weight": 2.0,
+      "structure_weight": 1.0,
+      "epsilon": 0.015,
+      "max_iter": 300,
+      "tol": 1e-8,
+      "sinkhorn_max_iter": 5000,
+      "sinkhorn_tol": 1e-10,
+      "precision": "strict_double",
+      "sinkhorn_method": "log"
+    },
+    "primary_metric": "false_occluded_source_mass",
+    "overlap_accuracy_guard": "weighted_endpoint_error",
+    "partial_overlap_gate": {
+      "median_false_mass_strictly_lower_per_overlap": true,
+      "median_endpoint_error_ratio_max": 1.05,
+      "median_recovered_overlap_fraction_min": 0.70
+    }
+  },
+  "surface": {
+    "dataset": "neuroatlas::fsaverage6",
+    "dataset_package_version": "0.1.0.9000",
+    "fixture_fingerprint_md5": "c448a7e378f48df12e374c3c07aa0120",
+    "dense_parity_fixture_fingerprint_md5": "ebaaa6eecd52a7dd7ee339fe8d294cbd",
+    "fixture_provenance_resource": "moment-fugw-fsaverage6-fixture-provenance.json",
+    "fixture_resource_mode": "checksum_verified_retained_numeric_derivative",
+    "hemisphere": "left",
+    "surface": "pial",
+    "full_vertex_count": 40962,
+    "full_face_count": 81920,
+    "landmark_count": 36,
+    "landmark_method": "farthest_point_on_inflated_surface",
+    "area_weight_method": "full_pial_face_area_aggregated_to_nearest_inflated_landmark",
+    "functional_map_source": "frozen_geodesic_radial_basis_channels",
+    "train_anchor_ids": [1, 11, 21, 31],
+    "heldout_anchor_ids": [6, 16, 26],
+    "dense_parity_landmark_count": 16,
+    "tuning_seeds": [3101, 3102],
+    "evaluation_seeds": [5101, 5102, 5103, 5104, 5105],
+    "train_channels": 4,
+    "heldout_channels": 3,
+    "geometry": "exact_squared_euclidean_on_normalized_pial_coordinates_with_full_mesh_shortest_path_geodesic_task_metric",
+    "feature_weight": 0.7,
+    "structure_weight": 1.0,
+    "reg_marginals": [6.0, 6.0],
+    "epsilon": 0.06,
+    "max_iter": 80,
+    "tol": 1e-8,
+    "max_iter_ot": 5000,
+    "tol_ot": 1e-10,
+    "block_size": 16,
+    "primary_metric": "heldout_correlation",
+    "reported_metrics": [
+      "heldout_correlation",
+      "heldout_r2",
+      "expected_geodesic_endpoint_error",
+      "transported_mass",
+      "discarded_source_mass",
+      "discarded_target_mass",
+      "coupling_l1_discrepancy",
+      "geometry_relative_error"
+    ],
+    "dense_parity_tolerance": 1e-6,
+    "embedding_curve": {
+      "seed": 6101,
+      "ranks": [2, 4, 8, 16],
+      "reference": "squared_mesh_shortest_path_geodesic",
+      "relative_error_tolerance": 0.5,
+      "task_metric": "heldout_correlation"
+    }
+  }
+}

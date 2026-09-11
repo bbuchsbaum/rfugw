@@ -37,6 +37,9 @@ semirelaxed_fgw,backend,cpp,r,pr,supported
 semirelaxed_fgw,symmetry,symmetric,general,pr,supported
 fugw,precision,mixed,double,nightly,flagship
 fugw,start,cold,warm,pr,flagship
+matrix_free_fugw,formulation,factorized,dense_oracle,pr,experimental
+matrix_free_fugw,representation,implicit,dense_opt_in,pr,experimental
+matrix_free_fugw,scale,one_level,multiscale,pr,experimental
 ucoot,formulation,joint,independent,pr,supported
 barycenter,formulation,gromov,fused,pr,supported
 multialign,threading,serial,threaded,pr,supported

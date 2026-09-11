@@ -295,3 +295,40 @@ test_that("partial Sinkhorn benchmark records dispatch, work, and allocation evi
     baseline$iterations[baseline$case == "moderate_log"]
   )
 })
+
+
+test_that("partial Dykstra spends remaining budget when small updates fail KKT", {
+  # Rounded cost from a topofmri partial relational-GW inner solve. Both old
+  # backends stopped at 1758/2000 with gap 1.915e-6 > tolerance 3.113e-8.
+  M <- matrix(c(
+    2.7527, 1.1757, 1.6735, 1.9410, 1.3360, 0.4704, 2.0867, 1.8095,
+    1.6275, 1.8856, 3.5056, 3.8091, 1.9336, 2.5698, 3.9934, 3.7491,
+    3.4977, 1.7925, 0.7685, 1.5944, 1.9534, 1.7266, 1.5216, 1.1999,
+    3.7584, 2.1818, 1.5175, 1.3151, 2.3065, 2.0842, 1.3877, 1.4076,
+    3.8598, 2.1135, 1.2008, 1.3975, 2.2575, 2.0517, 1.3316, 0.9202,
+    4.3044, 2.7200, 1.7357, 1.5575, 2.8472, 2.6174, 1.1065, 1.4991,
+    2.1348, 0.9302, 1.7678, 2.1952, 1.1475, 1.1266, 2.2989, 1.9370,
+    2.1101, 1.1661, 1.7878, 2.2713, 0.8938, 1.3948, 2.3029, 2.0019
+  ), 8L)
+  for (method in c("scaling", "log")) {
+    out <- ot_partial_sinkhorn(M, mass = 0.75, epsilon = 0.075,
+      method = method, max_iter = 2000L, tol = 1e-10, check_every = 1L)
+    # This fixture remains difficult at this budget. No false success or
+    # softened certificate is an acceptable fix for premature termination.
+    expect_false(out$converged)
+    expect_equal(out$iterations, 2000L)
+    expect_gt(out$duality_gap, out$duality_gap_tolerance)
+    expect_true(out$feasible)
+    expect_lte(out$duality_gap, 1.915e-6)
+    # Independently evaluate the exponential dual at feasible potentials.
+    u <- pmax(out$source_capacity_potential, 0)
+    v <- pmax(out$target_capacity_potential, 0)
+    lambda <- out$mass_potential
+    dual <- -sum(u)/8 - sum(v)/8 - lambda*0.75 -
+      0.075*sum(exp(-(M + outer(u, v, "+") + lambda)/0.075))
+    P <- out$plan
+    primal <- sum(M*P) + 0.075*sum(ifelse(P > 0, P*(log(P)-1), 0))
+    expect_lte(dual, primal + 1e-12)
+    expect_equal(primal-dual, out$duality_gap, tolerance = 1e-10)
+  }
+})

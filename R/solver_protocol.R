@@ -893,6 +893,12 @@ transport_capabilities <- function(problem = NULL) {
       "flagship", "fugw"
     ),
     capability(
+      "matrix_free_fused_unbalanced_gromov_wasserstein",
+      "fugw_factorized|fugw_multiscale", FALSE, "probability", FALSE,
+      "potential and moment summaries", "implicit|dense_opt_in", FALSE, TRUE,
+      "experimental", "matrix_free_fugw"
+    ),
+    capability(
       "across_spaces_unbalanced_ot",
       "fused_unbalanced_across_spaces_divergence", FALSE, "finite_measure",
       FALSE, "none", "dense", FALSE, TRUE, "supported", "ucoot"
@@ -1025,8 +1031,9 @@ transport_capabilities <- function(problem = NULL) {
         "logarithm floor changes the estimand"
       ),
       paste0(
-        "No end-to-end scalable relational-OT path is promoted; sampled and ",
-        "dense-plan compression paths retain experimental maturity"
+        "No end-to-end scalable relational-OT path is promoted; matrix-free ",
+        "FUGW, sampled GW, and dense-plan compression retain experimental ",
+        "maturity pending their distinct admission gates"
       )
     )
   )

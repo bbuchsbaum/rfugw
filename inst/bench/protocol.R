@@ -22,7 +22,10 @@ bench_parse_suites <- function(x) {
   }
   suites <- unique(trimws(as.character(x)))
   suites <- suites[nzchar(suites)]
-  known <- c("linear", "fgw", "fugw", "semirelaxed", "partial", "ucoot", "sampled")
+  known <- c(
+    "linear", "fgw", "fugw", "semirelaxed", "partial", "ucoot",
+    "sampled"
+  )
   if (!length(suites)) {
     return(known)
   }
@@ -77,6 +80,121 @@ bench_validate_threshold_history <- function() {
   invisible(TRUE)
 }
 
+bench_moment_fugw_thresholds_path <- function() {
+  candidates <- c(
+    "inst/bench/moment-fugw-thresholds.json",
+    file.path(
+      system.file(package = "rfugw"), "bench",
+      "moment-fugw-thresholds.json"
+    )
+  )
+  hit <- candidates[file.exists(candidates)]
+  if (!length(hit)) {
+    stop("Could not find Moment-FUGW benchmark thresholds.", call. = FALSE)
+  }
+  hit[[1L]]
+}
+
+bench_moment_fugw_threshold_history_path <- function() {
+  candidates <- c(
+    "inst/bench/moment-fugw-threshold-history.json",
+    file.path(
+      system.file(package = "rfugw"), "bench",
+      "moment-fugw-threshold-history.json"
+    )
+  )
+  hit <- candidates[file.exists(candidates)]
+  if (!length(hit)) {
+    stop("Could not find Moment-FUGW threshold history.", call. = FALSE)
+  }
+  hit[[1L]]
+}
+
+bench_read_moment_fugw_thresholds <- function() {
+  jsonlite::fromJSON(
+    bench_moment_fugw_thresholds_path(), simplifyVector = TRUE
+  )
+}
+
+bench_validate_moment_fugw_threshold_history <- function(
+    require_release_baseline = FALSE) {
+  history <- jsonlite::fromJSON(
+    bench_moment_fugw_threshold_history_path(), simplifyVector = FALSE
+  )
+  entries <- history$entries %||% list()
+  if (!length(entries)) {
+    stop("Moment-FUGW threshold history has no retained entry.", call. = FALSE)
+  }
+  latest <- entries[[length(entries)]]
+  current <- unname(tools::md5sum(
+    bench_moment_fugw_thresholds_path()
+  )[[1L]])
+  if (!identical(latest$thresholds_md5 %||% "", current)) {
+    stop(
+      paste0(
+        "Moment-FUGW thresholds changed without a matching retained ",
+        "history entry."
+      ),
+      call. = FALSE
+    )
+  }
+  required <- c("evidence", "review_requirement", "admission_status")
+  missing <- required[!vapply(
+    required,
+    function(name) nzchar(as.character(latest[[name]] %||% "")[[1L]]),
+    logical(1)
+  )]
+  if (length(missing)) {
+    stop(
+      "Latest Moment-FUGW history entry lacks: ",
+      paste(missing, collapse = ", "), ".",
+      call. = FALSE
+    )
+  }
+  policy_status <- bench_read_moment_fugw_thresholds()$`_policy`$admission_status
+  if (!identical(latest$admission_status, policy_status)) {
+    stop(
+      paste0(
+        "Moment-FUGW threshold and history admission statuses disagree."
+      ),
+      call. = FALSE
+    )
+  }
+  if (isTRUE(require_release_baseline) &&
+      !identical(latest$admission_status, "reviewed_release_baseline")) {
+    stop(
+      paste0(
+        "Moment-FUGW thresholds are candidate-only; a same-commit full ",
+        "artifact and independent review are required for release use."
+      ),
+      call. = FALSE
+    )
+  }
+  if (isTRUE(require_release_baseline)) {
+    release_fields <- c(
+      "reviewer", "artifact", "artifact_sha256", "source_commit",
+      "largest_certified_endpoint"
+    )
+    missing_release <- release_fields[vapply(
+      release_fields,
+      function(name) {
+        value <- latest[[name]]
+        is.null(value) || !length(value) || is.na(value[[1L]]) ||
+          !nzchar(as.character(value[[1L]]))
+      },
+      logical(1)
+    )]
+    if (length(missing_release)) {
+      stop(
+        "Reviewed Moment-FUGW release history lacks: ",
+        paste(missing_release, collapse = ", "), ".",
+        call. = FALSE
+      )
+    }
+  }
+  invisible(TRUE)
+}
+
 bench_close <- function(actual, expected, atol, rtol) {
   actual <- as.numeric(actual)
   expected <- as.numeric(expected)
@@ -101,12 +219,67 @@ bench_find_description <- function() {
   stop("DESCRIPTION not found.", call. = FALSE)
 }
 
-bench_capture_env <- function(seed, threads, warmup, reps, profile = "conservative") {
-  desc <- read.dcf(bench_find_description())
-  commit <- tryCatch(
-    system2("git", c("rev-parse", "HEAD"), stdout = TRUE, stderr = FALSE)[1],
+bench_git_provenance <- function(repository_root = ".") {
+  repository_root <- tryCatch(
+    normalizePath(repository_root, mustWork = TRUE),
     error = function(e) NA_character_
   )
+  capture <- function(args) {
+    if (is.na(repository_root)) {
+      return(list(ok = FALSE, status = NA_integer_, value = character()))
+    }
+    value <- suppressWarnings(tryCatch(
+      system2(
+        "git", c("-C", repository_root, args),
+        stdout = TRUE, stderr = FALSE
+      ),
+      error = function(e) structure(character(), status = 127L)
+    ))
+    status <- attr(value, "status", exact = TRUE)
+    if (is.null(status)) status <- 0L
+    list(
+      ok = identical(as.integer(status), 0L),
+      status = as.integer(status),
+      value = unname(as.character(value))
+    )
+  }
+
+  commit_result <- capture(c("rev-parse", "--verify", "HEAD"))
+  status_result <- capture(c(
+    "status", "--porcelain", "--untracked-files=normal"
+  ))
+  commit <- if (isTRUE(commit_result$ok) &&
+      length(commit_result$value) == 1L &&
+      grepl("^[[:xdigit:]]{40}$", commit_result$value[[1L]])) {
+    tolower(commit_result$value[[1L]])
+  } else {
+    NA_character_
+  }
+  status_ok <- isTRUE(status_result$ok)
+  list(
+    repository_root = repository_root,
+    commit = commit,
+    git_dirty = if (status_ok) length(status_result$value) > 0L else NA,
+    git_status_entry_count = if (status_ok) {
+      as.integer(length(status_result$value))
+    } else {
+      NA_integer_
+    },
+    git_provenance_complete = !is.na(commit) && status_ok,
+    git_commit_command_status = commit_result$status,
+    git_status_command_status = status_result$status
+  )
+}
+
+bench_capture_env <- function(
+    seed,
+    threads,
+    warmup,
+    reps,
+    profile = "conservative",
+    repository_root = ".") {
+  desc <- read.dcf(bench_find_description())
+  git <- bench_git_provenance(repository_root)
   si <- as.list(Sys.info())
   runtime_provenance <- tryCatch(
     rfugw:::.solver_runtime_provenance(),
@@ -122,7 +295,13 @@ bench_capture_env <- function(seed, threads, warmup, reps, profile = "conservati
   list(
     package = unname(desc[1, "Package"]),
     version = unname(desc[1, "Version"]),
-    commit = commit,
+    commit = git$commit,
+    git_dirty = git$git_dirty,
+    git_status_entry_count = git$git_status_entry_count,
+    git_provenance_complete = git$git_provenance_complete,
+    git_commit_command_status = git$git_commit_command_status,
+    git_status_command_status = git$git_status_command_status,
+    repository_root = git$repository_root,
     r_version = paste(R.version$major, R.version$minor, sep = "."),
     r_platform = R.version$platform,
     compiler_cxx17 = r_config("CXX17"),
@@ -190,12 +369,217 @@ bench_make_problem <- function(kind = c("linear", "fgw", "ucoot"), n, seed) {
        p = rep(1 / n, n), q = rep(1 / n, n))
 }
 
+.bench_flag <- function(x) isTRUE(x)
+
+.bench_moment_fugw_plan_is_implicit <- function(plan) {
+  inherits(plan, "rfugw_transport_plan") &&
+    identical(plan$representation, "implicit_operator") &&
+    isTRUE(plan$implicit) &&
+    !isTRUE(plan$materialized)
+}
+
+.bench_moment_fugw_common_reasons <- function(result, contract) {
+  reasons <- character()
+  status <- as.character(result$status %||% "")[[1L]]
+  if (!nzchar(status)) reasons <- c(reasons, "missing_status")
+  if (status %in% c(
+    "numerical_failure", "objective_mismatch", "invalid_input"
+  )) {
+    reasons <- c(reasons, paste0("status=", status))
+  }
+  value <- suppressWarnings(as.numeric(result$fugw_cost %||% NA_real_)[1L])
+  if (!is.finite(value)) reasons <- c(reasons, "nonfinite_objective")
+  if (!.bench_flag(result$objective_consistent)) {
+    reasons <- c(reasons, "certificate_objective_consistent")
+  }
+  if (!.bench_flag(result$objective_components_consistent)) {
+    reasons <- c(reasons, "certificate_objective_components_consistent")
+  }
+  outer <- result$certificate$outer_stationarity %||% list()
+  if (!.bench_flag(outer$numerical_finite)) {
+    reasons <- c(reasons, "certificate_numerical_finiteness")
+  }
+  plans <- result$plans %||% list()
+  if (!.bench_moment_fugw_plan_is_implicit(plans$sample)) {
+    reasons <- c(reasons, "sample_plan_not_implicit")
+  }
+  if (!.bench_moment_fugw_plan_is_implicit(plans$feature)) {
+    reasons <- c(reasons, "feature_plan_not_implicit")
+  }
+  memory <- result$runtime_provenance$memory_contract %||% list()
+  required_forbidden <- c("Cx", "Cy", "M", "P", "Q")
+  if (!setequal(
+    as.character(memory$prohibited_dense_allocations %||% character()),
+    required_forbidden
+  )) {
+    reasons <- c(reasons, "memory_contract_missing_prohibited_allocations")
+  }
+  if (isTRUE(memory$dense_allocations_requested)) {
+    reasons <- c(reasons, "dense_allocation_requested")
+  }
+  max_tile <- suppressWarnings(as.numeric(
+    memory$max_tile_elements %||% NA_real_
+  )[1L])
+  full <- suppressWarnings(as.numeric(
+    memory$full_matrix_elements %||% NA_real_
+  )[1L])
+  if (!is.finite(max_tile) || !is.finite(full) || max_tile > full) {
+    reasons <- c(reasons, "invalid_tile_memory_contract")
+  }
+  unique(reasons)
+}
+
+bench_check_moment_fugw_quality <- function(
+    method,
+    result,
+    problem = NULL,
+    evidence_class = c(
+      "certified_comparison", "fixed_work_scaling", "operator_throughput"
+    )) {
+  method <- match.arg(method, c("fugw_factorized", "fugw_multiscale"))
+  evidence_class <- match.arg(evidence_class)
+  contract <- bench_read_moment_fugw_thresholds()
+  common <- .bench_moment_fugw_common_reasons(result, contract)
+  reasons <- common
+  limitations <- character()
+  stationary_evidence <- evidence_class %in% c(
+    "certified_comparison", "operator_throughput"
+  )
+
+  if (stationary_evidence) {
+    allowed <- as.character(contract$quality$stationary_status)
+    status <- as.character(result$status %||% "")[[1L]]
+    if (!status %in% allowed) {
+      reasons <- c(reasons, paste0("status=", status))
+    }
+    outer <- result$certificate$outer_stationarity %||% list()
+    blocks <- outer$final_blocks %||% list()
+    required <- c(
+      converged = .bench_flag(result$converged),
+      final_stationarity = .bench_flag(result$final_stationarity_certified),
+      inner_uot = .bench_flag(result$inner_uot_certified),
+      inner_uot_certificate = .bench_flag(
+        result$certificate$inner_uot$certified
+      ),
+      outer_stationarity = .bench_flag(outer$certified),
+      final_two_sided_blocks = .bench_flag(blocks$certified),
+      final_sample_block = .bench_flag(blocks$sample$certified),
+      final_feature_block = .bench_flag(blocks$feature$certified),
+      equal_mass = .bench_flag(result$equal_mass_certified) &&
+        .bench_flag(outer$equal_mass_certified),
+      feasible = .bench_flag(result$feasible),
+      geometry = .bench_flag(result$geometry_certified) &&
+        .bench_flag(result$certificate$geometry$certified),
+      exact_feature_cost = .bench_flag(result$certificate$feature$exact)
+    )
+    failed <- names(required)[!required]
+    if (length(failed)) {
+      reasons <- c(reasons, paste0("certificate_", failed))
+    }
+    failures <- as.character(result$certification_failures %||% character())
+    if (length(failures)) {
+      reasons <- c(
+        reasons, paste0("reported_failure=", failures)
+      )
+    }
+    support <- result$certificate$support %||% list()
+    tail_bound <- suppressWarnings(as.numeric(
+      support$omitted_kernel_mass_bound %||% Inf
+    )[1L])
+    if (!identical(support$mode, "full_implicit") ||
+        !.bench_flag(support$complete) || !is.finite(tail_bound) ||
+        tail_bound > contract$quality$support_tail_bound_max) {
+      reasons <- c(reasons, "certificate_full_implicit_support")
+    }
+    if (identical(method, "fugw_multiscale")) {
+      multi <- result$certificate$multiscale %||% list()
+      multi_required <- c(
+        multiscale = .bench_flag(result$multiscale_certified) &&
+          .bench_flag(multi$certified),
+        all_levels_stationary = .bench_flag(multi$all_levels_stationary),
+        all_inner_uot = .bench_flag(multi$all_inner_uot_certified),
+        hierarchy_transfer = .bench_flag(
+          result$hierarchy_transfer_certified
+        ) && .bench_flag(multi$hierarchy_certified),
+        all_geometry = .bench_flag(multi$all_geometry_certified)
+      )
+      failed_multi <- names(multi_required)[!multi_required]
+      if (length(failed_multi)) {
+        reasons <- c(reasons, paste0("certificate_", failed_multi))
+      }
+    }
+  } else {
+    expected <- problem$expected_work %||% list()
+    expected_outer <- suppressWarnings(as.integer(
+      expected$outer_iterations %||%
+        contract$scaling$fixed_outer_iterations
+    )[1L])
+    if (!is.finite(expected_outer) ||
+        !identical(as.integer(result$iterations), expected_outer)) {
+      reasons <- c(reasons, "fixed_work_outer_iterations")
+    }
+    if (.bench_flag(result$final_stationarity_certified)) {
+      limitations <- c(limitations, "stationary_despite_fixed_work_budget")
+    } else {
+      limitations <- c(limitations, "nonstationary_fixed_work_scaling_only")
+    }
+  }
+
+  valid <- !length(unique(reasons))
+  certified <- stationary_evidence && valid
+  admission_status <- contract$`_policy`$admission_status
+  list(
+    valid = valid,
+    certified = certified,
+    comparison_eligible = identical(evidence_class, "certified_comparison") &&
+      certified,
+    timing_eligible = stationary_evidence && certified,
+    scaling_eligible = identical(evidence_class, "fixed_work_scaling") && valid,
+    operator_eligible = identical(evidence_class, "operator_throughput") &&
+      certified,
+    performance_regression_eligible = FALSE,
+    threshold_update_eligible = certified &&
+      identical(admission_status, "reviewed_release_baseline"),
+    evidence_class = evidence_class,
+    contract_status = admission_status,
+    stationarity_classification =
+      result$certificate$outer_stationarity$classification %||% NA_character_,
+    reject_reason = paste(unique(reasons), collapse = ";"),
+    limitation_reason = paste(unique(limitations), collapse = ";")
+  )
+}
+
 bench_check_quality <- function(
     method,
     result,
     problem,
-    evidence_class = c("certified_comparison", "fixed_budget_performance")) {
+    evidence_class = c(
+      "certified_comparison", "fixed_budget_performance",
+      "fixed_work_scaling", "operator_throughput"
+    )) {
   evidence_class <- match.arg(evidence_class)
+  if (method %in% c("fugw_factorized", "fugw_multiscale")) {
+    if (identical(evidence_class, "fixed_budget_performance")) {
+      return(list(
+        valid = FALSE,
+        certified = FALSE,
+        comparison_eligible = FALSE,
+        timing_eligible = FALSE,
+        scaling_eligible = FALSE,
+        operator_eligible = FALSE,
+        performance_regression_eligible = FALSE,
+        threshold_update_eligible = FALSE,
+        evidence_class = evidence_class,
+        contract_status = "candidate",
+        stationarity_classification = NA_character_,
+        reject_reason = "no_fixed_budget_performance_contract",
+        limitation_reason = ""
+      ))
+    }
+    return(bench_check_moment_fugw_quality(
+      method, result, problem, evidence_class = evidence_class
+    ))
+  }
   method_spec <- bench_read_thresholds(method)
   certified <- identical(evidence_class, "certified_comparison")
   spec <- if (certified) method_spec$quality else method_spec$performance_regression

@@ -25,10 +25,28 @@ test_that("PR, nightly, and release trust scopes are distinct and replayable", {
   expect_match(release, "release-artifact.R --mode=verify", fixed = TRUE)
   expect_match(release, "needs: build-artifact", fixed = TRUE)
   expect_match(release, "R CMD INSTALL rfugw_*.tar.gz", fixed = TRUE)
+  expect_match(release, "run_moment_fugw_robustness.R", fixed = TRUE)
+  expect_match(release, ".gate/moment-fugw-robustness", fixed = TRUE)
+  expect_match(release, ".gate/moment-fugw-core", fixed = TRUE)
+  expect_match(
+    release, "run_moment_fugw_core_certification.R", fixed = TRUE
+  )
+  expect_match(
+    nightly, "run_moment_fugw_core_certification.R", fixed = TRUE
+  )
+  expect_match(release, "moment-fugw-admission:", fixed = TRUE)
+  expect_match(release, "needs: [build-artifact, release-matrix]", fixed = TRUE)
+  expect_match(release, "verify-moment-fugw-admission.R", fixed = TRUE)
+  expect_match(release, "--mode=candidate", fixed = TRUE)
+  expect_match(release, "pattern: numerical-trust-release-*", fixed = TRUE)
+  expect_match(release, "merge-multiple: false", fixed = TRUE)
+  expect_match(release, "include-hidden-files: true", fixed = TRUE)
+  expect_match(release, "candidate-receipt.json", fixed = TRUE)
   expect_false(grepl("R CMD INSTALL .\\n", release))
   for (workflow in list(pr, nightly, release)) {
     expect_match(workflow, "collect-evidence.R")
     expect_match(workflow, "upload-artifact@v4", fixed = TRUE)
+    expect_match(workflow, "include-hidden-files: true", fixed = TRUE)
   }
 })
 
@@ -41,8 +59,9 @@ test_that("evidence collection separates hosted and publication status", {
   expect_match(collector, "representative_certificates")
   expect_match(collector, "sha256")
   expect_match(collector, "exact_commit_evidence")
-  expect_match(collector, "git_status_lines")
-  expect_match(collector, "length\\(git_status_lines\\) > 0L")
+  expect_match(collector, "git_provenance_complete")
+  expect_match(collector, "commit_matches_host")
+  expect_match(collector, "sys_info")
   expect_match(collector, "experimental_boundaries")
   expect_match(collector, "release-dossier")
   expect_match(gate, "run-mutation-proof.R", fixed = TRUE)
@@ -77,25 +96,55 @@ test_that("canonical release artifact verification kills digest and commit drift
       stdout = FALSE, stderr = FALSE
     ))
   }
+  commit <- system2(
+    "git", c("-C", testthat::test_path("..", ".."), "rev-parse", "HEAD"),
+    stdout = TRUE
+  )[[1L]]
+  wrong_commit <- paste(rep("b", 40L), collapse = "")
 
   expect_identical(run(c(
     "--mode=manifest", paste0("--artifact=", artifact),
-    paste0("--manifest=", manifest), "--commit=abc123"
+    paste0("--manifest=", manifest), paste0("--commit=", commit),
+    "--allow-dirty"
   )), 0L)
   expect_identical(run(c(
     "--mode=verify", paste0("--artifact=", artifact),
-    paste0("--manifest=", manifest), "--commit=abc123"
+    paste0("--manifest=", manifest), paste0("--commit=", commit),
+    "--allow-dirty"
   )), 0L)
   expect_false(identical(run(c(
     "--mode=verify", paste0("--artifact=", artifact),
-    paste0("--manifest=", manifest), "--commit=wrong-commit"
+    paste0("--manifest=", manifest), paste0("--commit=", wrong_commit),
+    "--allow-dirty"
+  )), 0L))
+  expect_false(identical(run(c(
+    "--mode=verify", paste0("--artifact=", artifact),
+    paste0("--manifest=", manifest), "--commit=abc123", "--allow-dirty"
   )), 0L))
 
   writeBin(charToRaw("tampered artifact bytes"), artifact)
   expect_false(identical(run(c(
     "--mode=verify", paste0("--artifact=", artifact),
-    paste0("--manifest=", manifest), "--commit=abc123"
+    paste0("--manifest=", manifest), paste0("--commit=", commit),
+    "--allow-dirty"
   )), 0L))
+})
+
+test_that("Git provenance cannot infer clean state from failed commands", {
+  source(
+    trust_test_resource("numerical-trust", "provenance-lib.R"),
+    local = TRUE
+  )
+  outside <- tempfile("rfugw-no-git-")
+  dir.create(outside)
+  provenance <- rfugw_git_provenance(outside)
+
+  expect_true(is.na(provenance$commit))
+  expect_true(is.na(provenance$working_tree_dirty))
+  expect_false(provenance$git_provenance_complete)
+  expect_false(provenance$exact_commit_evidence)
+  expect_true(rfugw_valid_commit(paste(rep("a", 40L), collapse = "")))
+  expect_false(rfugw_valid_commit("abc123"))
 })
 
 test_that("performance workflows run correctness gates first", {

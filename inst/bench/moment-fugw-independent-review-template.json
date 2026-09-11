@@ -1,0 +1,37 @@
+{
+  "schema_version": 1,
+  "source_commit": "REPLACE_WITH_40_HEX_COMMIT",
+  "evidence_fingerprint_sha256": "REPLACE_WITH_CANDIDATE_RECEIPT_FINGERPRINT",
+  "reviewer": {
+    "name": "REPLACE_WITH_REVIEWER_NAME",
+    "affiliation": "REPLACE_WITH_AFFILIATION",
+    "contact_or_profile": "REPLACE_WITH_DURABLE_CONTACT_OR_PROFILE",
+    "independent_of_implementation": true,
+    "implementation_contributor": false,
+    "conflicts_disclosed": "none"
+  },
+  "scopes": {
+    "numerical": {
+      "decision": "approve_or_reject",
+      "notes": "Review the direct oracle, differential matrix, final two-sided stationarity, geometry and hierarchy audits, metamorphic tests, and fail-closed statuses."
+    },
+    "performance": {
+      "decision": "approve_or_reject",
+      "notes": "Replay or inspect both native-RSS platform artifacts, R-visible allocations, raw worker receipts, slope recomputation, and certified endpoint."
+    },
+    "scientific": {
+      "decision": "approve_or_reject",
+      "notes": "Review the frozen image and cortical evaluation splits, comparator estimands, held-out metrics, dense parity, and geometry-error separation."
+    }
+  },
+  "reproduction": {
+    "candidate_receipt_sha256": "REPLACE_WITH_RECEIPT_SHA256",
+    "commands_or_run_url": "REPLACE_WITH_COMMANDS_OR_IMMUTABLE_RUN_URL",
+    "limitations_confirmed": [
+      "global_optimality_not_claimed",
+      "adaptive_support_not_admitted",
+      "gpu_and_100k_scale_not_claimed"
+    ]
+  },
+  "signed_at_utc": "YYYY-MM-DDTHH:MM:SSZ"
+}

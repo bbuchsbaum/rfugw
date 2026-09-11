@@ -9164,6 +9164,1034 @@ Rcpp::List cpp_ot_sinkhorn_unbalanced_ti_sparse(
   );
 }
 
+namespace {
+
+inline void validate_factorized_cost(
+    const arma::vec& row_term,
+    const arma::vec& column_term,
+    const arma::mat& left,
+    const arma::mat& right) {
+  if (row_term.n_elem < 1 || column_term.n_elem < 1 ||
+      left.n_rows != row_term.n_elem ||
+      right.n_rows != column_term.n_elem ||
+      left.n_cols != right.n_cols || !row_term.is_finite() ||
+      !column_term.is_finite() || !left.is_finite() || !right.is_finite()) {
+    Rcpp::stop("Invalid affine-bilinear cost representation.");
+  }
+}
+
+inline arma::uword factorized_block_size(int block_size) {
+  if (block_size < 1) {
+    Rcpp::stop("`block_size` must be positive.");
+  }
+  return static_cast<arma::uword>(block_size);
+}
+
+inline void factorized_cost_block(
+    const arma::vec& row_term,
+    const arma::vec& column_term,
+    const arma::mat& left,
+    const arma::mat& right,
+    arma::uword row_begin,
+    arma::uword row_end,
+    arma::uword column_begin,
+    arma::uword column_end,
+    arma::mat& out) {
+  const arma::uword n_rows = row_end - row_begin;
+  const arma::uword n_columns = column_end - column_begin;
+  if (left.n_cols > 0) {
+    const arma::blas_int rows = static_cast<arma::blas_int>(n_rows);
+    const arma::blas_int columns = static_cast<arma::blas_int>(n_columns);
+    const arma::blas_int rank = static_cast<arma::blas_int>(left.n_cols);
+    const arma::blas_int left_stride =
+      static_cast<arma::blas_int>(left.n_rows);
+    const arma::blas_int right_stride =
+      static_cast<arma::blas_int>(right.n_rows);
+    const char trans_n = 'N';
+    const char trans_t = 'T';
+    const double alpha = 1.0;
+    const double beta = 0.0;
+    out.set_size(n_rows, n_columns);
+    arma::blas::gemm<double>(
+      &trans_n, &trans_t,
+      &rows, &columns, &rank,
+      &alpha,
+      left.memptr() + row_begin, &left_stride,
+      right.memptr() + column_begin, &right_stride,
+      &beta,
+      out.memptr(), &rows
+    );
+  } else {
+    out.zeros(n_rows, n_columns);
+  }
+  for (arma::uword column = 0; column < n_columns; ++column) {
+    const double column_value = column_term(column_begin + column);
+    double* values = out.colptr(column);
+    for (arma::uword row = 0; row < n_rows; ++row) {
+      values[row] += row_term(row_begin + row) + column_value;
+    }
+  }
+}
+
+inline double factorized_ti_step(
+    const arma::vec& row_term,
+    const arma::vec& column_term,
+    const arma::mat& left,
+    const arma::mat& right,
+    const arma::vec& source_measure,
+    const arma::vec& target_measure,
+    const arma::vec& log_source,
+    const arma::vec& log_target,
+    double epsilon,
+    double rho_source,
+    double rho_target,
+    const arma::vec& source_bar,
+    const arma::vec& target_bar,
+    arma::uword block_size,
+    arma::vec& source_tmp,
+    arma::vec& target_tmp,
+    arma::vec& source_next,
+    arma::vec& target_next,
+    arma::mat& cost_block) {
+  const arma::uword n_source = source_measure.n_elem;
+  const arma::uword n_target = target_measure.n_elem;
+  const double denominator = epsilon + rho_source + rho_target;
+  const double xi_source_target =
+    epsilon * rho_target / (rho_source * denominator);
+  const double xi_target_source =
+    epsilon * rho_source / (rho_target * denominator);
+  const double k_source =
+    (epsilon / (epsilon + rho_source)) *
+    (rho_source / (rho_source + rho_target));
+  const double k_target =
+    (epsilon / (epsilon + rho_target)) *
+    (rho_target / (rho_source + rho_target));
+  const double source_contraction = rho_source / (rho_source + epsilon);
+  const double target_contraction = rho_target / (rho_target + epsilon);
+  const double inverse_epsilon = 1.0 / epsilon;
+
+  const double target_scalar = ti_softmin(
+    log_target, target_bar, rho_target
+  );
+  for (arma::uword row_begin = 0; row_begin < n_source;
+       row_begin += block_size) {
+    const arma::uword row_end = std::min(n_source, row_begin + block_size);
+    const arma::uword n_rows = row_end - row_begin;
+    arma::vec maximum(n_rows);
+    maximum.fill(ti_neg_inf());
+    arma::vec total(n_rows, arma::fill::zeros);
+    for (arma::uword column_begin = 0; column_begin < n_target;
+         column_begin += block_size) {
+      const arma::uword column_end = std::min(
+        n_target, column_begin + block_size
+      );
+      factorized_cost_block(
+        row_term, column_term, left, right,
+        row_begin, row_end, column_begin, column_end, cost_block
+      );
+      for (arma::uword column = 0; column < column_end - column_begin;
+           ++column) {
+        const arma::uword global_column = column_begin + column;
+        if (!std::isfinite(log_target(global_column))) continue;
+        const double* costs = cost_block.colptr(column);
+        for (arma::uword row = 0; row < n_rows; ++row) {
+          const double value = log_target(global_column) +
+            (target_bar(global_column) - costs[row]) * inverse_epsilon;
+          if (value > maximum(row)) {
+            total(row) = total(row) * (std::isfinite(maximum(row))
+              ? std::exp(maximum(row) - value) : 0.0) + 1.0;
+            maximum(row) = value;
+          } else {
+            total(row) += std::exp(value - maximum(row));
+          }
+        }
+      }
+    }
+    for (arma::uword row = 0; row < n_rows; ++row) {
+      const arma::uword global_row = row_begin + row;
+      if (source_measure(global_row) == 0.0) {
+        source_tmp(global_row) = 0.0;
+      } else {
+        const double softmin = total(row) > 0.0
+          ? -epsilon * (maximum(row) + std::log(total(row)))
+          : std::numeric_limits<double>::infinity();
+        source_tmp(global_row) =
+          source_contraction * softmin - k_source * target_scalar;
+      }
+    }
+  }
+  const double source_scalar_tmp = ti_softmin(
+    log_source, source_tmp, rho_source
+  );
+  source_next = source_tmp + xi_source_target * source_scalar_tmp;
+  for (arma::uword row = 0; row < n_source; ++row) {
+    if (source_measure(row) == 0.0) source_next(row) = 0.0;
+  }
+
+  const double source_scalar = ti_softmin(
+    log_source, source_next, rho_source
+  );
+  for (arma::uword column_begin = 0; column_begin < n_target;
+       column_begin += block_size) {
+    const arma::uword column_end = std::min(
+      n_target, column_begin + block_size
+    );
+    const arma::uword n_columns = column_end - column_begin;
+    arma::vec maximum(n_columns);
+    maximum.fill(ti_neg_inf());
+    arma::vec total(n_columns, arma::fill::zeros);
+    for (arma::uword row_begin = 0; row_begin < n_source;
+         row_begin += block_size) {
+      const arma::uword row_end = std::min(n_source, row_begin + block_size);
+      factorized_cost_block(
+        row_term, column_term, left, right,
+        row_begin, row_end, column_begin, column_end, cost_block
+      );
+      for (arma::uword column = 0; column < n_columns; ++column) {
+        const double* costs = cost_block.colptr(column);
+        for (arma::uword row = 0; row < row_end - row_begin; ++row) {
+          const arma::uword global_row = row_begin + row;
+          if (!std::isfinite(log_source(global_row))) continue;
+          const double value = log_source(global_row) +
+            (source_next(global_row) - costs[row]) * inverse_epsilon;
+          if (value > maximum(column)) {
+            total(column) = total(column) *
+              (std::isfinite(maximum(column))
+                ? std::exp(maximum(column) - value) : 0.0) + 1.0;
+            maximum(column) = value;
+          } else {
+            total(column) += std::exp(value - maximum(column));
+          }
+        }
+      }
+    }
+    for (arma::uword column = 0; column < n_columns; ++column) {
+      const arma::uword global_column = column_begin + column;
+      if (target_measure(global_column) == 0.0) {
+        target_tmp(global_column) = 0.0;
+      } else {
+        const double softmin = total(column) > 0.0
+          ? -epsilon * (maximum(column) + std::log(total(column)))
+          : std::numeric_limits<double>::infinity();
+        target_tmp(global_column) =
+          target_contraction * softmin - k_target * source_scalar;
+      }
+    }
+  }
+  const double target_scalar_tmp = ti_softmin(
+    log_target, target_tmp, rho_target
+  );
+  target_next = target_tmp + xi_target_source * target_scalar_tmp;
+  for (arma::uword column = 0; column < n_target; ++column) {
+    if (target_measure(column) == 0.0) target_next(column) = 0.0;
+  }
+
+  return std::max(
+    ti_max_abs_difference(source_next, source_bar),
+    ti_max_abs_difference(target_next, target_bar)
+  );
+}
+
+struct FactorizedPlanStats {
+  arma::vec source_marginal;
+  arma::vec target_marginal;
+  double mass;
+  double transport_cost;
+  double entropy_sum;
+  double minimum_log_weight;
+  double maximum_log_weight;
+  bool finite_plan;
+};
+
+inline FactorizedPlanStats factorized_plan_stats_impl(
+    const arma::vec& row_term,
+    const arma::vec& column_term,
+    const arma::mat& left,
+    const arma::mat& right,
+    const arma::vec& source_measure,
+    const arma::vec& target_measure,
+    const arma::vec& source_bar,
+    const arma::vec& target_bar,
+    double epsilon,
+    arma::uword block_size) {
+  const arma::uword n_source = source_measure.n_elem;
+  const arma::uword n_target = target_measure.n_elem;
+  const arma::vec log_source = ti_safe_log(source_measure);
+  const arma::vec log_target = ti_safe_log(target_measure);
+  FactorizedPlanStats out;
+  out.source_marginal.zeros(n_source);
+  out.target_marginal.zeros(n_target);
+  out.mass = 0.0;
+  out.transport_cost = 0.0;
+  out.entropy_sum = 0.0;
+  out.minimum_log_weight = std::numeric_limits<double>::infinity();
+  out.maximum_log_weight = ti_neg_inf();
+  out.finite_plan = true;
+  arma::mat block;
+
+  for (arma::uword row_begin = 0; row_begin < n_source;
+       row_begin += block_size) {
+    const arma::uword row_end = std::min(n_source, row_begin + block_size);
+    for (arma::uword column_begin = 0; column_begin < n_target;
+         column_begin += block_size) {
+      const arma::uword column_end = std::min(
+        n_target, column_begin + block_size
+      );
+      factorized_cost_block(
+        row_term, column_term, left, right,
+        row_begin, row_end, column_begin, column_end, block
+      );
+      for (arma::uword column = 0; column < column_end - column_begin;
+           ++column) {
+        const arma::uword global_column = column_begin + column;
+        if (!std::isfinite(log_target(global_column))) continue;
+        const double* costs = block.colptr(column);
+        for (arma::uword row = 0; row < row_end - row_begin; ++row) {
+          const arma::uword global_row = row_begin + row;
+          if (!std::isfinite(log_source(global_row))) continue;
+          const double log_weight = log_source(global_row) +
+            log_target(global_column) +
+            (source_bar(global_row) + target_bar(global_column) - costs[row]) /
+              epsilon;
+          out.minimum_log_weight = std::min(
+            out.minimum_log_weight, log_weight
+          );
+          out.maximum_log_weight = std::max(
+            out.maximum_log_weight, log_weight
+          );
+          const double weight = std::exp(log_weight);
+          if (!std::isfinite(weight) || weight < 0.0) {
+            out.finite_plan = false;
+            continue;
+          }
+          out.source_marginal(global_row) += weight;
+          out.target_marginal(global_column) += weight;
+          out.transport_cost += weight * costs[row];
+          if (weight > 0.0) out.entropy_sum += weight * log_weight;
+        }
+      }
+    }
+  }
+  out.mass = arma::accu(out.source_marginal);
+  out.finite_plan = out.finite_plan && out.source_marginal.is_finite() &&
+    out.target_marginal.is_finite() && std::isfinite(out.mass) &&
+    std::isfinite(out.transport_cost) && std::isfinite(out.entropy_sum);
+  return out;
+}
+
+inline void factorized_weight_block(
+    const arma::vec& row_term,
+    const arma::vec& column_term,
+    const arma::mat& left,
+    const arma::mat& right,
+    const arma::vec& log_source,
+    const arma::vec& log_target,
+    const arma::vec& source_bar,
+    const arma::vec& target_bar,
+    double epsilon,
+    arma::uword row_begin,
+    arma::uword row_end,
+    arma::uword column_begin,
+    arma::uword column_end,
+    arma::mat& block) {
+  factorized_cost_block(
+    row_term, column_term, left, right,
+    row_begin, row_end, column_begin, column_end, block
+  );
+  for (arma::uword column = 0; column < column_end - column_begin;
+       ++column) {
+    const arma::uword global_column = column_begin + column;
+    double* values = block.colptr(column);
+    for (arma::uword row = 0; row < row_end - row_begin; ++row) {
+      const arma::uword global_row = row_begin + row;
+      if (!std::isfinite(log_source(global_row)) ||
+          !std::isfinite(log_target(global_column))) {
+        values[row] = 0.0;
+      } else {
+        values[row] = std::exp(
+          log_source(global_row) + log_target(global_column) +
+          (source_bar(global_row) + target_bar(global_column) - values[row]) /
+            epsilon
+        );
+      }
+    }
+  }
+}
+
+}  // namespace
+
+// [[Rcpp::export]]
+Rcpp::List cpp_ot_sinkhorn_unbalanced_ti_factorized(
+    const arma::vec& row_term,
+    const arma::vec& column_term,
+    const arma::mat& left,
+    const arma::mat& right,
+    const arma::vec& source_measure,
+    const arma::vec& target_measure,
+    double epsilon,
+    double rho_source,
+    double rho_target,
+    int max_iter,
+    double tol,
+    int block_size,
+    const arma::vec& init_source_bar,
+    const arma::vec& init_target_bar) {
+  validate_factorized_cost(row_term, column_term, left, right);
+  const arma::uword n_source = source_measure.n_elem;
+  const arma::uword n_target = target_measure.n_elem;
+  if (row_term.n_elem != n_source || column_term.n_elem != n_target ||
+      !source_measure.is_finite() || !target_measure.is_finite() ||
+      arma::any(source_measure < 0.0) || arma::any(target_measure < 0.0) ||
+      arma::accu(source_measure) <= 0.0 || arma::accu(target_measure) <= 0.0 ||
+      !(epsilon > 0.0) || !(rho_source > 0.0) || !(rho_target > 0.0) ||
+      max_iter < 1 || !(tol > 0.0)) {
+    Rcpp::stop("Invalid factorized TI-UOT inputs.");
+  }
+  const arma::uword tile = factorized_block_size(block_size);
+  const arma::vec log_source = ti_safe_log(source_measure);
+  const arma::vec log_target = ti_safe_log(target_measure);
+  if ((init_source_bar.n_elem != 0 && init_source_bar.n_elem != n_source) ||
+      (init_target_bar.n_elem != 0 && init_target_bar.n_elem != n_target)) {
+    Rcpp::stop("Initial factorized TI-UOT potentials have incompatible shape.");
+  }
+  arma::vec source_bar(n_source, arma::fill::zeros);
+  arma::vec target_bar(n_target, arma::fill::zeros);
+  if (init_source_bar.n_elem == n_source) source_bar = init_source_bar;
+  if (init_target_bar.n_elem == n_target) target_bar = init_target_bar;
+  if (!source_bar.is_finite() || !target_bar.is_finite()) {
+    Rcpp::stop("Initial factorized TI-UOT potentials must be finite.");
+  }
+
+  arma::vec source_tmp(n_source);
+  arma::vec target_tmp(n_target);
+  arma::vec source_next(n_source);
+  arma::vec target_next(n_target);
+  arma::mat cost_block;
+  bool converged = false;
+  bool numerical_ok = true;
+  double residual = std::numeric_limits<double>::infinity();
+  int iterations = 0;
+  const auto started = std::chrono::steady_clock::now();
+  for (int iteration = 0; iteration < max_iter; ++iteration) {
+    if ((iteration + 1) % 10 == 0) Rcpp::checkUserInterrupt();
+    residual = factorized_ti_step(
+      row_term, column_term, left, right,
+      source_measure, target_measure, log_source, log_target,
+      epsilon, rho_source, rho_target, source_bar, target_bar, tile,
+      source_tmp, target_tmp, source_next, target_next, cost_block
+    );
+    source_bar.swap(source_next);
+    target_bar.swap(target_next);
+    iterations = iteration + 1;
+    numerical_ok = source_bar.is_finite() && target_bar.is_finite() &&
+      std::isfinite(residual);
+    if (!numerical_ok) break;
+    if (residual <= tol) {
+      converged = true;
+      break;
+    }
+  }
+
+  double fixed_point_residual = std::numeric_limits<double>::infinity();
+  double translation = NA_REAL;
+  arma::vec source_potential(n_source);
+  arma::vec target_potential(n_target);
+  source_potential.fill(NA_REAL);
+  target_potential.fill(NA_REAL);
+  if (numerical_ok) {
+    fixed_point_residual = factorized_ti_step(
+      row_term, column_term, left, right,
+      source_measure, target_measure, log_source, log_target,
+      epsilon, rho_source, rho_target, source_bar, target_bar, tile,
+      source_tmp, target_tmp, source_next, target_next, cost_block
+    );
+    const double source_log_partition = ti_logsumexp_affine(
+      log_source, source_bar, -1.0 / rho_source
+    );
+    const double target_log_partition = ti_logsumexp_affine(
+      log_target, target_bar, -1.0 / rho_target
+    );
+    translation = rho_source * rho_target / (rho_source + rho_target) *
+      (source_log_partition - target_log_partition);
+    source_potential = source_bar + translation;
+    target_potential = target_bar - translation;
+    numerical_ok = std::isfinite(fixed_point_residual) &&
+      std::isfinite(translation) && source_potential.is_finite() &&
+      target_potential.is_finite();
+  }
+  const double solve_seconds = std::chrono::duration<double>(
+    std::chrono::steady_clock::now() - started
+  ).count();
+  const double tile_rows = static_cast<double>(
+    std::min(n_source, tile)
+  );
+  const double tile_columns = static_cast<double>(
+    std::min(n_target, tile)
+  );
+  return Rcpp::List::create(
+    Rcpp::Named("source_bar") = source_bar,
+    Rcpp::Named("target_bar") = target_bar,
+    Rcpp::Named("translation") = translation,
+    Rcpp::Named("source_potential") = source_potential,
+    Rcpp::Named("target_potential") = target_potential,
+    Rcpp::Named("iterations") = iterations,
+    Rcpp::Named("residual") = residual,
+    Rcpp::Named("fixed_point_residual") = fixed_point_residual,
+    Rcpp::Named("converged") = converged,
+    Rcpp::Named("numerical_ok") = numerical_ok,
+    Rcpp::Named("solve_seconds") = solve_seconds,
+    Rcpp::Named("block_size") = block_size,
+    Rcpp::Named("max_tile_elements") = tile_rows * tile_columns,
+    Rcpp::Named("full_matrix_elements") =
+      static_cast<double>(n_source) * static_cast<double>(n_target),
+    Rcpp::Named("backend") = "cpp_blocked_affine_bilinear_ti"
+  );
+}
+
+// [[Rcpp::export]]
+Rcpp::List cpp_factorized_plan_stats(
+    const arma::vec& row_term,
+    const arma::vec& column_term,
+    const arma::mat& left,
+    const arma::mat& right,
+    const arma::vec& source_measure,
+    const arma::vec& target_measure,
+    const arma::vec& source_bar,
+    const arma::vec& target_bar,
+    double epsilon,
+    int block_size) {
+  validate_factorized_cost(row_term, column_term, left, right);
+  if (source_measure.n_elem != row_term.n_elem ||
+      target_measure.n_elem != column_term.n_elem ||
+      source_bar.n_elem != row_term.n_elem ||
+      target_bar.n_elem != column_term.n_elem || !(epsilon > 0.0)) {
+    Rcpp::stop("Invalid implicit factorized plan state.");
+  }
+  const FactorizedPlanStats stats = factorized_plan_stats_impl(
+    row_term, column_term, left, right, source_measure, target_measure,
+    source_bar, target_bar, epsilon, factorized_block_size(block_size)
+  );
+  return Rcpp::List::create(
+    Rcpp::Named("source_marginal") = stats.source_marginal,
+    Rcpp::Named("target_marginal") = stats.target_marginal,
+    Rcpp::Named("mass") = stats.mass,
+    Rcpp::Named("transport_cost") = stats.transport_cost,
+    Rcpp::Named("entropy_sum") = stats.entropy_sum,
+    Rcpp::Named("minimum_log_weight") = stats.minimum_log_weight,
+    Rcpp::Named("maximum_log_weight") = stats.maximum_log_weight,
+    Rcpp::Named("finite_plan") = stats.finite_plan
+  );
+}
+
+// [[Rcpp::export]]
+Rcpp::List cpp_factorized_plan_stats_moments(
+    const arma::vec& row_term,
+    const arma::vec& column_term,
+    const arma::mat& left,
+    const arma::mat& right,
+    const arma::vec& source_measure,
+    const arma::vec& target_measure,
+    const arma::vec& source_bar,
+    const arma::vec& target_bar,
+    double epsilon,
+    const arma::mat& source_moment,
+    const arma::mat& target_moment,
+    int block_size) {
+  validate_factorized_cost(row_term, column_term, left, right);
+  const arma::uword n_source = source_measure.n_elem;
+  const arma::uword n_target = target_measure.n_elem;
+  if (row_term.n_elem != n_source || column_term.n_elem != n_target ||
+      source_bar.n_elem != n_source || target_bar.n_elem != n_target ||
+      source_moment.n_rows != n_source ||
+      target_moment.n_rows != n_target || !(epsilon > 0.0) ||
+      !source_moment.is_finite() || !target_moment.is_finite()) {
+    Rcpp::stop("Invalid factorized plan statistics/moment state.");
+  }
+  const arma::uword tile = factorized_block_size(block_size);
+  const arma::vec log_source = ti_safe_log(source_measure);
+  const arma::vec log_target = ti_safe_log(target_measure);
+  FactorizedPlanStats stats;
+  stats.source_marginal.zeros(n_source);
+  stats.target_marginal.zeros(n_target);
+  stats.mass = 0.0;
+  stats.transport_cost = 0.0;
+  stats.entropy_sum = 0.0;
+  stats.minimum_log_weight = std::numeric_limits<double>::infinity();
+  stats.maximum_log_weight = ti_neg_inf();
+  stats.finite_plan = true;
+  arma::mat cross(
+    source_moment.n_cols, target_moment.n_cols, arma::fill::zeros
+  );
+  arma::mat weights;
+  arma::mat weighted_target;
+  const char trans_n = 'N';
+  const char trans_t = 'T';
+  const double one = 1.0;
+  const double zero = 0.0;
+
+  for (arma::uword row_begin = 0; row_begin < n_source;
+       row_begin += tile) {
+    const arma::uword row_end = std::min(n_source, row_begin + tile);
+    const arma::uword n_rows = row_end - row_begin;
+    for (arma::uword column_begin = 0; column_begin < n_target;
+         column_begin += tile) {
+      const arma::uword column_end = std::min(
+        n_target, column_begin + tile
+      );
+      const arma::uword n_columns = column_end - column_begin;
+      factorized_cost_block(
+        row_term, column_term, left, right,
+        row_begin, row_end, column_begin, column_end, weights
+      );
+      for (arma::uword column = 0; column < n_columns; ++column) {
+        const arma::uword global_column = column_begin + column;
+        double* values = weights.colptr(column);
+        for (arma::uword row = 0; row < n_rows; ++row) {
+          const arma::uword global_row = row_begin + row;
+          const double cost = values[row];
+          if (!std::isfinite(log_source(global_row)) ||
+              !std::isfinite(log_target(global_column))) {
+            values[row] = 0.0;
+            continue;
+          }
+          const double log_weight = log_source(global_row) +
+            log_target(global_column) +
+            (source_bar(global_row) + target_bar(global_column) - cost) /
+              epsilon;
+          stats.minimum_log_weight = std::min(
+            stats.minimum_log_weight, log_weight
+          );
+          stats.maximum_log_weight = std::max(
+            stats.maximum_log_weight, log_weight
+          );
+          const double weight = std::exp(log_weight);
+          if (!std::isfinite(weight) || weight < 0.0) {
+            stats.finite_plan = false;
+            values[row] = 0.0;
+            continue;
+          }
+          values[row] = weight;
+          stats.source_marginal(global_row) += weight;
+          stats.target_marginal(global_column) += weight;
+          stats.transport_cost += weight * cost;
+          if (weight > 0.0) stats.entropy_sum += weight * log_weight;
+        }
+      }
+      if (source_moment.n_cols > 0 && target_moment.n_cols > 0) {
+        const arma::blas_int rows = static_cast<arma::blas_int>(n_rows);
+        const arma::blas_int columns =
+          static_cast<arma::blas_int>(n_columns);
+        const arma::blas_int source_rank =
+          static_cast<arma::blas_int>(source_moment.n_cols);
+        const arma::blas_int target_rank =
+          static_cast<arma::blas_int>(target_moment.n_cols);
+        const arma::blas_int target_stride =
+          static_cast<arma::blas_int>(target_moment.n_rows);
+        const arma::blas_int source_stride =
+          static_cast<arma::blas_int>(source_moment.n_rows);
+        weighted_target.set_size(n_rows, target_moment.n_cols);
+        arma::blas::gemm<double>(
+          &trans_n, &trans_n,
+          &rows, &target_rank, &columns,
+          &one,
+          weights.memptr(), &rows,
+          target_moment.memptr() + column_begin, &target_stride,
+          &zero,
+          weighted_target.memptr(), &rows
+        );
+        arma::blas::gemm<double>(
+          &trans_t, &trans_n,
+          &source_rank, &target_rank, &rows,
+          &one,
+          source_moment.memptr() + row_begin, &source_stride,
+          weighted_target.memptr(), &rows,
+          &one,
+          cross.memptr(), &source_rank
+        );
+      }
+    }
+  }
+  stats.mass = arma::accu(stats.source_marginal);
+  stats.finite_plan = stats.finite_plan &&
+    stats.source_marginal.is_finite() && stats.target_marginal.is_finite() &&
+    std::isfinite(stats.mass) && std::isfinite(stats.transport_cost) &&
+    std::isfinite(stats.entropy_sum) && cross.is_finite();
+  return Rcpp::List::create(
+    Rcpp::Named("source_marginal") = stats.source_marginal,
+    Rcpp::Named("target_marginal") = stats.target_marginal,
+    Rcpp::Named("mass") = stats.mass,
+    Rcpp::Named("transport_cost") = stats.transport_cost,
+    Rcpp::Named("entropy_sum") = stats.entropy_sum,
+    Rcpp::Named("minimum_log_weight") = stats.minimum_log_weight,
+    Rcpp::Named("maximum_log_weight") = stats.maximum_log_weight,
+    Rcpp::Named("finite_plan") = stats.finite_plan,
+    Rcpp::Named("cross_moment") = cross,
+    Rcpp::Named("workspace_elements") =
+      static_cast<double>(std::min(n_source, tile)) *
+      (static_cast<double>(std::min(n_target, tile)) +
+        static_cast<double>(target_moment.n_cols)) +
+      static_cast<double>(source_moment.n_cols) *
+        static_cast<double>(target_moment.n_cols) +
+      2.0 * static_cast<double>(n_source + n_target)
+  );
+}
+
+// [[Rcpp::export]]
+Rcpp::List cpp_factorized_plan_kkt_audit(
+    const arma::vec& final_row_term,
+    const arma::vec& final_column_term,
+    const arma::mat& final_left,
+    const arma::mat& final_right,
+    const arma::vec& stored_row_term,
+    const arma::vec& stored_column_term,
+    const arma::mat& stored_left,
+    const arma::mat& stored_right,
+    const arma::vec& source_measure,
+    const arma::vec& target_measure,
+    const arma::vec& source_bar,
+    const arma::vec& target_bar,
+    const arma::vec& source_marginal,
+    const arma::vec& target_marginal,
+    double epsilon,
+    double rho_source,
+    double rho_target,
+    int block_size) {
+  validate_factorized_cost(
+    final_row_term, final_column_term, final_left, final_right
+  );
+  validate_factorized_cost(
+    stored_row_term, stored_column_term, stored_left, stored_right
+  );
+  const arma::uword n_source = source_measure.n_elem;
+  const arma::uword n_target = target_measure.n_elem;
+  if (final_row_term.n_elem != n_source ||
+      stored_row_term.n_elem != n_source ||
+      final_column_term.n_elem != n_target ||
+      stored_column_term.n_elem != n_target ||
+      source_bar.n_elem != n_source || target_bar.n_elem != n_target ||
+      source_marginal.n_elem != n_source ||
+      target_marginal.n_elem != n_target ||
+      !source_measure.is_finite() || !target_measure.is_finite() ||
+      !source_bar.is_finite() || !target_bar.is_finite() ||
+      !source_marginal.is_finite() || !target_marginal.is_finite() ||
+      !(epsilon > 0.0) || !(rho_source > 0.0) || !(rho_target > 0.0)) {
+    Rcpp::stop("Invalid implicit factorized KKT audit state.");
+  }
+  const arma::uword tile = factorized_block_size(block_size);
+  const arma::vec log_source = ti_safe_log(source_measure);
+  const arma::vec log_target = ti_safe_log(target_measure);
+  arma::vec source_base(n_source, arma::fill::zeros);
+  arma::vec target_base(n_target, arma::fill::zeros);
+  bool finite = true;
+  for (arma::uword row = 0; row < n_source; ++row) {
+    if (source_measure(row) > 0.0) {
+      if (!(source_marginal(row) > 0.0)) {
+        finite = false;
+        continue;
+      }
+      source_base(row) = source_bar(row) + rho_source * std::log(
+        source_marginal(row) / source_measure(row)
+      );
+      finite = finite && std::isfinite(source_base(row));
+    } else if (source_marginal(row) != 0.0) {
+      finite = false;
+    }
+  }
+  for (arma::uword column = 0; column < n_target; ++column) {
+    if (target_measure(column) > 0.0) {
+      if (!(target_marginal(column) > 0.0)) {
+        finite = false;
+        continue;
+      }
+      target_base(column) = target_bar(column) + rho_target * std::log(
+        target_marginal(column) / target_measure(column)
+      );
+      finite = finite && std::isfinite(target_base(column));
+    } else if (target_marginal(column) != 0.0) {
+      finite = false;
+    }
+  }
+
+  arma::mat final_block;
+  arma::mat stored_block;
+  double kkt_residual = 0.0;
+  double maximum_cost_change = 0.0;
+  double maximum_final_cost = 0.0;
+  double maximum_stored_cost = 0.0;
+  double transport = 0.0;
+  double tile_count = 0.0;
+  if (finite) {
+    for (arma::uword row_begin = 0; row_begin < n_source;
+         row_begin += tile) {
+      const arma::uword row_end = std::min(n_source, row_begin + tile);
+      for (arma::uword column_begin = 0; column_begin < n_target;
+           column_begin += tile) {
+        const arma::uword column_end = std::min(
+          n_target, column_begin + tile
+        );
+        factorized_cost_block(
+          final_row_term, final_column_term, final_left, final_right,
+          row_begin, row_end, column_begin, column_end, final_block
+        );
+        factorized_cost_block(
+          stored_row_term, stored_column_term, stored_left, stored_right,
+          row_begin, row_end, column_begin, column_end, stored_block
+        );
+        tile_count += 1.0;
+        for (arma::uword column = 0;
+             column < column_end - column_begin; ++column) {
+          const arma::uword global_column = column_begin + column;
+          if (target_measure(global_column) == 0.0) continue;
+          const double* final_values = final_block.colptr(column);
+          const double* stored_values = stored_block.colptr(column);
+          for (arma::uword row = 0; row < row_end - row_begin; ++row) {
+            const arma::uword global_row = row_begin + row;
+            if (source_measure(global_row) == 0.0) continue;
+            const double final_cost = final_values[row];
+            const double stored_cost = stored_values[row];
+            const double residual = source_base(global_row) +
+              target_base(global_column) + final_cost - stored_cost;
+            const double log_weight = log_source(global_row) +
+              log_target(global_column) +
+              (source_bar(global_row) + target_bar(global_column) -
+                stored_cost) / epsilon;
+            const double weight = std::exp(log_weight);
+            if (!std::isfinite(final_cost) ||
+                !std::isfinite(stored_cost) || !std::isfinite(residual) ||
+                !std::isfinite(weight) || weight < 0.0) {
+              finite = false;
+              break;
+            }
+            kkt_residual = std::max(kkt_residual, std::abs(residual));
+            maximum_cost_change = std::max(
+              maximum_cost_change, std::abs(final_cost - stored_cost)
+            );
+            maximum_final_cost = std::max(
+              maximum_final_cost, std::abs(final_cost)
+            );
+            maximum_stored_cost = std::max(
+              maximum_stored_cost, std::abs(stored_cost)
+            );
+            transport += weight * final_cost;
+          }
+          if (!finite) break;
+        }
+        if (!finite) break;
+      }
+      if (!finite) break;
+    }
+  }
+  if (!finite) {
+    kkt_residual = std::numeric_limits<double>::infinity();
+    maximum_cost_change = std::numeric_limits<double>::infinity();
+    maximum_final_cost = std::numeric_limits<double>::infinity();
+    maximum_stored_cost = std::numeric_limits<double>::infinity();
+    transport = std::numeric_limits<double>::infinity();
+  }
+  return Rcpp::List::create(
+    Rcpp::Named("finite") = finite,
+    Rcpp::Named("kkt_residual") = kkt_residual,
+    Rcpp::Named("maximum_cost_change") = maximum_cost_change,
+    Rcpp::Named("maximum_final_cost") = maximum_final_cost,
+    Rcpp::Named("maximum_stored_cost") = maximum_stored_cost,
+    Rcpp::Named("transport") = transport,
+    Rcpp::Named("tile_count") = tile_count,
+    Rcpp::Named("workspace_elements") = 2.0 *
+      static_cast<double>(std::min(n_source, tile)) *
+      static_cast<double>(std::min(n_target, tile)) +
+      2.0 * static_cast<double>(n_source + n_target)
+  );
+}
+
+// [[Rcpp::export]]
+arma::mat cpp_factorized_plan_apply(
+    const arma::vec& row_term,
+    const arma::vec& column_term,
+    const arma::mat& left,
+    const arma::mat& right,
+    const arma::vec& source_measure,
+    const arma::vec& target_measure,
+    const arma::vec& source_bar,
+    const arma::vec& target_bar,
+    double epsilon,
+    const arma::mat& values,
+    bool adjoint,
+    int block_size) {
+  validate_factorized_cost(row_term, column_term, left, right);
+  const arma::uword n_source = source_measure.n_elem;
+  const arma::uword n_target = target_measure.n_elem;
+  const arma::uword expected_rows = adjoint ? n_source : n_target;
+  if (row_term.n_elem != n_source || column_term.n_elem != n_target ||
+      source_bar.n_elem != n_source || target_bar.n_elem != n_target ||
+      values.n_rows != expected_rows || !(epsilon > 0.0)) {
+    Rcpp::stop("Invalid implicit factorized plan application.");
+  }
+  const arma::uword tile = factorized_block_size(block_size);
+  const arma::vec log_source = ti_safe_log(source_measure);
+  const arma::vec log_target = ti_safe_log(target_measure);
+  arma::mat out(
+    adjoint ? n_target : n_source, values.n_cols, arma::fill::zeros
+  );
+  arma::mat weights;
+  for (arma::uword row_begin = 0; row_begin < n_source;
+       row_begin += tile) {
+    const arma::uword row_end = std::min(n_source, row_begin + tile);
+    for (arma::uword column_begin = 0; column_begin < n_target;
+         column_begin += tile) {
+      const arma::uword column_end = std::min(
+        n_target, column_begin + tile
+      );
+      factorized_weight_block(
+        row_term, column_term, left, right, log_source, log_target,
+        source_bar, target_bar, epsilon,
+        row_begin, row_end, column_begin, column_end, weights
+      );
+      if (!weights.is_finite()) {
+        Rcpp::stop("Implicit factorized plan contains non-finite weights.");
+      }
+      if (adjoint) {
+        out.rows(column_begin, column_end - 1) += weights.t() *
+          values.rows(row_begin, row_end - 1);
+      } else {
+        out.rows(row_begin, row_end - 1) += weights *
+          values.rows(column_begin, column_end - 1);
+      }
+    }
+  }
+  return out;
+}
+
+// [[Rcpp::export]]
+arma::mat cpp_factorized_plan_materialize(
+    const arma::vec& row_term,
+    const arma::vec& column_term,
+    const arma::mat& left,
+    const arma::mat& right,
+    const arma::vec& source_measure,
+    const arma::vec& target_measure,
+    const arma::vec& source_bar,
+    const arma::vec& target_bar,
+    double epsilon,
+    int block_size) {
+  validate_factorized_cost(row_term, column_term, left, right);
+  const arma::uword n_source = source_measure.n_elem;
+  const arma::uword n_target = target_measure.n_elem;
+  if (row_term.n_elem != n_source || column_term.n_elem != n_target ||
+      source_bar.n_elem != n_source || target_bar.n_elem != n_target ||
+      !(epsilon > 0.0)) {
+    Rcpp::stop("Invalid implicit factorized plan materialization.");
+  }
+  const arma::uword tile = factorized_block_size(block_size);
+  const arma::vec log_source = ti_safe_log(source_measure);
+  const arma::vec log_target = ti_safe_log(target_measure);
+  arma::mat out(n_source, n_target);
+  arma::mat weights;
+  for (arma::uword row_begin = 0; row_begin < n_source;
+       row_begin += tile) {
+    const arma::uword row_end = std::min(n_source, row_begin + tile);
+    for (arma::uword column_begin = 0; column_begin < n_target;
+         column_begin += tile) {
+      const arma::uword column_end = std::min(
+        n_target, column_begin + tile
+      );
+      factorized_weight_block(
+        row_term, column_term, left, right, log_source, log_target,
+        source_bar, target_bar, epsilon,
+        row_begin, row_end, column_begin, column_end, weights
+      );
+      if (!weights.is_finite()) {
+        Rcpp::stop("Implicit factorized plan contains non-finite weights.");
+      }
+      out.submat(
+        row_begin, column_begin, row_end - 1, column_end - 1
+      ) = weights;
+    }
+  }
+  return out;
+}
+
+// [[Rcpp::export]]
+Rcpp::List cpp_factorized_plan_difference(
+    const arma::vec& row_term_a,
+    const arma::vec& column_term_a,
+    const arma::mat& left_a,
+    const arma::mat& right_a,
+    const arma::vec& source_measure_a,
+    const arma::vec& target_measure_a,
+    const arma::vec& source_bar_a,
+    const arma::vec& target_bar_a,
+    double epsilon_a,
+    const arma::vec& row_term_b,
+    const arma::vec& column_term_b,
+    const arma::mat& left_b,
+    const arma::mat& right_b,
+    const arma::vec& source_measure_b,
+    const arma::vec& target_measure_b,
+    const arma::vec& source_bar_b,
+    const arma::vec& target_bar_b,
+    double epsilon_b,
+    int block_size) {
+  validate_factorized_cost(row_term_a, column_term_a, left_a, right_a);
+  validate_factorized_cost(row_term_b, column_term_b, left_b, right_b);
+  const arma::uword n_source = source_measure_a.n_elem;
+  const arma::uword n_target = target_measure_a.n_elem;
+  if (source_measure_b.n_elem != n_source ||
+      target_measure_b.n_elem != n_target ||
+      row_term_a.n_elem != n_source || row_term_b.n_elem != n_source ||
+      column_term_a.n_elem != n_target || column_term_b.n_elem != n_target ||
+      source_bar_a.n_elem != n_source || source_bar_b.n_elem != n_source ||
+      target_bar_a.n_elem != n_target || target_bar_b.n_elem != n_target ||
+      !(epsilon_a > 0.0) || !(epsilon_b > 0.0)) {
+    Rcpp::stop("Implicit factorized plans have incompatible states.");
+  }
+  const arma::uword tile = factorized_block_size(block_size);
+  const arma::vec log_source_a = ti_safe_log(source_measure_a);
+  const arma::vec log_target_a = ti_safe_log(target_measure_a);
+  const arma::vec log_source_b = ti_safe_log(source_measure_b);
+  const arma::vec log_target_b = ti_safe_log(target_measure_b);
+  arma::mat weights_a;
+  arma::mat weights_b;
+  double l1 = 0.0;
+  double squared_l2 = 0.0;
+  double maximum = 0.0;
+  for (arma::uword row_begin = 0; row_begin < n_source;
+       row_begin += tile) {
+    const arma::uword row_end = std::min(n_source, row_begin + tile);
+    for (arma::uword column_begin = 0; column_begin < n_target;
+         column_begin += tile) {
+      const arma::uword column_end = std::min(
+        n_target, column_begin + tile
+      );
+      factorized_weight_block(
+        row_term_a, column_term_a, left_a, right_a,
+        log_source_a, log_target_a, source_bar_a, target_bar_a, epsilon_a,
+        row_begin, row_end, column_begin, column_end, weights_a
+      );
+      factorized_weight_block(
+        row_term_b, column_term_b, left_b, right_b,
+        log_source_b, log_target_b, source_bar_b, target_bar_b, epsilon_b,
+        row_begin, row_end, column_begin, column_end, weights_b
+      );
+      if (!weights_a.is_finite() || !weights_b.is_finite()) {
+        Rcpp::stop("Implicit factorized plan difference is non-finite.");
+      }
+      for (arma::uword index = 0; index < weights_a.n_elem; ++index) {
+        const double difference = std::abs(
+          weights_a(index) - weights_b(index)
+        );
+        l1 += difference;
+        squared_l2 += difference * difference;
+        maximum = std::max(maximum, difference);
+      }
+    }
+  }
+  return Rcpp::List::create(
+    Rcpp::Named("l1") = l1,
+    Rcpp::Named("l2") = std::sqrt(squared_l2),
+    Rcpp::Named("max") = maximum
+  );
+}
+
 // [[Rcpp::export]]
 Rcpp::List cpp_bipartite_transport_max_flow(
     int n_source,

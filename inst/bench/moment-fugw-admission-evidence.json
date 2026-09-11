@@ -1,0 +1,267 @@
+{
+  "schema_version": 1,
+  "date": "2026-08-27",
+  "method_family": "moment_fugw",
+  "public_functions": ["fugw_factorized", "fugw_multiscale"],
+  "status": "experimental_candidate",
+  "supported": false,
+  "global_optimality": "not_claimed",
+  "candidate_binding": {
+    "reported_git_commit": "696165ff03b24ef3bffcce5555a24b3b24f5ba74",
+    "git_dirty": true,
+    "exact_candidate_commit_bound": false,
+    "interpretation": "The retained measurements describe a dirty source-tree candidate. The reported parent commit does not identify the implementation under test."
+  },
+  "implementation_contract": {
+    "support": "full_implicit",
+    "omitted_kernel_mass_bound": 0,
+    "couplings_retained": ["sample", "feature"],
+    "prohibited_dense_allocations": ["Cx", "Cy", "M", "P", "Q"],
+    "stored_pair_matrix": false,
+    "arithmetic_claim": "O(n_source * n_target * effective_factor_rank) per full-support affine-bilinear sweep",
+    "subquadratic_runtime_claimed": false,
+    "adaptive_support": "not_implemented_fails_closed"
+  },
+  "gates": {
+    "independent_exact_factor_oracle": {
+      "passed": true,
+      "artifact": "moment-fugw-accuracy-evidence.csv",
+      "artifact_md5": "8c57583cb96515cf4a47ffa2fff74139",
+      "design_artifact": "moment-fugw-accuracy-design.csv",
+      "design_artifact_md5": "53c00232f25f31753b0b6e0f436d84d2",
+      "rows": 12,
+      "zero_weight_rows": 6,
+      "near_zero_weight_rows": 3,
+      "maximum_objective_relative_error": 2.534635e-12,
+      "maximum_component_relative_error": 6.343354e-10,
+      "maximum_direct_oracle_relative_error": 2.094361e-12,
+      "maximum_action_relative_error": 2.165336e-11,
+      "maximum_adjoint_relative_error": 5.573811e-11,
+      "maximum_mass_relative_error": 3.052232e-12,
+      "maximum_moment_relative_error": 3.123437e-12,
+      "thresholds": {
+        "objective_relative_error": 1e-08,
+        "action_relative_error": 1e-06,
+        "mass_and_moment_relative_error": 1e-07
+      }
+    },
+    "final_two_sided_stationarity": {
+      "passed": true,
+      "scope": "post_rescale_sample_and_feature_block_kkt",
+      "global_optimality": "not_claimed"
+    },
+    "geometry_and_hierarchy": {
+      "passed": true,
+      "exact_and_approximate_geometry_reported_separately": true,
+      "parent_map_weight_feature_and_geometry_audits": true,
+      "budgeted_warm_starts_have_distinct_status": true
+    },
+    "multiscale_efficacy": {
+      "passed": true,
+      "artifact": "moment-fugw-multiscale-evidence.csv",
+      "artifact_md5": "06479250599f74d570ec01c3a202d75f",
+      "cases": 10,
+      "fraction_with_lower_fine_inner_work": 1,
+      "median_fine_inner_work_reduction": 0.34575068713459,
+      "maximum_objective_relative_difference": 1.44329e-14,
+      "minimum_heldout_score_ratio": 1,
+      "maximum_plan_action_relative_difference": 1.986152e-10
+    },
+    "candidate_performance": {
+      "passed": true,
+      "release_baseline": false,
+      "artifact": "moment-fugw-kernel-evidence.csv",
+      "artifact_md5": "b53f866a7c2a008957b4d02c01f3645a",
+      "domain_sizes": [625, 1250, 2500, 5000],
+      "fixed_work_seconds": [0.566, 1.299, 4.297, 16.358],
+      "absolute_peak_rss_bytes": [211222528, 221921280, 397443072, 1025490944],
+      "package_load_baseline_rss_bytes": 126894080,
+      "incremental_peak_rss_exponent": 1.175022559716157,
+      "incremental_peak_rss_exponent_max": 1.5,
+      "fixed_work_runtime_exponent_largest_three": 1.827261516506489,
+      "fixed_work_runtime_exponent_all_points": 1.628507986321296,
+      "fixed_work_runtime_exponent_interval": [1.8, 2.2],
+      "largest_completed_end_to_end_certified_endpoint": 512,
+      "interpretation": "Full-support quadratic arithmetic with near-linear stored state; source-tree candidate evidence only."
+    },
+    "installed_full_candidate_performance": {
+      "passed": true,
+      "release_baseline": false,
+      "artifact": "evidence/moment-fugw-full-installed-candidate-20260827/evidence.json",
+      "artifact_md5": "ae8fcaf4c680222787c62b95d3a06cfd",
+      "raw_worker_archive": "evidence/moment-fugw-full-installed-candidate-20260827/raw-workers.tar.gz",
+      "raw_worker_archive_sha256": "72269c15c11d971846450f7e284890057eb3a30b7ddac264b52b592abd37041f",
+      "raw_worker_archive_md5": "521edc3c476d88d77964fd2cc1ed75e0",
+      "package_mode": "installed",
+      "profile": "full",
+      "requested_rows": 56,
+      "invalid_rows": 0,
+      "domain_sizes": [625, 1250, 2500, 5000],
+      "fixed_work_seconds": [0.062, 0.211, 0.885, 3.191],
+      "absolute_peak_rss_bytes": [150355968, 168017920, 357154816, 985497600],
+      "package_load_baseline_rss_bytes": 91815936,
+      "incremental_peak_rss_exponent": 1.359673,
+      "fixed_work_runtime_exponent_largest_three": 1.959347,
+      "fixed_work_runtime_exponent_all_points": 1.912522,
+      "largest_completed_end_to_end_certified_endpoint": 512,
+      "exact_commit_bound": false,
+      "provenance_gate_passed": false,
+      "interpretation": "The installed tarball completed the full protocol and all raw workers are retained, but a pre-hardening missing-Git fail-open was independently corrected. This is not same-commit release evidence."
+    },
+    "installed_full_rprofmem_candidate_performance": {
+      "passed": true,
+      "release_baseline": false,
+      "artifact": "evidence/moment-fugw-full-installed-rprofmem-candidate-20260827/evidence.json",
+      "artifact_md5": "fe9aea2fb52b3dbfc0629a818d71010b",
+      "raw_worker_archive": "evidence/moment-fugw-full-installed-rprofmem-candidate-20260827/raw-workers.tar.gz",
+      "raw_worker_archive_sha256": "d1eb1795c7d3ee64ac4632478ab75b6077183f8394acf7db5eff0bc512da854e",
+      "raw_worker_archive_md5": "010cf4c2dd7e7d4fe20cebdfaf294bd4",
+      "package_mode": "installed",
+      "profile": "full",
+      "requested_rows": 60,
+      "invalid_rows": 0,
+      "raw_artifact_count": 244,
+      "domain_sizes": [625, 1250, 2500, 5000],
+      "fixed_work_seconds": [0.062, 0.209, 0.857, 3.09],
+      "absolute_peak_rss_bytes": [149602304, 167395328, 356057088, 985038848],
+      "package_load_baseline_rss_bytes": 86573056,
+      "incremental_peak_rss_exponent": 1.323748563933459,
+      "fixed_work_runtime_exponent_largest_three": 1.943015995355432,
+      "fixed_work_runtime_exponent_all_points": 1.89533766992462,
+      "largest_completed_end_to_end_certified_endpoint": 512,
+      "r_visible_allocation_complete": true,
+      "exact_commit_bound": false,
+      "provenance_gate_passed": false,
+      "interpretation": "The checked installed tarball completed the current native-RSS and Rprofmem contract, but it was built from a dirty working tree and is not release evidence."
+    },
+    "planted_image_validation": {
+      "passed": true,
+      "artifact": "moment-fugw-image-evidence.csv",
+      "artifact_md5": "61adb90b89d72de6ec4fe97be93a22c0",
+      "rows": 40,
+      "partial_overlap_percent": [80, 60, 40],
+      "unbalanced_median_false_mass": [0.1575186, 0.2745245, 0.3849604],
+      "balanced_median_false_mass": [0.2680024, 0.3712425, 0.6880929],
+      "endpoint_error_ratio": [0.4453057, 0.5544238, 0.3822969],
+      "all_requested_rows_retained": true
+    },
+    "planted_cortical_validation": {
+      "passed": true,
+      "artifact": "moment-fugw-surface-evidence.csv",
+      "artifact_md5": "56e004af6474d88d545e151149ee0891",
+      "geometry_rank_artifact": "moment-fugw-geometry-rank-evidence.csv",
+      "geometry_rank_artifact_md5": "5a3d16afdf10592d2cefbaaf68d51710",
+      "evaluation_rows": 5,
+      "heldout_correlation_range": [0.9994236, 0.9994871],
+      "dense_parity_maximum_error": 2.26668e-11,
+      "dense_parity_tolerance": 1e-06,
+      "functional_maps": "planted_synthetic_geodesic_radial_basis_channels",
+      "observed_neurobiology_claimed": false,
+      "fixture_evaluation_fingerprint_md5": "c448a7e378f48df12e374c3c07aa0120",
+      "fixture_dense_parity_fingerprint_md5": "ebaaa6eecd52a7dd7ee339fe8d294cbd",
+      "fixture_provenance_artifact": "moment-fugw-fsaverage6-fixture-provenance.json",
+      "fixture_provenance_artifact_md5": "56c406f27504f08bad626825a54c4b6a"
+    },
+    "validation_protocol": {
+      "passed": true,
+      "artifact": "moment-fugw-validation-protocol.json",
+      "artifact_md5": "24fd1f2d204eb2c5800b86dcd91769f7",
+      "frozen_before_evaluation": true,
+      "tuning_and_evaluation_seeds_disjoint": true,
+      "evaluation_seed_accessed_before_freeze": false,
+      "post_evaluation_replay_hardening_changed_estimand_threshold_or_result": false
+    },
+    "local_source_package_check": {
+      "passed": true,
+      "status": "predecessor_local_check_passed_current_receipt_external",
+      "errors": 0,
+      "warnings": 0,
+      "notes": 1,
+      "note_classification": "informational_new_submission",
+      "arguments": ["--as-cran", "--no-manual"],
+      "platform": "aarch64-apple-darwin20",
+      "r_version": "4.5.1",
+      "predecessor_checked_tarball_sha256": "df095165bc887ddd8e6d5cbf2f61535240185f55a1dd523c2ee29014b993405a",
+      "predecessor_check_log_sha256": "ed53ce5bbb9a2e74b26e03467a4a004a90a06613f7248c4ee9683a6fcc6dd82b",
+      "exact_commit_bound": false,
+      "current_artifact_digest_embedded": false,
+      "interpretation": "The embedded digests identify a checked predecessor candidate only. The definitive current-artifact check receipt is retained externally because embedding it would change the artifact; neither local check promotes a dirty, unreviewed candidate."
+    },
+    "core_certification_protocol": {
+      "passed": true,
+      "artifact": "moment-fugw-core-contract.json",
+      "artifact_md5": "cb15f5fab61920d11c2d149c54dcca51",
+      "local_profile": "source",
+      "local_accuracy_rows": 12,
+      "local_multiscale_rows": 10,
+      "local_required_cases": 27,
+      "local_successful_expectations": 281,
+      "local_failures_errors_warnings_skips": 0,
+      "release_receipts_generated": false,
+      "interpretation": "The local replay passes but is not release-admissible; release requires exact-artifact installed receipts on Darwin, Linux, and Windows."
+    },
+    "robustness_protocol": {
+      "passed": true,
+      "artifact": "moment-fugw-robustness-contract.json",
+      "artifact_md5": "48e46a11ba5058d7ef37b0c426c3d43a",
+      "local_cases": 12,
+      "named_properties": 15,
+      "local_successful_expectations": 150,
+      "local_failures_errors_warnings_skips": 0,
+      "release_receipts_generated": false,
+      "interpretation": "The local replay passes but is not release-admissible; release requires exact-artifact installed receipts on Darwin, Linux, and Windows."
+    },
+    "hosted_cross_platform_release_replay": {
+      "passed": false,
+      "status": "workflow_configured_not_run_for_candidate",
+      "workflow": ".github/workflows/numerical-trust-release.yml",
+      "performance_platforms": ["ubuntu-latest", "macos-latest"],
+      "scientific_platforms": [
+        "ubuntu-latest", "macos-latest", "windows-latest"
+      ],
+      "core_platforms": [
+        "ubuntu-latest", "macos-latest", "windows-latest"
+      ],
+      "robustness_platforms": [
+        "ubuntu-latest", "macos-latest", "windows-latest"
+      ],
+      "canonical_source_artifact_required": true,
+      "hidden_evidence_upload_enabled": true,
+      "candidate_receipt_job": "moment-fugw-admission",
+      "candidate_receipt_status": "not_run_for_candidate"
+    },
+    "admission_receipt_protocol": {
+      "passed": true,
+      "artifact": "moment_fugw_admission.R",
+      "artifact_md5": "f17df379a7b6c21c0dd301a3a6e4c1ac",
+      "review_template": "moment-fugw-independent-review-template.json",
+      "review_template_md5": "f1ad89216f210284798c28f7f3a3f4b1",
+      "technical_receipt_generated": false,
+      "promotion_receipt_generated": false,
+      "status": "verifier_and_adversarial_tests_passed_hosted_evidence_pending"
+    },
+    "independent_review": {
+      "passed": false,
+      "status": "not_completed",
+      "required_scopes": ["numerical", "performance", "scientific"],
+      "template": "moment-fugw-independent-review-template.json"
+    }
+  },
+  "threshold_contract": {
+    "artifact": "moment-fugw-thresholds.json",
+    "artifact_md5": "98edf488583bf5399673eaaec0816228",
+    "history_artifact": "moment-fugw-threshold-history.json",
+    "history_artifact_md5": "89ac1ebe2fac6e933871787fd55f520a",
+    "admission_status": "candidate"
+  },
+  "release_decision": {
+    "eligible": false,
+    "public_status": "experimental",
+    "unmet_gates": [
+      "exact_candidate_commit_binding",
+      "clean_same_commit_installed_full_performance_artifact",
+      "hosted_cross_platform_release_replay",
+      "independent_numerical_performance_and_scientific_review"
+    ]
+  }
+}

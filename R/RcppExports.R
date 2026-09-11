@@ -93,6 +93,34 @@ cpp_ot_sinkhorn_unbalanced_ti_sparse <- function(row_ptr, col_idx, row_cost, col
     .Call(`_rfugw_cpp_ot_sinkhorn_unbalanced_ti_sparse`, row_ptr, col_idx, row_cost, col_ptr, row_idx, col_cost, n_source, n_target, source_measure, target_measure, epsilon, rho_source, rho_target, max_iter, tol)
 }
 
+cpp_ot_sinkhorn_unbalanced_ti_factorized <- function(row_term, column_term, left, right, source_measure, target_measure, epsilon, rho_source, rho_target, max_iter, tol, block_size, init_source_bar, init_target_bar) {
+    .Call(`_rfugw_cpp_ot_sinkhorn_unbalanced_ti_factorized`, row_term, column_term, left, right, source_measure, target_measure, epsilon, rho_source, rho_target, max_iter, tol, block_size, init_source_bar, init_target_bar)
+}
+
+cpp_factorized_plan_stats <- function(row_term, column_term, left, right, source_measure, target_measure, source_bar, target_bar, epsilon, block_size) {
+    .Call(`_rfugw_cpp_factorized_plan_stats`, row_term, column_term, left, right, source_measure, target_measure, source_bar, target_bar, epsilon, block_size)
+}
+
+cpp_factorized_plan_stats_moments <- function(row_term, column_term, left, right, source_measure, target_measure, source_bar, target_bar, epsilon, source_moment, target_moment, block_size) {
+    .Call(`_rfugw_cpp_factorized_plan_stats_moments`, row_term, column_term, left, right, source_measure, target_measure, source_bar, target_bar, epsilon, source_moment, target_moment, block_size)
+}
+
+cpp_factorized_plan_kkt_audit <- function(final_row_term, final_column_term, final_left, final_right, stored_row_term, stored_column_term, stored_left, stored_right, source_measure, target_measure, source_bar, target_bar, source_marginal, target_marginal, epsilon, rho_source, rho_target, block_size) {
+    .Call(`_rfugw_cpp_factorized_plan_kkt_audit`, final_row_term, final_column_term, final_left, final_right, stored_row_term, stored_column_term, stored_left, stored_right, source_measure, target_measure, source_bar, target_bar, source_marginal, target_marginal, epsilon, rho_source, rho_target, block_size)
+}
+
+cpp_factorized_plan_apply <- function(row_term, column_term, left, right, source_measure, target_measure, source_bar, target_bar, epsilon, values, adjoint, block_size) {
+    .Call(`_rfugw_cpp_factorized_plan_apply`, row_term, column_term, left, right, source_measure, target_measure, source_bar, target_bar, epsilon, values, adjoint, block_size)
+}
+
+cpp_factorized_plan_materialize <- function(row_term, column_term, left, right, source_measure, target_measure, source_bar, target_bar, epsilon, block_size) {
+    .Call(`_rfugw_cpp_factorized_plan_materialize`, row_term, column_term, left, right, source_measure, target_measure, source_bar, target_bar, epsilon, block_size)
+}
+
+cpp_factorized_plan_difference <- function(row_term_a, column_term_a, left_a, right_a, source_measure_a, target_measure_a, source_bar_a, target_bar_a, epsilon_a, row_term_b, column_term_b, left_b, right_b, source_measure_b, target_measure_b, source_bar_b, target_bar_b, epsilon_b, block_size) {
+    .Call(`_rfugw_cpp_factorized_plan_difference`, row_term_a, column_term_a, left_a, right_a, source_measure_a, target_measure_a, source_bar_a, target_bar_a, epsilon_a, row_term_b, column_term_b, left_b, right_b, source_measure_b, target_measure_b, source_bar_b, target_bar_b, epsilon_b, block_size)
+}
+
 cpp_bipartite_transport_max_flow <- function(n_source, n_target, source, target, source_measure, target_measure, tolerance) {
     .Call(`_rfugw_cpp_bipartite_transport_max_flow`, n_source, n_target, source, target, source_measure, target_measure, tolerance)
 }

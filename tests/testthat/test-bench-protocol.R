@@ -74,6 +74,10 @@ test_that("environment capture records commit, seed, threads, and hardware", {
   expect_true(nzchar(meta$version))
   expect_identical(meta$seed, 7L)
   expect_identical(meta$threads, 2L)
+  expect_type(meta$git_dirty, "logical")
+  expect_length(meta$git_dirty, 1L)
+  expect_true(is.na(meta$git_status_entry_count) ||
+                meta$git_status_entry_count >= 0L)
   expect_true(nzchar(meta$sysname))
   expect_true(nzchar(meta$machine))
   expect_true(nzchar(meta$timestamp))
@@ -254,13 +258,13 @@ test_that("protocol gate distinguishes infrastructure from solver failures", {
   caps <- bench_test_resource("ci_time_caps.json")
   missing <- suppressWarnings(system2(
     file.path(R.home("bin"), "Rscript"),
-    c(gate, tempfile("no-such-gate-"), caps, "pr"),
+    shQuote(c(gate, tempfile("no-such-gate-"), caps, "pr")),
     stdout = TRUE,
     stderr = TRUE
   ))
   expect_identical(attr(missing, "status"), 2L)
 
-  good <- tempfile("gate-ok-")
+  good <- tempfile("gate ok ")
   dir.create(good)
   jsonlite::write_json(
     list(
@@ -300,13 +304,13 @@ test_that("protocol gate distinguishes infrastructure from solver failures", {
   )
   ok <- system2(
     file.path(R.home("bin"), "Rscript"),
-    c(gate, good, caps, "pr"),
+    shQuote(c(gate, good, caps, "pr")),
     stdout = TRUE,
     stderr = TRUE
   )
   expect_true(is.null(attr(ok, "status")) || identical(attr(ok, "status"), 0L))
 
-  bad <- tempfile("gate-bad-")
+  bad <- tempfile("gate bad ")
   dir.create(bad)
   file.copy(file.path(good, "meta.json"), file.path(bad, "meta.json"))
   file.copy(file.path(good, "quality.csv"), file.path(bad, "quality.csv"))
@@ -323,7 +327,7 @@ test_that("protocol gate distinguishes infrastructure from solver failures", {
   )
   failed <- suppressWarnings(system2(
     file.path(R.home("bin"), "Rscript"),
-    c(gate, bad, caps, "pr"),
+    shQuote(c(gate, bad, caps, "pr")),
     stdout = TRUE,
     stderr = TRUE
   ))
