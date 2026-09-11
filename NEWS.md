@@ -2,6 +2,11 @@
 
 Initial focused release.
 
+- Partial Sinkhorn now requires its existing KKT and primal-dual certificate
+  before early stopping in both log and scaling Dykstra backends. Small plan
+  updates alone could previously terminate an uncertified solve with iteration
+  budget left. Budget exhaustion remains explicitly uncertified.
+
 - Experimental Moment-FUGW adds `factorized_cost()` and exact lazy
   squared-Euclidean/cosine/correlation costs, a native blocked
   translation-invariant KL-UOT backend, `fugw_factorized()`, `fugw_domain()`,

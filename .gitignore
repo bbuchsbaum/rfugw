@@ -26,3 +26,7 @@ inst/bench/results/
 
 # accidental nested package artifacts
 rfugw/
+
+# Frozen worker receipts referenced by the versioned admission ledger
+!inst/bench/evidence/moment-fugw-full-installed-candidate-20260827/raw-workers.tar.gz
+!inst/bench/evidence/moment-fugw-full-installed-rprofmem-candidate-20260827/raw-workers.tar.gz

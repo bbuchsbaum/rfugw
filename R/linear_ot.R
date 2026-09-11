@@ -1371,7 +1371,7 @@ ot_partial_emd <- function(
 }
 
 .partial_sinkhorn_scaling_core <- function(
-    problem, max_iter, tol, check_every, init_state, verbose) {
+    problem, max_iter, tol, check_every, init_state, verbose, certify) {
   if (is.null(init_state)) {
     plan <- exp(problem$log_reference)
     corrections <- replicate(3L, matrix(1, nrow(plan), ncol(plan)), FALSE)
@@ -1441,7 +1441,12 @@ ot_partial_emd <- function(
       }
       if (max(
         update_residual, row_violation, col_violation, mass_residual
-      ) <= tol) {
+      ) <= tol && certify(list(
+        plan = plan, log_plan = log(plan),
+        log_corrections = lapply(corrections, log),
+        row_violation = row_violation, col_violation = col_violation,
+        mass_residual = mass_residual
+      ))) {
         break
       }
     }
@@ -1462,7 +1467,7 @@ ot_partial_emd <- function(
 }
 
 .partial_sinkhorn_log_core <- function(
-    problem, max_iter, tol, check_every, init_state, verbose) {
+    problem, max_iter, tol, check_every, init_state, verbose, certify) {
   if (is.null(init_state)) {
     log_plan <- problem$log_reference
     log_corrections <- replicate(
@@ -1540,7 +1545,12 @@ ot_partial_emd <- function(
       }
       if (max(
         update_residual, row_violation, col_violation, mass_residual
-      ) <= tol) {
+      ) <= tol && certify(list(
+        plan = plan, log_plan = log_plan,
+        log_corrections = log_corrections,
+        row_violation = row_violation, col_violation = col_violation,
+        mass_residual = mass_residual
+      ))) {
         break
       }
     }
@@ -1765,13 +1775,21 @@ ot_partial_sinkhorn <- function(
   state <- .validate_partial_sinkhorn_state(
     init_state, problem, dispatch$effective
   )
+  # Small changes in tiny plan entries can precede KKT convergence. Do not
+  # discard the remaining budget merely because primal updates look settled.
+  certify <- function(core) {
+    certificate <- .partial_sinkhorn_certificate(
+      core, problem, dat$M, dat$p, dat$q, epsilon, mass, tol
+    )
+    isTRUE(certificate$feasible) && isTRUE(certificate$certified)
+  }
   core <- if (identical(dispatch$effective, "log")) {
     .partial_sinkhorn_log_core(
-      problem, max_iter, tol, check_every, state, verbose
+      problem, max_iter, tol, check_every, state, verbose, certify
     )
   } else {
     .partial_sinkhorn_scaling_core(
-      problem, max_iter, tol, check_every, state, verbose
+      problem, max_iter, tol, check_every, state, verbose, certify
     )
   }
   certificate <- .partial_sinkhorn_certificate(
